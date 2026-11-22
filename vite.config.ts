@@ -43,9 +43,9 @@ export default defineConfig(({ mode }) => {
       emptyOutDir: false,
     },
     server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      hmr: process.env.DISABLE_HMR !== 'true',
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      // HMR is disabled in this environment to avoid broken WebSocket upgrades and editor flickering.
+      hmr: false,
+      watch: null,
       fs: {
         allow: [__dirname, path.resolve(__dirname, 'primary-anny')],
       },

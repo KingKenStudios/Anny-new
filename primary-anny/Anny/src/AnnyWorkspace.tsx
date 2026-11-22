@@ -2160,7 +2160,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                           }
                         }}
                         placeholder="https://example.com — Inspect URL"
-                        className="flex-1 bg-[#050817] border border-white/15 rounded-xl px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 outline-none focus:border-cyan-400"
+                        className="flex-1 bg-[#050817] border border-white/15 rounded-xl px-2.5 py-1.5 text-[16px] sm:text-xs text-white placeholder-slate-500 outline-none focus:border-cyan-400"
                       />
                       <button
                         type="button"
@@ -2284,10 +2284,14 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                 />
 
                 {/* Model & Tokens Footer bar */}
-                <div className="flex items-center justify-between text-[9px] text-slate-400 pt-1 border-t border-white/5 font-mono">
-                  <span>Model: <strong className="text-slate-200">{activeModel}</strong></span>
-                  <span>Web: <strong className={isWebSearchEnabled ? 'text-blue-400' : 'text-slate-400'}>{isWebSearchEnabled ? 'Live' : 'Standard'}</strong></span>
-                  <span>Context: <strong className={includeCodeContext ? 'text-emerald-400' : 'text-slate-300'}>{Object.keys(vfsFiles).length} files</strong></span>
+                <div className={`flex items-center justify-between text-[10px] pt-1 border-t font-mono ${
+                  themeMode === 'light'
+                    ? 'text-slate-600 border-slate-200'
+                    : 'text-slate-400 border-white/5'
+                }`}>
+                  <span>Model: <strong className={themeMode === 'light' ? 'text-slate-900' : 'text-slate-200'}>{activeModel}</strong></span>
+                  <span>Web: <strong className={isWebSearchEnabled ? (themeMode === 'light' ? 'text-blue-700' : 'text-blue-400') : (themeMode === 'light' ? 'text-slate-500' : 'text-slate-400')}>{isWebSearchEnabled ? 'Live' : 'Standard'}</strong></span>
+                  <span>Context: <strong className={includeCodeContext ? (themeMode === 'light' ? 'text-emerald-700' : 'text-emerald-400') : (themeMode === 'light' ? 'text-slate-800' : 'text-slate-300')}>{Object.keys(vfsFiles).length} files</strong></span>
                 </div>
               </div>
             </div>

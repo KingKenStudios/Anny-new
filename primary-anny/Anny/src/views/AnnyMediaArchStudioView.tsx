@@ -6,12 +6,14 @@ import {
   Disc3,
   Film,
   Download,
-  CheckCircle2,
-  AlertTriangle,
   Sparkles,
   FileCode2,
   Layers,
   ShieldAlert,
+  AlertTriangle,
+  Save,
+  FolderOpen,
+  FileText,
 } from 'lucide-react';
 import { MobileLogoMenu } from '../MobileLogoMenu';
 import { fetchWithAuth } from '../lib/apiUtils';
@@ -20,6 +22,7 @@ import {
   ClimateProfile,
   ArchitecturePlanResult,
   generateArchitecturePlan,
+  exportArchitecturalReportMarkdown,
 } from '../core/architectureDesignEngine';
 import {
   BroadcastMedium,
@@ -52,12 +55,23 @@ function downloadTextFile(filename: string, content: string, mimeType: string) {
   URL.revokeObjectURL(url);
 }
 
+interface SavedStudioRecord {
+  id: string;
+  kind: 'architecture' | 'broadcast' | 'music_release' | 'video_pipeline';
+  title: string;
+  payload: Record<string, any>;
+  createdAt: string;
+}
+
 export const AnnyMediaArchStudioView: React.FC<AnnyMediaArchStudioViewProps> = ({
   onToggleMobileMenu,
   onOpenChatWithPrompt,
 }) => {
   const [activeTab, setActiveTab] = useState<StudioTab>('architecture');
   const [busy, setBusy] = useState(false);
+  const [archViewMode, setArchViewMode] = useState<'plan' | 'elevation'>('plan');
+  const [savedRecords, setSavedRecords] = useState<SavedStudioRecord[]>([]);
+  const [recordStatusMsg, setRecordStatusMsg] = useState<string | null>(null);
 
   // ---------------- ARCHITECTURE STATE ----------------
   const [archForm, setArchForm] = useState<{
@@ -216,6 +230,113 @@ export const AnnyMediaArchStudioView: React.FC<AnnyMediaArchStudioViewProps> = (
     [archPlan.svgFloorPlan]
   );
 
+  const elevationSvgDataUri = useMemo(
+    () => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(archPlan.svgFrontElevation)}`,
+    [archPlan.svgFrontElevation]
+  );
+
+  const tabToRecordKind = (tab: StudioTab): SavedStudioRecord['kind'] => {
+    if (tab === 'architecture') return 'architecture';
+    if (tab === 'broadcast') return 'broadcast';
+    if (tab === 'music_distribution') return 'music_release';
+    return 'video_pipeline';
+  };
+
+  const saveCurrentRecord = async () => {
+    setBusy(true);
+    setRecordStatusMsg(null);
+    const kind = tabToRecordKind(activeTab);
+    const title =
+      activeTab === 'architecture'
+        ? archForm.projectName
+        : activeTab === 'broadcast'
+          ? broadcastForm.stationName
+          : activeTab === 'music_distribution'
+            ? `${releaseForm.artistName} - ${releaseForm.releaseTitle}`
+            : videoForm.videoTitle;
+    const payload =
+      activeTab === 'architecture'
+        ? { form: archForm }
+        : activeTab === 'broadcast'
+          ? { form: broadcastForm }
+          : activeTab === 'music_distribution'
+            ? { form: releaseForm }
+            : { form: videoForm };
+
+    try {
+      const res = await fetchWithAuth('/api/studio/records', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, title, payload }),
+      });
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.record) {
+        setSavedRecords((prev) => [json.record, ...prev.filter((r) => r.id !== json.record.id)]);
+        setRecordStatusMsg(`Saved "${json.record.title}" to workspace.`);
+      } else {
+        setRecordStatusMsg(json?.error || `Save failed (HTTP ${res.status}). Sign in if required.`);
+      }
+    } catch {
+      setRecordStatusMsg('Unable to reach workspace persistence endpoint.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadSavedRecords = async () => {
+    setBusy(true);
+    setRecordStatusMsg(null);
+    try {
+      const kind = tabToRecordKind(activeTab);
+      const res = await fetchWithAuth(`/api/studio/records?kind=${encodeURIComponent(kind)}`);
+      const json = await res.json().catch(() => null);
+      if (res.ok && Array.isArray(json?.records)) {
+        setSavedRecords(json.records);
+        setRecordStatusMsg(`Loaded ${json.records.length} saved ${kind.replace('_', ' ')} record(s).`);
+      } else {
+        setRecordStatusMsg(json?.error || `Load failed (HTTP ${res.status}).`);
+      }
+    } catch {
+      setRecordStatusMsg('Unable to reach workspace persistence endpoint.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applySavedRecord = (rec: SavedStudioRecord) => {
+    const form = rec.payload?.form;
+    if (!form) return;
+    if (rec.kind === 'architecture') {
+      setArchForm(form);
+      setArchPlan(generateArchitecturePlan(form));
+    } else if (rec.kind === 'broadcast') {
+      setBroadcastForm(form);
+      setBroadcastPlan(generateBroadcastPlan(form));
+    } else if (rec.kind === 'music_release') {
+      setReleaseForm(form);
+      setReleaseResult(validateAndPrepareMusicRelease({
+        artistName: form.artistName,
+        releaseTitle: form.releaseTitle,
+        releaseType: form.releaseType,
+        primaryGenre: form.primaryGenre,
+        releaseDate: form.releaseDate,
+        upcOrEan: form.upcOrEan,
+        rightsOwner: form.rightsOwner,
+        artworkWidthPx: form.artworkWidthPx,
+        artworkHeightPx: form.artworkHeightPx,
+        tracks: [{ title: form.trackTitle, isrc: form.trackIsrc, explicit: form.trackExplicit, durationSeconds: 198 }],
+        royaltySplits: [
+          { collaboratorName: form.artistName || 'Lead Artist', role: 'Primary Artist / Songwriter', percentage: form.splitPrimary },
+          { collaboratorName: 'Executive Producer', role: 'Producer / Beatmaker', percentage: form.splitProducer },
+        ],
+      }));
+    } else if (rec.kind === 'video_pipeline') {
+      setVideoForm(form);
+      setVideoPipeline(generateVideoStreamingPipeline(form));
+    }
+    setRecordStatusMsg(`Restored "${rec.title}" into studio editor.`);
+  };
+
   const runArchitecturePlan = async () => {
     setBusy(true);
     try {
@@ -335,28 +456,74 @@ export const AnnyMediaArchStudioView: React.FC<AnnyMediaArchStudioViewProps> = (
         )}
       </div>
 
-      {/* Tab Navigation */}
-      <div className="flex flex-wrap gap-2 py-4 border-b border-slate-200 dark:border-slate-800/80">
-        {tabs.map((tab) => {
-          const Icon = tab.icon;
-          const active = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`min-h-[44px] px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition-colors cursor-pointer border ${
-                active
-                  ? 'bg-slate-900 dark:bg-cyan-500/15 text-white dark:text-cyan-300 border-slate-900 dark:border-cyan-500/50'
-                  : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-600'
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
+      {/* Tab Navigation & Workspace Persistence Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-3 py-4 border-b border-slate-200 dark:border-slate-800/80">
+        <div className="flex flex-wrap gap-2">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`min-h-[44px] px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition-colors cursor-pointer border ${
+                  active
+                    ? 'bg-slate-900 dark:bg-cyan-500/15 text-white dark:text-cyan-300 border-slate-900 dark:border-cyan-500/50'
+                    : 'bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-600'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={saveCurrentRecord}
+            className="min-h-[40px] px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900/70 text-xs font-semibold flex items-center gap-1.5 hover:border-cyan-500 cursor-pointer disabled:opacity-50"
+          >
+            <Save className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+            <span>Save to Workspace</span>
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={loadSavedRecords}
+            className="min-h-[40px] px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900/70 text-xs font-semibold flex items-center gap-1.5 hover:border-cyan-500 cursor-pointer disabled:opacity-50"
+          >
+            <FolderOpen className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+            <span>Load Saved</span>
+          </button>
+        </div>
       </div>
+
+      {(recordStatusMsg || savedRecords.length > 0) && (
+        <div className="mt-3 p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0b1022] flex flex-col gap-2 text-xs">
+          {recordStatusMsg && (
+            <div className="font-medium text-cyan-700 dark:text-cyan-300">{recordStatusMsg}</div>
+          )}
+          {savedRecords.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {savedRecords.map((rec) => (
+                <button
+                  key={rec.id}
+                  type="button"
+                  onClick={() => applySavedRecord(rec)}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:border-cyan-500 text-left cursor-pointer bg-slate-50 dark:bg-slate-900/80"
+                >
+                  <span className="font-semibold">{rec.title}</span>{' '}
+                  <span className="text-[10px] font-mono text-slate-500">({rec.kind})</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* TAB 1: ARCHITECTURE & CAD */}
       {activeTab === 'architecture' && (
@@ -477,20 +644,29 @@ export const AnnyMediaArchStudioView: React.FC<AnnyMediaArchStudioViewProps> = (
                 {busy ? 'Generating Layout & DXF...' : 'Generate Floor Plan & CAD DXF'}
               </button>
 
-              <div className="grid grid-cols-2 gap-2 pt-2">
+              <div className="grid grid-cols-1 gap-2 pt-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => downloadTextFile(`${archPlan.projectName.replace(/\s+/g, '_')}.dxf`, archPlan.dxfR12Content, 'application/dxf')}
+                    className="min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" /> Export DXF R12
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadTextFile(`${archPlan.projectName.replace(/\s+/g, '_')}${archViewMode === 'elevation' ? '_elevation' : ''}.svg`, archViewMode === 'elevation' ? archPlan.svgFrontElevation : archPlan.svgFloorPlan, 'image/svg+xml')}
+                    className="min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" /> Export SVG
+                  </button>
+                </div>
                 <button
                   type="button"
-                  onClick={() => downloadTextFile(`${archPlan.projectName.replace(/\s+/g, '_')}.dxf`, archPlan.dxfR12Content, 'application/dxf')}
+                  onClick={() => downloadTextFile(`${archPlan.projectName.replace(/\s+/g, '_')}_brief.md`, exportArchitecturalReportMarkdown(archPlan), 'text/markdown')}
                   className="min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                 >
-                  <Download className="w-4 h-4" /> Export DXF R12
-                </button>
-                <button
-                  type="button"
-                  onClick={() => downloadTextFile(`${archPlan.projectName.replace(/\s+/g, '_')}.svg`, archPlan.svgFloorPlan, 'image/svg+xml')}
-                  className="min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                >
-                  <Download className="w-4 h-4" /> Export SVG
+                  <FileText className="w-4 h-4" /> Export Architectural Brief (.md)
                 </button>
               </div>
             </div>
@@ -502,16 +678,49 @@ export const AnnyMediaArchStudioView: React.FC<AnnyMediaArchStudioViewProps> = (
                   <div className="text-sm font-bold">
                     Scaled Conceptual Blueprint ({archPlan.totalGrossFloorAreaM2} m² GFA • {archPlan.siteCoveragePercent}% site coverage)
                   </div>
-                  <span className="text-xs font-mono text-cyan-700 dark:text-cyan-400">
-                    {archPlan.floors} Floor(s) • AutoCAD DXF R12 Ready
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setArchViewMode('plan')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border ${
+                        archViewMode === 'plan'
+                          ? 'bg-cyan-600 text-white border-cyan-600'
+                          : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      Floor Plan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setArchViewMode('elevation')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer border ${
+                        archViewMode === 'elevation'
+                          ? 'bg-cyan-600 text-white border-cyan-600'
+                          : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      Front Elevation & Datums
+                    </button>
+                  </div>
                 </div>
                 <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-[#050b18]">
                   <img
-                    src={svgDataUri}
-                    alt={`Architectural schematic floor plan for ${archPlan.projectName}`}
+                    src={archViewMode === 'elevation' ? elevationSvgDataUri : svgDataUri}
+                    alt={
+                      archViewMode === 'elevation'
+                        ? `Architectural front elevation for ${archPlan.projectName}`
+                        : `Architectural schematic floor plan for ${archPlan.projectName}`
+                    }
                     className="w-full h-auto block"
                   />
+                </div>
+                <div className="mt-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 text-xs flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-mono text-cyan-700 dark:text-cyan-400">
+                    Plinth +{archPlan.elevationAndSectionSummary.plinthHeightM}m • F2F {archPlan.elevationAndSectionSummary.floorToFloorM}m • Eaves {archPlan.elevationAndSectionSummary.eaveOverhangMm}mm • Ridge +{archPlan.elevationAndSectionSummary.ridgeHeightM}m
+                  </span>
+                  <span className="text-slate-600 dark:text-slate-400">
+                    {archPlan.elevationAndSectionSummary.sectionAxis}
+                  </span>
                 </div>
               </div>
 

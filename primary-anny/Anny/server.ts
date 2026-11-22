@@ -3511,6 +3511,62 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
     }
   });
 
+  app.get("/api/studio/records", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const isAdmin = req.authUser!.isAdmin;
+      const validKinds = new Set(['architecture', 'broadcast', 'music_release', 'video_pipeline']);
+      const kindFilter = typeof req.query.kind === 'string' && validKinds.has(req.query.kind)
+        ? req.query.kind
+        : null;
+
+      const records = await postgresPlatform.query<any>('studio_records', (r: any) =>
+        (isAdmin || r.ownerUserId === uid) && (!kindFilter || r.kind === kindFilter)
+      );
+      records.sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      res.json({ success: true, records });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Unable to load studio records');
+      res.status(msg.includes('POSTGRES_NOT_CONFIGURED') ? 503 : 500).json({ success: false, error: msg });
+    }
+  });
+
+  app.post("/api/studio/records", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const validKinds = new Set(['architecture', 'broadcast', 'music_release', 'video_pipeline']);
+      const kind = typeof body.kind === 'string' && validKinds.has(body.kind) ? body.kind : null;
+      const title = typeof body.title === 'string' ? body.title.trim().slice(0, 140) : '';
+      const payload = body.payload;
+
+      if (!kind) {
+        return res.status(400).json({ success: false, error: 'INVALID_RECORD_KIND' });
+      }
+      if (!title) {
+        return res.status(400).json({ success: false, error: 'MISSING_RECORD_TITLE' });
+      }
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return res.status(400).json({ success: false, error: 'INVALID_RECORD_PAYLOAD' });
+      }
+      const serializedSize = Buffer.byteLength(JSON.stringify(payload), 'utf8');
+      if (serializedSize > 262144) {
+        return res.status(413).json({ success: false, error: 'RECORD_PAYLOAD_TOO_LARGE' });
+      }
+
+      const record = await postgresPlatform.insert<any>('studio_records', {
+        ownerUserId: uid,
+        kind,
+        title,
+        payload,
+      });
+      res.json({ success: true, record });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Unable to save studio record');
+      res.status(msg.includes('POSTGRES_NOT_CONFIGURED') ? 503 : 500).json({ success: false, error: msg });
+    }
+  });
+
   // Catch-all for API routes to avoid returning HTML on 404
   app.all("/api/*", (req, res) => {
     res.status(404).json({ error: "Neural endpoint not found." });
@@ -3543,8 +3599,25 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
           : process.cwd());
     const vite = await createViteServer({
       root: viteRoot,
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false, ws: false, watch: null },
       appType: "spa",
+    });
+    app.get('/@vite/client', async (_req, res, next) => {
+      try {
+        const transformed = await vite.transformRequest('/@vite/client');
+        if (transformed?.code) {
+          const safeCode = transformed.code.replace(
+            /^transport\.connect\(.+\);?$/gm,
+            '/* HMR WebSocket connection disabled (HMR=false) */'
+          );
+          res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache');
+          return res.send(safeCode);
+        }
+      } catch {
+        // Fall through to vite.middlewares
+      }
+      return next();
     });
     app.use(vite.middlewares);
   } else {

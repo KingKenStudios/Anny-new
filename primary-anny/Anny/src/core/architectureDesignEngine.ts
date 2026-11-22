@@ -115,7 +115,15 @@ export interface ArchitecturePlanResult {
   structuralAndSiteNotes: string[];
   workflowStages: WorkflowStageStatus[];
   honestyDisclaimer: string;
+  elevationAndSectionSummary: {
+    floorToFloorM: number;
+    plinthHeightM: number;
+    eaveOverhangMm: number;
+    ridgeHeightM: number;
+    sectionAxis: string;
+  };
   svgFloorPlan: string;
+  svgFrontElevation: string;
   dxfR12Content: string;
 }
 
@@ -634,6 +642,70 @@ export function generateArchitecturalSvg(plan: {
 </svg>`;
 }
 
+export function generateElevationSvg(plan: {
+  projectName: string;
+  floors: number;
+  footprintWidthM: number;
+  floorToFloorM: number;
+  plinthHeightM: number;
+  eaveOverhangMm: number;
+  ridgeHeightM: number;
+}): string {
+  const svgW = 680;
+  const svgH = 340;
+  const groundY = 278;
+  const pxPerM = 18;
+  const bldgW = Math.min(440, Math.max(220, Math.round(plan.footprintWidthM * pxPerM)));
+  const startX = Math.round((svgW - bldgW) / 2);
+  const plinthPx = Math.round(plan.plinthHeightM * pxPerM);
+  const floorPx = Math.round(plan.floorToFloorM * pxPerM);
+  const overhangPx = Math.round((plan.eaveOverhangMm / 1000) * pxPerM);
+  const roofTopY = groundY - plinthPx - plan.floors * floorPx;
+  const roofPeakY = Math.max(58, roofTopY - Math.round((plan.ridgeHeightM - plan.plinthHeightM - plan.floors * plan.floorToFloorM) * pxPerM));
+
+  const floorBands: string[] = [];
+  for (let f = 0; f < plan.floors; f++) {
+    const bandY = groundY - plinthPx - (f + 1) * floorPx;
+    floorBands.push(
+      `<rect x="${startX}" y="${bandY}" width="${bldgW}" height="${floorPx}" fill="${f % 2 === 0 ? '#0f2744' : '#132a3e'}" stroke="#e2e8f0" stroke-width="1.6" />`
+    );
+    // Window bays across facade
+    const bayCount = 4;
+    const bayW = 36;
+    const bayH = Math.round(floorPx * 0.45);
+    const step = bldgW / (bayCount + 1);
+    for (let b = 1; b <= bayCount; b++) {
+      const wx = Math.round(startX + step * b - bayW / 2);
+      const wy = Math.round(bandY + floorPx * 0.25);
+      floorBands.push(`<rect x="${wx}" y="${wy}" width="${bayW}" height="${bayH}" fill="#082f49" stroke="#38bdf8" stroke-width="1.4" />`);
+    }
+    floorBands.push(
+      `<text x="${startX - 10}" y="${bandY + floorPx / 2}" fill="#94a3b8" font-size="9.5" font-family="monospace" text-anchor="end">LVL ${f + 1}</text>`
+    );
+  }
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgW} ${svgH}" width="100%" role="img" aria-label="Conceptual South elevation for ${escapeXml(plan.projectName)}">
+  <rect width="${svgW}" height="${svgH}" fill="#050b18" />
+  <text x="32" y="26" fill="#38bdf8" font-size="13" font-weight="700" font-family="system-ui, sans-serif">${escapeXml(plan.projectName)} — SCHEMATIC SOUTH ELEVATION &amp; SECTION DATUMS</text>
+  <text x="32" y="42" fill="#94a3b8" font-size="10" font-family="monospace">CONCEPTUAL ONLY | RIDGE +${plan.ridgeHeightM}m | EAVE OVERHANG ${plan.eaveOverhangMm}mm | ${plan.floors} FLOOR(S)</text>
+
+  <!-- Plinth & Ground Line -->
+  <rect x="${startX}" y="${groundY - plinthPx}" width="${bldgW}" height="${plinthPx}" fill="#1e293b" stroke="#94a3b8" stroke-width="1.4" />
+  <line x1="24" y1="${groundY}" x2="${svgW - 24}" y2="${groundY}" stroke="#475569" stroke-width="2" />
+
+  ${floorBands.join('\n  ')}
+
+  <!-- Pitched Solar Roof with Deep Passive Eave Overhang -->
+  <polygon points="${startX - overhangPx},${roofTopY} ${Math.round(svgW / 2)},${roofPeakY} ${startX + bldgW + overhangPx},${roofTopY}" fill="#172554" stroke="#f59e0b" stroke-width="2" />
+
+  <!-- Dimension Callouts -->
+  <line x1="${startX + bldgW + 24}" y1="${groundY}" x2="${startX + bldgW + 24}" y2="${roofPeakY}" stroke="#38bdf8" stroke-width="1.2" stroke-dasharray="3,3" />
+  <text x="${startX + bldgW + 32}" y="${Math.round((groundY + roofPeakY) / 2)}" fill="#38bdf8" font-size="10" font-family="monospace">+${plan.ridgeHeightM}m Total</text>
+
+  <text x="32" y="${svgH - 12}" fill="#fbbf24" font-size="9.5" font-family="system-ui, sans-serif">PRELIMINARY ELEVATION SCHEMATIC — Structural wind/roof framing and footing depth require licensed engineer verification.</text>
+</svg>`;
+}
+
 /**
  * Generates genuine ASCII AutoCAD DXF R12 output readable by AutoCAD, LibreCAD, QCAD, and DraftSight.
  */
@@ -839,6 +911,29 @@ export function generateArchitecturePlan(input: ArchitecturePlanInput): Architec
     rooms,
   });
 
+  const floorToFloorM = climate === 'tropical_west_africa' ? 3.15 : 3.0;
+  const plinthHeightM = 0.6;
+  const eaveOverhangMm = climate === 'tropical_west_africa' ? 1050 : 600;
+  const ridgeHeightM = round2(plinthHeightM + floors * floorToFloorM + 2.1);
+
+  const elevationAndSectionSummary = {
+    floorToFloorM,
+    plinthHeightM,
+    eaveOverhangMm,
+    ridgeHeightM,
+    sectionAxis: `Section A-A cuts North-South through vertical stair & wet-core spine (${footprintDepthM}m depth, ${floors} floor(s)).`,
+  };
+
+  const svgFrontElevation = generateElevationSvg({
+    projectName,
+    floors,
+    footprintWidthM,
+    floorToFloorM,
+    plinthHeightM,
+    eaveOverhangMm,
+    ridgeHeightM,
+  });
+
   const dxfR12Content = generateArchitecturalDxf({
     projectName,
     plotWidthM,
@@ -871,7 +966,52 @@ export function generateArchitecturePlan(input: ArchitecturePlanInput): Architec
     structuralAndSiteNotes,
     workflowStages,
     honestyDisclaimer,
+    elevationAndSectionSummary,
     svgFloorPlan,
+    svgFrontElevation,
     dxfR12Content,
   };
+}
+
+export function exportArchitecturalReportMarkdown(plan: ArchitecturePlanResult): string {
+  return [
+    `# ${plan.projectName} — Conceptual Architectural Project Brief & Documentation`,
+    '',
+    `> **IMPORTANT NOTICE:** ${plan.honestyDisclaimer}`,
+    '',
+    `## 1. Site & Massing Summary`,
+    `- **Typology:** ${plan.typology.replace(/_/g, ' ')}`,
+    `- **Location / Climate:** ${plan.location} (${plan.climate})`,
+    `- **Plot Dimensions:** ${plan.plotWidthM}m × ${plan.plotDepthM}m`,
+    `- **Building Footprint:** ${plan.footprintWidthM}m × ${plan.footprintDepthM}m (${plan.siteCoveragePercent}% site coverage)`,
+    `- **Floors / Gross Floor Area:** ${plan.floors} floor(s), ${plan.totalGrossFloorAreaM2} m² GFA`,
+    `- **Elevation & Section Datums:** Plinth +${plan.elevationAndSectionSummary.plinthHeightM}m, Floor-to-Floor ${plan.elevationAndSectionSummary.floorToFloorM}m, Eave Overhang ${plan.elevationAndSectionSummary.eaveOverhangMm}mm, Ridge +${plan.elevationAndSectionSummary.ridgeHeightM}m`,
+    `- **Section Cut A-A:** ${plan.elevationAndSectionSummary.sectionAxis}`,
+    '',
+    `## 2. Applied Assumptions & Brief Clarifications`,
+    ...(plan.appliedAssumptions.length ? plan.appliedAssumptions.map((a) => `- Assumption: ${a}`) : ['- All key brief inputs explicitly supplied.']),
+    ...(plan.clarifyingQuestions.length ? ['', '### Open Clarifying Questions', ...plan.clarifyingQuestions.map((q) => `- ${q}`)] : []),
+    '',
+    `## 3. Room Schedule`,
+    '| Floor | Room | Zone | Dimensions | Area (m²) | Ventilation |',
+    '|---|---|---|---|---|---|',
+    ...plan.roomSchedule.map((r) => `| ${r.floor} | ${r.room} | ${r.zone} | ${r.dimensionsM} | ${r.areaM2} | ${r.ventilation} |`),
+    '',
+    `## 4. Door & Window Schedule`,
+    '| Tag | Kind | Specification | Size (mm) | Qty | Material |',
+    '|---|---|---|---|---|---|',
+    ...plan.doorWindowSchedule.map((d) => `| ${d.tag} | ${d.kind} | ${d.spec} | ${d.widthMm}×${d.heightMm} | ${d.count} | ${d.material} |`),
+    '',
+    `## 5. Climate Strategy & Structural / Site Notes`,
+    ...plan.passiveClimateStrategies.map((s) => `- ${s}`),
+    ...plan.structuralAndSiteNotes.map((s) => `- ${s}`),
+    '',
+    `## 6. Preliminary BOQ Guidance`,
+    `${plan.preliminaryBoqGuidance.disclaimer}`,
+    `- **Estimated Conceptual Range:** $${plan.preliminaryBoqGuidance.estimatedTotalRangeUsd[0].toLocaleString()} – $${plan.preliminaryBoqGuidance.estimatedTotalRangeUsd[1].toLocaleString()} USD`,
+    ...plan.preliminaryBoqGuidance.lineItems.map((li) => `- **${li.element}** (${li.basis}): $${li.estimatedRangeUsd[0].toLocaleString()} – $${li.estimatedRangeUsd[1].toLocaleString()}`),
+    '',
+    `## 7. 5-Stage Professional Workflow Tracker`,
+    ...plan.workflowStages.map((w) => `- Stage ${w.stageNumber} (${w.name}): **${w.status}** — ${w.description}`),
+  ].join('\n');
 }

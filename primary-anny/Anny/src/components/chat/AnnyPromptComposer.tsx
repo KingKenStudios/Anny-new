@@ -376,13 +376,15 @@ export const AnnyPromptComposer: React.FC<AnnyPromptComposerProps> = ({
           aria-pressed={isWebSearchEnabled}
           className={`min-h-[38px] sm:min-h-[34px] px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 text-xs font-medium transition-colors cursor-pointer ${
             isWebSearchEnabled
-              ? 'bg-blue-500/20 border-blue-400/60 text-blue-200'
+              ? isLight
+                ? 'bg-blue-100 border-blue-400 text-blue-800'
+                : 'bg-blue-500/20 border-blue-400/60 text-blue-200'
               : isLight
               ? 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-800'
               : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
           }`}
         >
-          <Globe className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+          <Globe className={`w-3.5 h-3.5 shrink-0 ${isLight ? 'text-blue-600' : 'text-blue-400'}`} />
           <span>{isWebSearchEnabled ? 'Web Live' : 'Web'}</span>
         </button>
 
@@ -395,13 +397,15 @@ export const AnnyPromptComposer: React.FC<AnnyPromptComposerProps> = ({
               aria-expanded={isProToolsActive}
               className={`min-h-[38px] sm:min-h-[34px] px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 text-xs font-medium transition-colors cursor-pointer ${
                 isProToolsActive
-                  ? 'bg-amber-500/20 border-amber-400/60 text-amber-200'
+                  ? isLight
+                    ? 'bg-amber-100 border-amber-400 text-amber-900'
+                    : 'bg-amber-500/20 border-amber-400/60 text-amber-200'
                   : isLight
                   ? 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-800'
                   : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
               }`}
             >
-              <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <Zap className={`w-3.5 h-3.5 shrink-0 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
               <span className={variant === 'split' ? 'hidden sm:inline' : ''}>Pro Tools</span>
             </button>
 
@@ -412,13 +416,15 @@ export const AnnyPromptComposer: React.FC<AnnyPromptComposerProps> = ({
               aria-expanded={isModelPopoverActive}
               className={`min-h-[38px] sm:min-h-[34px] px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 text-xs font-medium transition-colors cursor-pointer ${
                 isModelPopoverActive || selectedModelId !== 'auto'
-                  ? 'bg-purple-500/20 border-purple-400/60 text-purple-200'
+                  ? isLight
+                    ? 'bg-purple-100 border-purple-400 text-purple-900'
+                    : 'bg-purple-500/20 border-purple-400/60 text-purple-200'
                   : isLight
                   ? 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-800'
                   : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
               }`}
             >
-              <Brain className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+              <Brain className={`w-3.5 h-3.5 shrink-0 ${isLight ? 'text-purple-600' : 'text-purple-400'}`} />
               <span className="hidden sm:inline">{activeModelLabel.split(' ')[0]}</span>
             </button>
 
@@ -429,14 +435,16 @@ export const AnnyPromptComposer: React.FC<AnnyPromptComposerProps> = ({
               aria-pressed={includeCodeContext}
               className={`min-h-[38px] sm:min-h-[34px] px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 text-xs font-medium transition-colors cursor-pointer ${
                 includeCodeContext
-                  ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-200'
+                  ? isLight
+                    ? 'bg-emerald-100 border-emerald-400 text-emerald-900'
+                    : 'bg-emerald-500/20 border-emerald-400/60 text-emerald-200'
                   : isLight
                   ? 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-800'
                   : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
               }`}
               title={`Workspace context (${vfsFileCount} files)`}
             >
-              <Code2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <Code2 className={`w-3.5 h-3.5 shrink-0 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
               <span className="hidden sm:inline">Code</span>
             </button>
           </>
@@ -562,7 +570,7 @@ export const AnnyPromptComposer: React.FC<AnnyPromptComposerProps> = ({
                 : 'bg-[#080d22] border-cyan-500/35 text-slate-100'
             }`}
           >
-            <div className="flex items-center justify-between gap-3 pb-3 mb-3 border-b border-white/10">
+            <div className={`flex items-center justify-between gap-3 pb-3 mb-3 border-b ${isLight ? 'border-slate-200' : 'border-white/10'}`}>
               <div>
                 <h2 className="text-sm font-bold tracking-wide">Expanded Prompt Composer</h2>
                 <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>

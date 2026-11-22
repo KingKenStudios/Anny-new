@@ -107,6 +107,7 @@ export class PostgresPlatform {
     this.inMemoryTables.set('audit_logs', new Map());
     this.inMemoryTables.set('ai_executions', new Map());
     this.inMemoryTables.set('memory_items', new Map());
+    this.inMemoryTables.set('studio_records', new Map());
 
     // No versioned migration has run yet. Schema creation is performed by the
     // live health/bootstrap path and must not be represented as a completed migration.
@@ -164,6 +165,16 @@ export class PostgresPlatform {
           ip_address VARCHAR(64)
         );
         CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp DESC);
+        CREATE TABLE IF NOT EXISTS studio_records (
+          id VARCHAR(100) PRIMARY KEY,
+          owner_user_id VARCHAR(160) NOT NULL,
+          kind VARCHAR(40) NOT NULL,
+          title VARCHAR(160) NOT NULL,
+          payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_studio_records_owner ON studio_records(owner_user_id, created_at DESC);
       `);
 
       const latencyMs = Date.now() - startTime;
@@ -202,18 +213,36 @@ export class PostgresPlatform {
     } as unknown as T;
 
     if (this.pool) {
-      if (tableName !== 'memory_items') {
+      if (tableName === 'studio_records') {
+        try {
+          await this.pool.query(
+            `INSERT INTO studio_records (id, owner_user_id, kind, title, payload, updated_at)
+             VALUES ($1,$2,$3,$4,$5::jsonb,NOW())
+             ON CONFLICT (id) DO UPDATE SET kind=$3, title=$4, payload=$5::jsonb, updated_at=NOW()`,
+            [
+              id,
+              String((record as any).ownerUserId || 'anonymous'),
+              String((record as any).kind || 'architecture'),
+              String((record as any).title || 'Untitled Record'),
+              JSON.stringify((record as any).payload || {})
+            ]
+          );
+        } catch (err: any) {
+          throw new Error(`POSTGRES_WRITE_FAILED: studio_records insert was not persisted: ${err.message}`);
+        }
+      } else if (tableName === 'memory_items') {
+        try {
+          await this.pool.query(
+            `INSERT INTO memory_items (id, owner_user_id, session_id, project_id, scope, type, content, topic, importance, source, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+             ON CONFLICT (id) DO UPDATE SET content=$7, topic=$8, importance=$9, source=$10, updated_at=NOW()`,
+            [id, (record as any).owner_user_id || 'anonymous', (record as any).session_id || 'default', (record as any).project_id || 'default', (record as any).scope || 'private', (record as any).type || 'general', String((record as any).content || ''), (record as any).topic || null, Number((record as any).importance ?? 0.5), (record as any).source || 'system']
+          );
+        } catch (err: any) {
+          throw new Error(`POSTGRES_WRITE_FAILED: memory_items insert was not persisted: ${err.message}`);
+        }
+      } else {
         throw new Error(`POSTGRES_TABLE_NOT_IMPLEMENTED: durable inserts for '${tableName}' are not implemented; refusing an in-memory success response.`);
-      }
-      try {
-        await this.pool.query(
-          `INSERT INTO memory_items (id, owner_user_id, session_id, project_id, scope, type, content, topic, importance, source, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
-           ON CONFLICT (id) DO UPDATE SET content=$7, topic=$8, importance=$9, source=$10, updated_at=NOW()`,
-          [id, (record as any).owner_user_id || 'anonymous', (record as any).session_id || 'default', (record as any).project_id || 'default', (record as any).scope || 'private', (record as any).type || 'general', String((record as any).content || ''), (record as any).topic || null, Number((record as any).importance ?? 0.5), (record as any).source || 'system']
-        );
-      } catch (err: any) {
-        throw new Error(`POSTGRES_WRITE_FAILED: memory_items insert was not persisted: ${err.message}`);
       }
     } else if (requiresDurablePersistence()) {
       throw new Error('POSTGRES_NOT_CONFIGURED: durable persistence is required; in-memory insert is disabled.');
@@ -237,6 +266,19 @@ export class PostgresPlatform {
 
   public async findById<T extends DatabaseRecord>(tableName: string, id: string): Promise<T | null> {
     if (this.pool) {
+      if (tableName === 'studio_records') {
+        try {
+          const res = await this.pool.query('SELECT * FROM studio_records WHERE id = $1', [id]);
+          if (res.rows.length === 0) return null;
+          const row = res.rows[0];
+          return {
+            id: row.id, ownerUserId: row.owner_user_id, kind: row.kind, title: row.title, payload: row.payload,
+            createdAt: row.created_at, updatedAt: row.updated_at
+          } as unknown as T;
+        } catch (err: any) {
+          throw new Error(`POSTGRES_READ_FAILED: studio_records lookup failed: ${err.message}`);
+        }
+      }
       if (tableName !== 'memory_items') {
         throw new Error(`POSTGRES_TABLE_NOT_IMPLEMENTED: durable reads for '${tableName}' are not implemented.`);
       }
@@ -263,6 +305,18 @@ export class PostgresPlatform {
 
   public async query<T extends DatabaseRecord>(tableName: string, filterFn?: (item: T) => boolean): Promise<T[]> {
     if (this.pool) {
+      if (tableName === 'studio_records') {
+        try {
+          const res = await this.pool.query('SELECT * FROM studio_records ORDER BY created_at DESC LIMIT 100');
+          const items = res.rows.map(row => ({
+            id: row.id, ownerUserId: row.owner_user_id, kind: row.kind, title: row.title, payload: row.payload,
+            createdAt: row.created_at, updatedAt: row.updated_at
+          })) as unknown as T[];
+          return filterFn ? items.filter(filterFn) : items;
+        } catch (err: any) {
+          throw new Error(`POSTGRES_READ_FAILED: studio_records query failed: ${err.message}`);
+        }
+      }
       if (tableName !== 'memory_items') {
         throw new Error(`POSTGRES_TABLE_NOT_IMPLEMENTED: durable queries for '${tableName}' are not implemented.`);
       }

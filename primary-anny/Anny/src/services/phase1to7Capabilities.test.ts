@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 import {
   calculateAutoTextareaHeight,
@@ -7,9 +11,11 @@ import {
   canSubmitPrompt,
   resolveDraftAfterFailedSend,
 } from '../components/chat/composerUtils';
+import { AnnyPromptComposer } from '../components/chat/AnnyPromptComposer';
 import {
   generateArchitecturePlan,
   detectBriefGaps,
+  exportArchitecturalReportMarkdown,
 } from '../core/architectureDesignEngine';
 import {
   generateBroadcastPlan,
@@ -23,9 +29,10 @@ import {
   detectDomainPlatformArchetype,
   buildDomainPlatformBlueprint,
 } from '../core/platformBlueprintEngine';
-import { classifyProjectRequest } from '../core/realAppCodeSynthesizer';
+import { classifyProjectRequest, synthesizeAppFiles } from '../core/realAppCodeSynthesizer';
 import { agentRegistry } from '../core/agentRegistry';
 import { annyCapabilityTruthRegistry } from '../core/annyCapabilityTruthRegistry';
+import { aiProviderPlatform } from './aiProviderPlatform';
 
 test('Phase 1: composerUtils handles multiline auto-grow, Shift+Enter, mobile Enter, IME, and failed-send draft restoration', () => {
   const shortBox = calculateAutoTextareaHeight({ scrollHeight: 40, minHeight: 52, maxHeight: 220 });
@@ -90,9 +97,25 @@ test('Phase 2: architectureDesignEngine builds non-overlapping multi-floor layou
     }
   }
 
-  // Verify SVG schematic & disclaimer
+  // Verify SVG schematic, front elevation SVG, elevation datums, & disclaimer
   assert.ok(plan.svgFloorPlan.startsWith('<svg '));
   assert.ok(plan.svgFloorPlan.includes('NOT FOR CONSTRUCTION'));
+  assert.ok(plan.svgFrontElevation.startsWith('<svg '));
+  assert.ok(plan.svgFrontElevation.includes('SCHEMATIC SOUTH ELEVATION'));
+  assert.ok(plan.elevationAndSectionSummary.ridgeHeightM > plan.elevationAndSectionSummary.plinthHeightM);
+
+  // Verify Markdown brief export
+  const mdReport = exportArchitecturalReportMarkdown(plan);
+  assert.ok(mdReport.includes('Abuja Passive Cooling Residence'));
+  assert.ok(mdReport.includes('## 3. Room Schedule'));
+  assert.ok(mdReport.includes('## 6. Preliminary BOQ Guidance'));
+
+  // Verify commercial & institutional typologies
+  for (const typology of ['bungalow', 'office_hub', 'clinic', 'studio_broadcast'] as const) {
+    const commercial = generateArchitecturePlan({ typology, floors: typology === 'bungalow' ? 1 : 2 });
+    assert.ok(commercial.roomSchedule.length >= 4);
+    assert.ok(commercial.svgFrontElevation.startsWith('<svg '));
+  }
 
   // Verify genuine ASCII AutoCAD DXF R12 sections
   assert.ok(plan.dxfR12Content.includes('AC1009'));
@@ -215,4 +238,167 @@ test('Phase 6: domain platform blueprints, synthesizer classification, agents, a
   assert.ok(annyCapabilityTruthRegistry.getCapability('BROADCAST_STUDIO_PLANNING'));
   assert.ok(annyCapabilityTruthRegistry.getCapability('MUSIC_DISTRIBUTION_PREP'));
   assert.ok(annyCapabilityTruthRegistry.getCapability('VIDEO_STREAMING_PIPELINE'));
+});
+
+test('Phase 7A: AnnyPromptComposer renders mobile-zoom-safe >=16px inputs, accessible pinch-to-zoom HTML, and high-contrast light/dark themes', () => {
+  const noop = () => {};
+  const lightMarkup = renderToStaticMarkup(
+    React.createElement(AnnyPromptComposer, {
+      prompt: 'Design an online TV broadcast portal',
+      setPrompt: noop,
+      onSend: noop,
+      onStop: noop,
+      isWorking: false,
+      theme: 'light',
+      attachedFiles: [],
+      onRemoveAttachedFile: noop,
+      visionSnapshot: null,
+      onClearVisionSnapshot: noop,
+      isListening: false,
+      isRecordingAudio: false,
+      isTranscribingAudio: false,
+      onToggleVoiceInput: noop,
+      onStopSpeechRecognition: noop,
+      onStopMediaRecording: noop,
+      onAttachFilesClick: noop,
+      isWebSearchEnabled: true,
+      onToggleWebSearch: noop,
+      isProToolsActive: true,
+      onToggleProTools: noop,
+      activeModelLabel: 'Anny Core',
+      isModelPopoverActive: false,
+      selectedModelId: 'gemini-3-flash',
+      onToggleModelPopover: noop,
+      includeCodeContext: true,
+      onToggleCodeContext: noop,
+      vfsFileCount: 5,
+    })
+  );
+
+  assert.ok(lightMarkup.includes('data-testid="anny-composer-textarea"'));
+  assert.ok(lightMarkup.includes('aria-label="Prompt input"'));
+  assert.ok(lightMarkup.includes('text-[16px]'));
+  assert.ok(lightMarkup.includes('text-blue-800'));
+  assert.ok(lightMarkup.includes('text-emerald-900'));
+  assert.ok(lightMarkup.includes('aria-label="Send message"'));
+
+  const workingDarkMarkup = renderToStaticMarkup(
+    React.createElement(AnnyPromptComposer, {
+      prompt: '',
+      setPrompt: noop,
+      onSend: noop,
+      onStop: noop,
+      isWorking: true,
+      theme: 'dark',
+      attachedFiles: [],
+      onRemoveAttachedFile: noop,
+      visionSnapshot: null,
+      onClearVisionSnapshot: noop,
+      isListening: false,
+      isRecordingAudio: false,
+      isTranscribingAudio: false,
+      onToggleVoiceInput: noop,
+      onStopSpeechRecognition: noop,
+      onStopMediaRecording: noop,
+      onAttachFilesClick: noop,
+      isWebSearchEnabled: false,
+      onToggleWebSearch: noop,
+      isProToolsActive: false,
+      onToggleProTools: noop,
+      activeModelLabel: 'Anny Core',
+      isModelPopoverActive: false,
+      selectedModelId: 'gemini-3-flash',
+      onToggleModelPopover: noop,
+      includeCodeContext: false,
+      onToggleCodeContext: noop,
+      vfsFileCount: 0,
+    })
+  );
+  assert.ok(workingDarkMarkup.includes('aria-label="Stop response generation"'));
+
+  // Verify index.html keeps accessible pinch-to-zoom & index.css guards mobile inputs against iOS auto-zoom
+  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../../');
+  const indexHtml = fs.readFileSync(path.join(repoRoot, 'index.html'), 'utf8');
+  const indexCss = fs.readFileSync(path.join(repoRoot, 'primary-anny/Anny/src/index.css'), 'utf8');
+  assert.ok(indexHtml.includes('interactive-widget=resizes-content'));
+  assert.ok(!/user-scalable\s*=\s*no/i.test(indexHtml));
+  assert.ok(!/maximum-scale\s*=\s*1(\.0)?/i.test(indexHtml));
+  assert.ok(indexCss.includes('font-size: max(16px, 1rem)'));
+});
+
+test('Phase 7B: synthesizeAppFiles executes fullstack synthesis, validation, and targeted repair loop deterministically', async () => {
+  let callCount = 0;
+  const mockExecutor = async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      // Return intentionally incomplete manifest (missing /src/styles.css referenced by /src/main.tsx)
+      return {
+        provider: 'ollama',
+        model: 'qwen2.5-coder',
+        content: JSON.stringify({
+          files: {
+            '/package.json': JSON.stringify({
+              name: 'tv-station-platform',
+              private: true,
+              scripts: { dev: 'tsx server.ts', build: 'vite build' },
+              dependencies: { react: '^19.0.0', 'react-dom': '^19.0.0', express: '^4.21.0' },
+            }),
+            '/index.html': '<!doctype html><html><head><title>TV Station</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
+            '/src/main.tsx': 'import React from "react"; import { createRoot } from "react-dom/client"; import App from "./App"; import "./styles.css"; createRoot(document.getElementById("root")!).render(<App />);',
+            '/src/App.tsx': 'import React, { useState } from "react"; export default function App() { const [ch, setCh] = useState("Live"); return <main><h1>Studio Broadcast</h1><p>{ch}</p></main>; }',
+            '/server.ts': 'import express from "express"; const app = express(); app.get("/api/health", (_req, res) => res.json({ ok: true })); app.listen(3000);',
+          },
+          summary: 'Initial draft missing CSS file',
+        }),
+      };
+    }
+    return {
+      provider: 'ollama',
+      model: 'qwen2.5-coder',
+      content: JSON.stringify({
+        files: {
+          '/src/styles.css': 'body { font-family: system-ui, sans-serif; margin: 0; background: #0f172a; color: #f8fafc; }',
+        },
+        summary: 'Added missing /src/styles.css and verified fullstack build.',
+      }),
+    };
+  };
+
+  const plan = await synthesizeAppFiles(
+    'Build an online TV station platform with API routes',
+    {},
+    { chatExecutor: mockExecutor, maxRepairAttempts: 2 }
+  );
+
+  assert.equal(callCount, 2);
+  assert.equal(plan.repairAttempts, 1);
+  assert.equal(plan.projectKind, 'fullstack');
+  assert.ok(plan.verification?.passed);
+  assert.ok(plan.stages.includes('repair_attempt_1'));
+  assert.ok(plan.stages.includes('completed'));
+  assert.ok(plan.files['/src/styles.css']);
+  assert.ok(plan.files['/server.ts']);
+});
+
+test('Phase 7C: Offline-First enforcement blocks cloud providers when offlineOnly=true and health status never fakes HEALTHY', async () => {
+  await assert.rejects(
+    () =>
+      aiProviderPlatform.chat(
+        [{ role: 'user', content: 'ping' }],
+        { offlineOnly: true },
+        'openai'
+      ),
+    /OFFLINE_UNAVAILABLE/
+  );
+
+  const healthMap = aiProviderPlatform.getHealthMap();
+  for (const [provider, entry] of Object.entries(healthMap)) {
+    if (provider !== 'ollama' && !process.env[`${provider.toUpperCase()}_API_KEY`]) {
+      assert.notEqual(
+        entry.status,
+        'HEALTHY',
+        `Provider ${provider} without credentials must never report fake HEALTHY`
+      );
+    }
+  }
 });
