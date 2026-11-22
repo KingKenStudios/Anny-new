@@ -1,0 +1,90 @@
+services:
+  anny:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ANNY_HARDWARE=${ANNY_HARDWARE:-false}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://anny:anny@postgres:5432/anny}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - RABBITMQ_URL=${RABBITMQ_URL:-amqp://anny:anny@rabbitmq:5672}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-minio:9000}
+      - CLICKHOUSE_URL=${CLICKHOUSE_URL:-http://clickhouse:8123}
+      - KEDA_API_URL=${KEDA_API_URL:-}
+      - KEDA_API_TOKEN=${KEDA_API_TOKEN:-}
+    depends_on:
+      - postgres
+      - redis
+      - qdrant
+      - rabbitmq
+      - minio
+      - clickhouse
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: anny
+      POSTGRES_USER: anny
+      POSTGRES_PASSWORD: anny
+    volumes:
+      - anny_postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - anny_redis:/data
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - anny_qdrant:/qdrant/storage
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: anny
+      RABBITMQ_DEFAULT_PASS: anny
+    volumes:
+      - anny_rabbitmq:/var/lib/rabbitmq
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set to a non-default access key}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set to a strong non-default secret}
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - anny_minio:/data
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    volumes:
+      - anny_clickhouse:/var/lib/clickhouse
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - anny_ollama:/root/.ollama
+
+volumes:
+  anny_postgres:
+  anny_redis:
+  anny_qdrant:
+  anny_rabbitmq:
+  anny_minio:
+  anny_clickhouse:
+  anny_ollama:

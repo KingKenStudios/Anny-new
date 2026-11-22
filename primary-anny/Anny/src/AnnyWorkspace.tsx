@@ -1,0 +1,3716 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { safeStorage } from './lib/storage';
+import { fetchWithAuth } from './lib/apiUtils';
+import { generateRealProjectTitle } from './lib/projectTitleUtils';
+import { systemBus } from './core/systemBus';
+import { isSynthesisOrPlaceholderContent, isAppWebsiteOr3DRequest, formatNaturalConversation } from './utils/chatHelpers';
+import { WorkspaceManager } from "./core/workspaceManager";
+import { executionStreamManager } from "./core/executionStreamManager";
+import { universalExecutionController } from "./core/universalExecutionController";
+import { DynamicVFSAppRunner } from "./components/StandalonePreviewRunner";
+import { WorkspacePreviewContainer } from "./components/workspace/WorkspacePreviewContainer";
+import { MobileLogoMenu } from './MobileLogoMenu';
+import { ExecutionStreamView } from './components/chat/ExecutionStreamView';
+import {
+  Sparkles,
+  Command,
+  Camera,
+  Globe,
+  Volume2,
+  VolumeX,
+  Share2,
+  ChevronDown,
+  Bell,
+  ShoppingBag,
+  Code2,
+  LayoutDashboard,
+  Lock,
+  Paperclip,
+  AtSign,
+  Mic,
+  Send,
+  Square,
+  Zap,
+  Brain,
+  Menu,
+  BarChart3,
+  Terminal,
+  CheckCircle2,
+  ArrowRight,
+  Plus,
+  RotateCcw,
+  Copy,
+  Check,
+  ArrowLeft,
+  Pencil,
+  Monitor,
+  Tablet,
+  Smartphone,
+  RefreshCw,
+  Maximize2,
+  Minimize2,
+  X,
+  Search,
+  User,
+  Heart,
+  ShoppingCart,
+  Truck,
+  ShieldCheck,
+  Headphones,
+  RotateCw,
+  Cpu,
+  Layers,
+  ExternalLink,
+  LogOut,
+  LogIn,
+  Settings,
+  History,
+  Folder,
+  Bot,
+  ThumbsUp,
+  ThumbsDown,
+  MicOff,
+  Download,
+  FileText,
+  ScanEye,
+  Link2,
+  AlertCircle,
+} from 'lucide-react';
+
+import logoImg from './assets/logo.png';
+
+const hardwareLogo = '/logo.png';
+import { WorkspaceCodeEditor } from './components/workspace/WorkspaceCodeEditor';
+import { AnnyProfessionalEditor } from './components/AnnyProfessionalEditor';
+import VisionSensor from './components/VisionSensor';
+import { sceneUnderstanding, liveVisionController, type VisionTranscriptEntry } from './vision';
+import { annyVoiceService } from './services/annyVoiceService';
+import { memoryEngine } from './core/memoryEngine';
+import { AnnyDebugIntelligencePanel } from './components/AnnyDebugIntelligencePanel';
+import { AnnyIntelligenceWorkspacePanel } from './components/workspace/AnnyIntelligenceWorkspacePanel';
+import { classifyCreativeIntent } from './creative/CreativeIntentRouter';
+import { creativeArtifactStore } from './creative/CreativeArtifactStore';
+import type { CreativeImageResult, VideoJobRecord } from './creative/types';
+import { Activity } from 'lucide-react';
+import { ShieldAlert, Fingerprint } from 'lucide-react';
+
+interface AnnyWorkspaceProps {
+  user?: any;
+  userRole?: string;
+  isGuest?: boolean;
+  userEmail?: string;
+  userName?: string;
+  initialPrompt?: string;
+  onToggleMobileMenu?: () => void;
+  handleLogout?: () => void;
+  onOpenAuth?: () => void;
+  setView?: (v: string) => void;
+  onSelectSubTab?: (tabKey: string) => void;
+  chatHistory?: Array<{ id: string; title: string; date?: string; messages: any[] }>;
+  currentChatId?: string | null;
+  setCurrentChatId?: (id: string | null) => void;
+  startNewChat?: () => void;
+  deleteChat?: (id: string) => void;
+  messages?: any[];
+  onUpdateMessages?: (msgs: any[] | ((prev: any[]) => any[])) => void;
+  selectedNeuralEngine?: any;
+  setSelectedNeuralEngine?: (engine: any) => void;
+  isVisionActive?: boolean;
+  setIsVisionActive?: (val: boolean) => void;
+  isContinuousListening?: boolean;
+  setIsContinuousListening?: (val: boolean) => void;
+  isRobotMode?: boolean;
+  setIsRobotMode?: (val: boolean) => void;
+  isGuidanceActive?: boolean;
+  setIsGuidanceActive?: (val: boolean) => void;
+  voices?: SpeechSynthesisVoice[];
+  selectedVoiceURI?: string;
+  setSelectedVoiceURI?: (val: string) => void;
+  isAutoSpeak?: boolean;
+  setIsAutoSpeak?: (val: boolean) => void;
+  connectToAdminGlobal?: () => Promise<void>;
+  onEditorStateChange?: (isProfessional: boolean) => void;
+  pendingDroppedFiles?: File[];
+  onConsumeDroppedFiles?: () => void;
+}
+
+export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
+  user,
+  userEmail = 'amazonpromo234@gmail.com',
+  userName = 'Akin Kehinde',
+  initialPrompt,
+  onToggleMobileMenu,
+  handleLogout,
+  onOpenAuth,
+  setView,
+  onSelectSubTab,
+  chatHistory: parentChatHistory = [],
+  currentChatId,
+  setCurrentChatId,
+  startNewChat,
+  deleteChat,
+  messages = [],
+  onUpdateMessages,
+  selectedNeuralEngine,
+  setSelectedNeuralEngine,
+  onEditorStateChange,
+  isVisionActive,
+  setIsVisionActive,
+  pendingDroppedFiles = [],
+  onConsumeDroppedFiles,
+}) => {
+  const [prompt, setPrompt] = useState(initialPrompt || '');
+  const [activeMode, setActiveMode] = useState('builder');
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const [selectedModelId, setSelectedModelId] = useState<string>('auto');
+  const [activeModel, setActiveModel] = useState('Auto (Best Route)');
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isVoiceActive, setIsVoiceActive] = useState<boolean>(() => safeStorage.getItem('anny_auto_speak') === 'true');
+  const [currentTime, setCurrentTime] = useState('08:14 PM');
+
+  // Pro Tools, Web Search & Notice States
+  const [isWebSearchEnabled, setIsWebSearchEnabled] = useState<boolean>(false);
+  const [includeCodeContext, setIncludeCodeContext] = useState<boolean>(false);
+  const [isDeepThinkingEnabled, setIsDeepThinkingEnabled] = useState<boolean>(false);
+  const [isSaharaEnabled, setIsSaharaEnabled] = useState<boolean>(false);
+  const [activePopover, setActivePopover] = useState<'none' | 'protools' | 'model' | 'url'>('none');
+  const [inspectUrlInput, setInspectUrlInput] = useState<string>('');
+  const [isInspectingUrl, setIsInspectingUrl] = useState<boolean>(false);
+  const [workspaceNotice, setWorkspaceNotice] = useState<{
+    type: 'info' | 'success' | 'warning' | 'error';
+    message: string;
+  } | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showNotice = React.useCallback((message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    setWorkspaceNotice({ type, message });
+    noticeTimerRef.current = setTimeout(() => {
+      setWorkspaceNotice(null);
+      noticeTimerRef.current = null;
+    }, 5500);
+  }, []);
+
+  // Speech Recognition, MediaRecorder Fallback & Vision Sensor States
+  const [isListening, setIsListening] = useState(false);
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [isTranscribingAudio, setIsTranscribingAudio] = useState(false);
+  const [isVisionOpen, setIsVisionOpen] = useState<boolean>(Boolean(isVisionActive));
+  const [isVisionAnalyzing, setIsVisionAnalyzing] = useState(false);
+  const [visionSnapshot, setVisionSnapshot] = useState<string | null>(null);
+  const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const basePromptRef = useRef<string>('');
+  const cancelAudioRef = useRef<boolean>(false);
+
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const speechTranscriptRef = useRef('');
+  const isSpeechOutputRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof isVisionActive === 'boolean') {
+      setIsVisionOpen(isVisionActive);
+    }
+  }, [isVisionActive]);
+
+  const toggleVisionMonitor = (nextVal?: boolean) => {
+    const next = typeof nextVal === 'boolean' ? nextVal : !isVisionOpen;
+    setIsVisionOpen(next);
+    if (setIsVisionActive) setIsVisionActive(next);
+  };
+
+  const clearVoiceSilenceTimer = () => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+  };
+
+  const stopAudioStreamTracks = () => {
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach((t) => {
+        try { t.stop(); } catch {}
+      });
+      audioStreamRef.current = null;
+    }
+  };
+
+  const stopSpeechRecognition = () => {
+    clearVoiceSilenceTimer();
+    const recognition = recognitionRef.current;
+    if (recognition) {
+      try { recognition.onend = null; } catch {}
+      try { recognition.stop(); } catch {}
+      try { recognition.abort(); } catch {}
+    }
+    recognitionRef.current = null;
+    setIsListening(false);
+  };
+
+  const stopMediaRecording = (cancel = false) => {
+    cancelAudioRef.current = cancel;
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state !== 'inactive') {
+      try { rec.stop(); } catch {}
+    } else {
+      stopAudioStreamTracks();
+      setIsRecordingAudio(false);
+    }
+  };
+
+  const startMediaRecorderFallback = async () => {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      showNotice('Microphone capture is not supported in this browser. Please type your message.', 'warning');
+      return;
+    }
+
+    try {
+      stopSpeechRecognition();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+      audioChunksRef.current = [];
+      cancelAudioRef.current = false;
+
+      const preferredTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+      const chosenMime = preferredTypes.find((t) => MediaRecorder.isTypeSupported?.(t)) || '';
+      const recorder = chosenMime ? new MediaRecorder(stream, { mimeType: chosenMime }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        setIsRecordingAudio(false);
+        stopAudioStreamTracks();
+        mediaRecorderRef.current = null;
+
+        if (cancelAudioRef.current || audioChunksRef.current.length === 0) {
+          audioChunksRef.current = [];
+          return;
+        }
+
+        const blobType = recorder.mimeType || chosenMime || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: blobType });
+        audioChunksRef.current = [];
+        if (audioBlob.size < 400) {
+          showNotice('Recording was too short to transcribe. Try speaking a bit longer.', 'info');
+          return;
+        }
+
+        setIsTranscribingAudio(true);
+        try {
+          const base64Audio = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const resStr = String(reader.result || '');
+              resolve(resStr.includes(',') ? resStr.split(',').pop() || '' : resStr);
+            };
+            reader.onerror = () => reject(new Error('Failed to encode audio recording'));
+            reader.readAsDataURL(audioBlob);
+          });
+
+          const sttRes = await fetchWithAuth('/api/sahara/stt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              audio: base64Audio,
+              mimeType: blobType.split(';')[0],
+              language: isSaharaEnabled ? 'pidgin' : 'auto',
+            }),
+          });
+          const sttData = await sttRes.json().catch(() => ({}));
+          if (!sttRes.ok || !sttData?.text) {
+            throw new Error(sttData?.error || `Transcription failed (HTTP ${sttRes.status})`);
+          }
+          const combined = [basePromptRef.current.trim(), String(sttData.text).trim()].filter(Boolean).join(' ').trim();
+          setPrompt(combined);
+          showNotice('Voice transcribed. Review or press Send.', 'success');
+        } catch (sttErr: any) {
+          showNotice(sttErr?.message || 'Unable to transcribe audio recording.', 'error');
+        } finally {
+          setIsTranscribingAudio(false);
+        }
+      };
+
+      recorder.start(250);
+      setIsRecordingAudio(true);
+    } catch (micErr: any) {
+      stopAudioStreamTracks();
+      setIsRecordingAudio(false);
+      showNotice(
+        micErr?.name === 'NotAllowedError'
+          ? 'Microphone permission denied. Allow mic access in browser settings.'
+          : 'Microphone hardware is unavailable.',
+        'error'
+      );
+    }
+  };
+
+  const armVoiceSilenceTimer = () => {
+    clearVoiceSilenceTimer();
+    if (!speechTranscriptRef.current.trim() || isGenerating || isSubmittingRef.current || isSpeechOutputRef.current) return;
+    silenceTimerRef.current = setTimeout(() => {
+      silenceTimerRef.current = null;
+      const transcript = [basePromptRef.current.trim(), speechTranscriptRef.current.trim()].filter(Boolean).join(' ').trim();
+      if (!transcript || isGenerating || isSubmittingRef.current || isSpeechOutputRef.current) return;
+      stopSpeechRecognition();
+      void handleSend(transcript);
+    }, 3500);
+  };
+
+  const startListening = () => {
+    if (isRecordingAudio) {
+      stopMediaRecording(false);
+      return;
+    }
+    if (isListening) {
+      stopSpeechRecognition();
+      return;
+    }
+
+    // Stop active TTS cleanly, then start microphone capture shortly after.
+    if (annyVoiceService.isSpeaking()) {
+      annyVoiceService.stop();
+      isSpeechOutputRef.current = false;
+      setTimeout(() => {
+        startListening();
+      }, 150);
+      return;
+    }
+
+    basePromptRef.current = prompt.trim();
+    speechTranscriptRef.current = '';
+    clearVoiceSilenceTimer();
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      void startMediaRecorderFallback();
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        if (isSpeechOutputRef.current || annyVoiceService.isSpeaking()) {
+          try { recognition.abort(); } catch {}
+          return;
+        }
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event: any) => {
+        if (isSpeechOutputRef.current || annyVoiceService.isSpeaking()) {
+          try { recognition.abort(); } catch {}
+          return;
+        }
+
+        let finalAdded = '';
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = String(event.results[i][0]?.transcript || '').trim();
+          if (!transcript) continue;
+          if (event.results[i].isFinal) finalAdded += `${transcript} `;
+          else interim += `${transcript} `;
+        }
+
+        if (finalAdded) speechTranscriptRef.current = `${speechTranscriptRef.current} ${finalAdded}`.replace(/\s+/g, ' ').trim();
+        const spokenPart = `${speechTranscriptRef.current} ${interim}`.replace(/\s+/g, ' ').trim();
+        const displayText = [basePromptRef.current, spokenPart].filter(Boolean).join(' ').trim();
+        if (displayText) setPrompt(displayText);
+        if (speechTranscriptRef.current || interim.trim()) armVoiceSilenceTimer();
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn('Speech recognition notice:', event.error);
+        if (event.error === 'aborted' || event.error === 'no-speech') {
+          armVoiceSilenceTimer();
+          return;
+        }
+        stopSpeechRecognition();
+        if (
+          event.error === 'network' ||
+          event.error === 'service-not-allowed' ||
+          event.error === 'language-not-supported'
+        ) {
+          showNotice('Switching to ANNY cloud audio recorder...', 'info');
+          void startMediaRecorderFallback();
+        } else if (event.error === 'not-allowed' || event.error === 'audio-capture') {
+          showNotice('Microphone permission denied or hardware unavailable.', 'error');
+        }
+      };
+
+      recognition.onend = () => {
+        if (recognitionRef.current === recognition) {
+          recognitionRef.current = null;
+          setIsListening(false);
+          armVoiceSilenceTimer();
+        }
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.error('Speech recognition error:', err);
+      stopSpeechRecognition();
+      void startMediaRecorderFallback();
+    }
+  };
+
+  useEffect(() => {
+    const handleSpeechStart = () => {
+      isSpeechOutputRef.current = true;
+      const recognition = recognitionRef.current;
+      if (recognition) {
+        try { recognition.onend = null; } catch {}
+        try { recognition.stop(); } catch {}
+        try { recognition.abort(); } catch {}
+      }
+      recognitionRef.current = null;
+      clearVoiceSilenceTimer();
+      setIsListening(false);
+    };
+    const handleSpeechEnd = () => {
+      isSpeechOutputRef.current = false;
+    };
+    const handleLiveVoiceClaim = () => {
+      // Release SpeechRecognition and MediaRecorder so Live Vision Voice owns the mic cleanly
+      stopSpeechRecognition();
+      stopMediaRecording(true);
+    };
+    window.addEventListener('anny:speech-start', handleSpeechStart as EventListener);
+    window.addEventListener('anny:speech-end', handleSpeechEnd as EventListener);
+    window.addEventListener('anny:live-voice-claim', handleLiveVoiceClaim as EventListener);
+    return () => {
+      window.removeEventListener('anny:speech-start', handleSpeechStart as EventListener);
+      window.removeEventListener('anny:speech-end', handleSpeechEnd as EventListener);
+      window.removeEventListener('anny:live-voice-claim', handleLiveVoiceClaim as EventListener);
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+      clearVoiceSilenceTimer();
+      stopSpeechRecognition();
+      stopMediaRecording(true);
+    };
+  }, []);
+
+  const handleVisionCapture = (base64Image: string) => {
+    if (base64Image) {
+      setVisionSnapshot(base64Image);
+    }
+  };
+
+  const toggleVoice = () => {
+    const next = !isVoiceActive;
+    setIsVoiceActive(next);
+    safeStorage.setItem('anny_auto_speak', next.toString());
+    if (next) {
+      void annyVoiceService.speakConversation("ANNY voice synthesizer active.");
+    } else {
+      annyVoiceService.stop();
+    }
+  };
+
+  const handleStop = () => {
+    setIsGenerating(false);
+    systemBus.publish('BuildCancelled', 'AnnyWorkspace', {});
+    annyVoiceService.stop();
+  };
+  
+  // Mode toggle: true = split screen view (Prompt + Telemetry + Live Preview)
+  const [isSplitScreen, setIsSplitScreen] = useState(false);
+  // Mobile tab toggle for split view on mobile/tablet (chat vs preview)
+  const [mobileSplitView, setMobileSplitView] = useState<'chat' | 'preview'>('preview');
+  // Visual Studio / Manual AI Editor mode (Page 3 of Anny)
+  const [isVisualEditor, setIsVisualEditor] = useState(false);
+  
+  useEffect(() => {
+    memoryEngine.loadFromCloud().catch(err => {
+      console.warn('Initial cloud memory load failed (likely no data yet):', err);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (onEditorStateChange) {
+      onEditorStateChange(isVisualEditor);
+    }
+  }, [isVisualEditor, onEditorStateChange]);
+
+  const [previewTab, setPreviewTab] = useState<'preview' | 'code' | 'intelligence'>('preview');
+  const [deviceViewport, setDeviceViewport] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
+  const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [lightboxImage, setLightboxImage] = useState<{ url: string; prompt: string } | null>(null);
+  const [currentlySpeakingId, setCurrentlySpeakingId] = useState<string | null>(null);
+  const isSubmittingRef = useRef(false);
+  const visionRef = useRef<any>(null);
+
+  const speakText = (text: string, id: string) => {
+    if (currentlySpeakingId === id) {
+      annyVoiceService.stop();
+      setCurrentlySpeakingId(null);
+      return;
+    }
+    setCurrentlySpeakingId(id);
+    annyVoiceService.speakSpeakerButton(text, () => setCurrentlySpeakingId(null));
+  };
+  const [cartCount, setCartCount] = useState(3);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const getVfsMap = (): Record<string, string> => {
+    try {
+      const files = WorkspaceManager.getInstance().getVFS().getAllFiles();
+      const map: Record<string, string> = {};
+      files.forEach((f) => {
+        map[f.path] = f.content;
+      });
+      return map;
+    } catch {
+      return {};
+    }
+  };
+
+  const [vfsFiles, setVfsFiles] = useState<Record<string, string>>(getVfsMap);
+  
+  // Code Editor states
+  const [activeCodeFile, setActiveCodeFile] = useState<string>('package.json');
+  const [openTabs, setOpenTabs] = useState<string[]>(['package.json']);
+  const [activeFileContent, setActiveFileContent] = useState<string>('');
+  const [newFileName, setNewFileName] = useState<string>('');
+  const [isAddingFile, setIsAddingFile] = useState<boolean>(false);
+  const [isAddingFolder, setIsAddingFolder] = useState<boolean>(false);
+  const [newFolderName, setNewFolderName] = useState<string>('');
+  const [fileSearch, setFileSearch] = useState<string>('');
+
+  const [activeProj, setActiveProj] = useState<any>(undefined);
+  const [, forceUpdate] = useState(0);
+
+  useEffect(() => {
+    const unsubQueue = executionStreamManager.subscribe((streamState) => {
+      const progressPct = (() => {
+        switch (streamState.currentStage) {
+          case 'analyzing': return 15;
+          case 'planning': return 30;
+          case 'editing': return 50;
+          case 'validation': return 70;
+          case 'build': return 85;
+          case 'runtime': return 92;
+          case 'persistence': return 97;
+          case 'finalization': return 100;
+          default: return 50;
+        }
+      })();
+
+      const executionProject = streamState.isRunning || streamState.currentStatus === 'failed' || streamState.currentStatus === 'completed' ? {
+        id: WorkspaceManager.getInstance().getActiveProjectId(),
+        name: streamState.currentMessage || 'Active Task',
+        type: 'Engineering Pipeline',
+        status: streamState.isRunning ? 'running' : streamState.currentStatus === 'failed' ? 'failed' : 'completed',
+        currentStage: streamState.currentMessage || 'Processing',
+        progressPct,
+        logs: streamState.historyItems ? streamState.historyItems.map(item => `[${item.stage.toUpperCase()}] ${item.message}`) : [],
+        errors: streamState.error ? [streamState.error] : [],
+      } : undefined;
+
+      setActiveProj(executionProject);
+      setVfsFiles(getVfsMap());
+    });
+    const unsubController = universalExecutionController.subscribe(() => {
+      forceUpdate(n => n + 1);
+    });
+    return () => {
+      unsubQueue();
+      unsubController();
+    };
+  }, [currentChatId]);
+
+  // Sync isolated workspace, clear active project, and reset to conversation view when session changes
+  useEffect(() => {
+    if (currentChatId) {
+      const sessionObj = parentChatHistory.find(c => c.id === currentChatId);
+      WorkspaceManager.getInstance().switchWorkspace(currentChatId, sessionObj?.title || `Session ${currentChatId}`);
+      setIsSplitScreen(false);
+      setIsVisualEditor(false);
+      setVfsFiles(getVfsMap());
+    }
+  }, [currentChatId]);
+
+  // Watch the active VFS for any changes to keep the workspace state perfectly in sync
+  useEffect(() => {
+    const activeVFS = WorkspaceManager.getInstance().getVFS();
+    const unsubVfs = activeVFS.watch(() => {
+      setVfsFiles(getVfsMap());
+    });
+    return () => {
+      unsubVfs();
+    };
+  }, [currentChatId]);
+
+  // Close fullscreen & popovers on Escape key
+  useEffect(() => {
+    const handleEscKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsFullscreenPreview(false);
+        setActivePopover('none');
+      }
+    };
+    window.addEventListener('keydown', handleEscKey);
+    return () => window.removeEventListener('keydown', handleEscKey);
+  }, []);
+
+  const [chatHistory, setChatHistory] = useState<
+    Array<{
+      id: string;
+      role: 'user' | 'assistant';
+      content: string;
+      timestamp: string;
+      codeSnippet?: string;
+      steps?: string[];
+      sources?: Array<{ title: string; url: string }>;
+      attachedFiles?: Array<{ id: string; name: string; size: number; type: string; data?: string; textContent?: string; previewUrl?: string }>;
+      isGeneratingImage?: boolean;
+      imagePrompt?: string;
+      imageProgress?: number;
+      imageStage?: string;
+      generatedImages?: Array<{
+        url: string;
+        prompt: string;
+        seed?: number;
+        timestamp?: string;
+        format?: string;
+        mimeType?: string;
+        width?: number;
+        height?: number;
+        provider?: string;
+        category?: string;
+        logoBundle?: CreativeImageResult['logoBundle'];
+      }>;
+      generatedVideo?: VideoJobRecord;
+    }>
+  >([]);
+  const [generatingSessions, setGeneratingSessions] = useState<Set<string>>(new Set());
+  const isGenerating = currentChatId ? generatingSessions.has(currentChatId) : false;
+
+  const setIsGenerating = (val: boolean, overrideSessionId?: string) => {
+    const targetId = overrideSessionId || currentChatId;
+    setGeneratingSessions(prev => {
+      const next = new Set(prev);
+      if (val && targetId) next.add(targetId);
+      else if (!val && targetId) next.delete(targetId);
+      return next;
+    });
+  };
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  // Auto-scroll chat to bottom
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, chatHistory, isGenerating, activeProj?.status, activeProj?.currentStage]);
+
+  useEffect(() => {
+    let interval: any = null;
+    const isRunning = isGenerating || activeProj?.status === 'queued' || activeProj?.status === 'running' || activeProj?.status === 'repairing' || universalExecutionController.getIsExecuting(currentChatId || undefined);
+    if (isRunning) {
+      setElapsedSec(0);
+      interval = setInterval(() => {
+        setElapsedSec((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setElapsedSec(0);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isGenerating, activeProj?.status, universalExecutionController.getIsExecuting()]);
+
+  // Auto-reset local state when switching to a new chat (messages becomes empty)
+  useEffect(() => {
+    if (messages && messages.length === 0) {
+      setChatHistory([]);
+      setIsSplitScreen(false);
+      setPreviewTab('preview');
+      setIsVisualEditor(false);
+      setVfsFiles({});
+      setActiveProj(undefined);
+      // VFS is automatically switched by WorkspaceManager, so we just reset UI state
+    } else if (messages && messages.length > 0) {
+      // Sync local chatHistory with parent messages if available
+      setChatHistory(messages);
+      setVfsFiles(getVfsMap());
+    }
+  }, [messages]);
+
+  const isWorking = isGenerating || activeProj?.status === 'queued' || activeProj?.status === 'running' || activeProj?.status === 'repairing' || universalExecutionController.getIsExecuting(currentChatId || undefined);
+
+  const hasBuiltApp = React.useMemo(() => {
+    const appCode = vfsFiles['/src/App.tsx'] || '';
+    const hasCustomFiles = Object.keys(vfsFiles).some(
+      (path) =>
+        path !== '/src/App.tsx' &&
+        path !== '/src/main.tsx' &&
+        path !== '/src/index.css' &&
+        path !== '/package.json'
+    );
+    return hasCustomFiles || (appCode.trim() && !appCode.includes('return null;'));
+  }, [vfsFiles]);
+
+  const [attachedFiles, setAttachedFiles] = useState<
+    Array<{
+      id: string;
+      name: string;
+      size: number;
+      type: string;
+      data?: string;
+      textContent?: string;
+      previewUrl?: string;
+    }>
+  >([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isTextLikeFile = (file: File) =>
+    file.type.startsWith('text/') ||
+    /\.(txt|md|markdown|csv|tsv|json|ts|tsx|js|jsx|mjs|cjs|py|html|htm|css|scss|sql|ya?ml|toml|xml|log|sh|bash|env|ini|cfg|conf|java|go|rs|c|cpp|h|hpp|php|rb|swift|kt)$/i.test(
+      file.name
+    );
+
+  const ingestWorkspaceFiles = React.useCallback((fileList: File[]) => {
+    if (!fileList.length) return;
+    fileList.forEach((file) => {
+      if (file.size > 25 * 1024 * 1024) {
+        showNotice(`"${file.name}" exceeds the 25MB attachment limit.`, 'warning');
+        return;
+      }
+
+      if (isTextLikeFile(file)) {
+        file
+          .text()
+          .then((text) => {
+            setAttachedFiles((prev) => {
+              const duplicate = prev.some((f) => f.name === file.name && f.size === file.size && f.type === file.type);
+              if (duplicate) return prev;
+              return [
+                ...prev,
+                {
+                  id: 'file-' + Math.random().toString(36).substring(2, 10),
+                  name: file.name,
+                  size: file.size,
+                  type: file.type || 'text/plain',
+                  textContent: text.slice(0, 45000),
+                },
+              ];
+            });
+          })
+          .catch(() => showNotice(`Could not read text file "${file.name}".`, 'error'));
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        setAttachedFiles((prev) => {
+          const duplicate = prev.some((f) => f.name === file.name && f.size === file.size && f.type === file.type);
+          if (duplicate) return prev;
+          return [
+            ...prev,
+            {
+              id: 'file-' + Math.random().toString(36).substring(2, 10),
+              name: file.name,
+              size: file.size,
+              type: file.type || 'application/octet-stream',
+              data: result,
+              previewUrl: file.type.startsWith('image/') ? result : undefined,
+            },
+          ];
+        });
+      };
+      reader.onerror = () => showNotice(`Could not read attached file "${file.name}".`, 'error');
+      reader.readAsDataURL(file);
+    });
+  }, [showNotice]);
+
+  useEffect(() => {
+    if (!pendingDroppedFiles.length) return;
+    ingestWorkspaceFiles(pendingDroppedFiles);
+    onConsumeDroppedFiles?.();
+  }, [pendingDroppedFiles, ingestWorkspaceFiles, onConsumeDroppedFiles]);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    ingestWorkspaceFiles(Array.from(files));
+    if (e.target) e.target.value = '';
+  };
+
+  const removeAttachedFile = (id: string) => {
+    setAttachedFiles((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  // Code editor handlers
+  const handleCodeChange = (content: string) => {
+    setActiveFileContent(content);
+    WorkspaceManager.getInstance().getVFS()._unsafe_writeFile(activeCodeFile, content);
+    setVfsFiles(getVfsMap());
+  };
+
+  const handleDeleteFile = (path: string) => {
+    WorkspaceManager.getInstance().getVFS()._unsafe_remove(path);
+    setVfsFiles(getVfsMap());
+    if (activeCodeFile === path) {
+      const remaining = openTabs.filter((t) => t !== path);
+      setOpenTabs(remaining);
+      setActiveCodeFile(remaining.length > 0 ? remaining[0] : '');
+    } else {
+      setOpenTabs((prev) => prev.filter((t) => t !== path));
+    }
+  };
+
+  const handleCreateNewFolder = () => {
+    const raw = newFolderName.trim();
+    if (!raw) { setIsAddingFolder(false); return; }
+    const path = raw.startsWith('/') ? raw : `/${raw}`;
+    WorkspaceManager.getInstance().getVFS()._unsafe_mkdir(path);
+    setVfsFiles(getVfsMap());
+    setNewFolderName('');
+    setIsAddingFolder(false);
+  };
+
+  const handleRenameFile = (path: string) => {
+    const currentName = path.split('/').pop() || '';
+    const nextName = window.prompt('Rename file or folder', currentName)?.trim();
+    if (!nextName || nextName === currentName) return;
+    try {
+      WorkspaceManager.getInstance().getVFS().rename(path, nextName);
+      setOpenTabs(prev => prev.map(tab => tab === path ? `${path.slice(0, path.lastIndexOf('/') + 1)}${nextName}` : tab));
+      if (activeCodeFile === path) setActiveCodeFile(`${path.slice(0, path.lastIndexOf('/') + 1)}${nextName}`);
+      setVfsFiles(getVfsMap());
+    } catch (error) { console.error('ANNY rename failed', error); }
+  };
+
+  const handleMoveFile = (sourcePath: string, destinationFolder: string) => {
+    const name = sourcePath.split('/').pop();
+    if (!name) return;
+    try {
+      const destination = `${destinationFolder.replace(/\/$/, '')}/${name}`;
+      WorkspaceManager.getInstance().getVFS().move(sourcePath, destination);
+      const newPath = destination;
+      setOpenTabs(prev => prev.map(tab => tab === sourcePath ? newPath : tab));
+      if (activeCodeFile === sourcePath) setActiveCodeFile(newPath);
+      setVfsFiles(getVfsMap());
+    } catch (error) { console.error('ANNY move failed', error); }
+  };
+
+  const handleCreateNewFile = () => {
+    if (!newFileName.trim()) {
+      setIsAddingFile(false);
+      return;
+    }
+    let p = newFileName.trim();
+    if (!p.startsWith('/')) p = '/' + p;
+    WorkspaceManager.getInstance().getVFS()._unsafe_writeFile(p, '');
+    setVfsFiles(getVfsMap());
+    setIsAddingFile(false);
+    setNewFileName('');
+    setOpenTabs((prev) => Array.from(new Set([...prev, p])));
+    setActiveCodeFile(p);
+  };
+
+  useEffect(() => {
+    if (activeCodeFile) {
+      const vfs = WorkspaceManager.getInstance().getVFS();
+      const content = vfs.readFile(activeCodeFile) || '';
+      setActiveFileContent(content);
+    } else {
+      setActiveFileContent('');
+    }
+  }, [activeCodeFile, vfsFiles]);
+
+  const fileListKeys = Object.keys(vfsFiles).filter((k) =>
+    fileSearch ? k.toLowerCase().includes(fileSearch.toLowerCase()) : true
+  );
+
+  // Update clock
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setCurrentTime(
+        now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      );
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const cardPrompts = [
+    {
+      id: 'ecommerce',
+      icon: ShoppingBag,
+      title: 'Build E-commerce Website',
+      subtitle: 'Full-stack store with React & Tailwind',
+    },
+    {
+      id: 'rest-api',
+      icon: Code2,
+      title: 'Create a REST API',
+      subtitle: 'Secure Express API with authentication',
+    },
+    {
+      id: 'dashboard',
+      icon: LayoutDashboard,
+      title: 'Design Dashboard UI',
+      subtitle: 'Modern dark dashboard with analytics',
+    },
+    {
+      id: 'supabase',
+      icon: Lock,
+      title: 'Set up Supabase Auth',
+      subtitle: 'User login & database security rules',
+    },
+  ];
+
+  const handleAnalyzeVisionFrame = async (base64Frame: string) => {
+    if (!base64Frame || isVisionAnalyzing) return;
+    setIsVisionAnalyzing(true);
+    const framePrompt = prompt.trim() || 'Analyze this live camera/screen frame carefully.';
+    const snapshotPreviewUrl = `data:image/jpeg;base64,${base64Frame}`;
+
+    const userMsg = {
+      id: Date.now().toString(),
+      role: 'user' as const,
+      content: framePrompt,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      attachedFiles: [
+        {
+          id: `vision-${Date.now()}`,
+          name: 'vision-frame.jpg',
+          size: Math.round((base64Frame.length * 3) / 4),
+          type: 'image/jpeg',
+          previewUrl: snapshotPreviewUrl,
+        },
+      ],
+    };
+
+    const currentThread = [...(messages.length > 0 ? messages : chatHistory), userMsg];
+    setChatHistory(currentThread);
+    if (onUpdateMessages) onUpdateMessages(currentThread);
+    if (prompt.trim()) setPrompt('');
+
+    try {
+      const res = await fetchWithAuth('/api/vision/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: base64Frame,
+          mimeType: 'image/jpeg',
+          prompt: framePrompt,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.analysis) {
+        throw new Error(data?.error || `Vision analysis failed (HTTP ${res.status})`);
+      }
+
+      const botMsg = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant' as const,
+        content: formatNaturalConversation(data.analysis),
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      setChatHistory((prev) => [...prev, botMsg]);
+      if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => [...prevMsgs, botMsg]);
+      if (safeStorage.getItem('anny_auto_speak') !== 'false') {
+        annyVoiceService.speakConversation(botMsg.content);
+      }
+    } catch (err: any) {
+      const errMsgText = err?.message || 'Vision analysis could not be completed.';
+      showNotice(errMsgText, 'error');
+      const errMsg = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant' as const,
+        content: formatNaturalConversation(`Vision Monitor notice: ${errMsgText}`),
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      setChatHistory((prev) => [...prev, errMsg]);
+      if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => [...prevMsgs, errMsg]);
+    } finally {
+      setIsVisionAnalyzing(false);
+    }
+  };
+
+  const handleInspectPublicUrl = async () => {
+    const raw = inspectUrlInput.trim();
+    if (!raw || isInspectingUrl) return;
+    const normalizedUrl = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    setIsInspectingUrl(true);
+
+    try {
+      const res = await fetchWithAuth('/api/anny/source/inspect-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: normalizedUrl }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.error || `URL inspection failed (HTTP ${res.status})`);
+      }
+
+      const report = data.report || {};
+      const summaryLines = [
+        `Inspected Public URL: ${normalizedUrl}`,
+        report.title ? `Title: ${report.title}` : '',
+        report.summary ? `\n${report.summary}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const inspectBotMsg = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant' as const,
+        content: formatNaturalConversation(summaryLines || `Inspected ${normalizedUrl}.`),
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        sources: [{ title: report.title || normalizedUrl, url: normalizedUrl }],
+      };
+      setChatHistory((prev) => [...prev, inspectBotMsg]);
+      if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => [...prevMsgs, inspectBotMsg]);
+      setInspectUrlInput('');
+      setActivePopover('none');
+      showNotice('Public URL analyzed and added to conversation.', 'success');
+    } catch (err: any) {
+      showNotice(err?.message || 'Unable to inspect public URL.', 'error');
+    } finally {
+      setIsInspectingUrl(false);
+    }
+  };
+
+  const handleSend = async (textToSend?: string) => {
+    if (isSubmittingRef.current) return;
+    const messageText = textToSend || prompt;
+    const capturedVisionImmediate = visionSnapshot || visionRef.current?.capture?.() || null;
+    if (!messageText.trim() && attachedFiles.length === 0 && !capturedVisionImmediate && !textToSend && !isGenerating) return;
+    isSubmittingRef.current = true;
+    setActivePopover('none');
+
+    const query = messageText.trim() || (capturedVisionImmediate ? 'Analyze the attached camera/screen snapshot' : 'Analyze attached file(s)');
+
+    const userAttachedForBubble = [
+      ...attachedFiles,
+      ...(capturedVisionImmediate
+        ? [
+            {
+              id: `vision-${Date.now()}`,
+              name: 'vision-snapshot.jpg',
+              size: Math.round((capturedVisionImmediate.length * 3) / 4),
+              type: 'image/jpeg',
+              previewUrl: `data:image/jpeg;base64,${capturedVisionImmediate}`,
+            },
+          ]
+        : []),
+    ];
+
+    const userMsg = {
+      id: Date.now().toString(),
+      role: 'user' as const,
+      content: query,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      attachedFiles: userAttachedForBubble,
+    };
+
+    const updatedHistory = [...(messages.length > 0 ? messages : chatHistory), userMsg];
+    setChatHistory(updatedHistory);
+    if (onUpdateMessages) {
+      onUpdateMessages(updatedHistory);
+    }
+
+    const currentAttached = [...attachedFiles];
+    const capturedVision = capturedVisionImmediate;
+    setAttachedFiles([]);
+    setPrompt('');
+    setVisionSnapshot(null);
+    setIsGenerating(true);
+
+    const lowerQuery = query.toLowerCase().trim();
+
+    // Source understanding: a public URL becomes explicit evidence for the same
+    // cognitive pipeline, rather than being treated as ordinary chat text.
+    const urlMatch = query.match(/https?:\/\/[^\s<>()]+|(?:www\.)[a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s<>()]*)?/i);
+    let sourceUrl: string | undefined;
+    if (urlMatch && /\b(build|rebuild|clone|copy|recreate|analy[sz]e|create|make|similar|replicate)\b/i.test(query)) {
+      sourceUrl = urlMatch[0].replace(/[),.!?]+$/, '');
+      if (!/^https?:\/\//i.test(sourceUrl)) sourceUrl = `https://${sourceUrl}`;
+    }
+
+    // Uploaded project archives are analyzed by the real source-analysis API.
+    // Their contents are not masqueraded as vision input. The resulting analysis
+    // is fed into the normal build pipeline as evidence for a clean-room rebuild.
+    let uploadedProjectContext = '';
+    const projectArchive = currentAttached.find((file: any) =>
+      /\.(zip|tar|tgz)$/i.test(file.name || '') || /application\/(zip|x-7z-compressed)/i.test(file.type || '')
+    );
+    if (projectArchive?.data && /\.(zip|tar|tgz)$/i.test(projectArchive.name || '')) {
+      try {
+        const base64 = projectArchive.data.includes(',') ? projectArchive.data.split(',').pop() : projectArchive.data;
+        const binary = atob(base64 || '');
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const form = new FormData();
+        form.append('file', new Blob([bytes], { type: projectArchive.type || 'application/zip' }), projectArchive.name);
+        const analysisResponse = await fetchWithAuth('/api/anny/source/rebuild-upload', { method: 'POST', body: form });
+        const analysisJson = await analysisResponse.json().catch(() => ({}));
+        if (!analysisResponse.ok || analysisJson?.success === false) throw new Error(analysisJson?.error || 'Uploaded project analysis failed');
+        uploadedProjectContext = `\nUPLOADED PROJECT ANALYSIS (clean-room evidence):\n${JSON.stringify(analysisJson.analysis || analysisJson).slice(0, 30000)}`;
+      } catch (archiveError: any) {
+        console.warn('[ANNY] Project archive analysis unavailable:', archiveError?.message || archiveError);
+      }
+    }
+    
+    const vfs = WorkspaceManager.getInstance().getVFS();
+    const vfsHasCode = vfs.exists('/src/App.tsx') && vfs.readFile('/src/App.tsx').trim().length > 30;
+
+    // Context-aware Creative Intent Router (preserves full original prompt — NEVER strips "logo" or category words)
+    const activeArtifactCtx = {
+      ...(creativeArtifactStore.getActiveContext() || {}),
+      hasVfsProject: vfsHasCode,
+    };
+    const attachmentMeta = currentAttached.map((f: any) => ({
+      name: f.name,
+      type: f.type,
+      mimeType: f.type,
+      hasData: Boolean(f.data),
+    }));
+    const creativeIntent = classifyCreativeIntent(query, attachmentMeta, activeArtifactCtx);
+
+    const isImageRequest = creativeIntent.domain === 'IMAGE';
+    const isVideoRequest = creativeIntent.domain === 'VIDEO';
+    const isGreeting = /^(hello|hi|hey|how are you|what'?s up|yo|morning|evening|afternoon|test|ping)\b/i.test(lowerQuery) && lowerQuery.length < 50;
+
+    const contextContinuation = /^(continue|keep going|go on|proceed|do it|do that|yes|okay|ok|then|now|next)\b/i.test(lowerQuery)
+      || /\b(the app|the website|the project|the code|the backend|the frontend|the page|the component|the preview|the build|it|that|this|the current project)\b/i.test(lowerQuery);
+    const explicitTopicShift = /^(change topic|different topic|unrelated|forget that|instead|separate question|another question|something else)\b/i.test(lowerQuery);
+    const directQuestion = /^(what|why|how|can you explain|tell me|advise|should i|do you think|would you|could you)\b/i.test(lowerQuery);
+    const projectModification = vfsHasCode && !isImageRequest && !isVideoRequest && (/\b(fix|repair|change|modify|update|edit|add|remove|delete|rename|refactor|improve|make|continue|finish|complete|connect|implement)\b/i.test(lowerQuery) || contextContinuation);
+    const isNewBuild = (creativeIntent.domain === 'APPLICATION' || (/^(build|create|generate|develop|construct|scaffold|design)\b/i.test(lowerQuery) && !contextContinuation)) && !isImageRequest && !isVideoRequest;
+    const isBuildRequest = !isImageRequest && !isVideoRequest && !isGreeting && !explicitTopicShift && !directQuestion && (creativeIntent.domain === 'APPLICATION' || isNewBuild || projectModification || (isAppWebsiteOr3DRequest(query) && /\b(build|create|generate|develop|make)\b/i.test(lowerQuery)));
+
+    // 1. REAL IMAGE & DEDICATED LOGO GENERATION WORKFLOW
+    if (isImageRequest) {
+      const botMsgId = (Date.now() + 1).toString();
+      const isLogoIntent = creativeIntent.category === 'LOGO_DESIGN' || creativeIntent.category === 'BRAND_IDENTITY' || creativeIntent.category === 'ICON' || creativeIntent.category === 'APP_ICON';
+      const initialBotMsg = {
+        id: botMsgId,
+        role: 'assistant' as const,
+        content: isLogoIntent
+          ? `Designing your ${creativeIntent.extractedBrandName || 'brand'} logo identity kit...`
+          : `Generating ${creativeIntent.category.toLowerCase().replace(/_/g, ' ')}...`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isGeneratingImage: true,
+        imagePrompt: query,
+        imageProgress: 20,
+        imageStage: isLogoIntent
+          ? 'Analyzing brand identity, monogram geometry, and vector lockups...'
+          : 'Enhancing category prompt and validating provider output...'
+      };
+      const historyWithBot = [...updatedHistory, initialBotMsg];
+      setChatHistory(historyWithBot);
+      if (onUpdateMessages) onUpdateMessages(historyWithBot);
+
+      try {
+        const referenceImages = currentAttached
+          .filter((f: any) => (f.type || '').startsWith('image/') && f.data)
+          .slice(0, 6)
+          .map((f: any) => ({ name: f.name, mimeType: f.type || 'image/png', data: f.data }));
+
+        setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? { ...msg, imageProgress: 60, imageStage: 'Generating & running output quality validation...' } : msg));
+        const imageResponse = await fetchWithAuth('/api/creative/image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: query, // NEVER strip "logo" or category intent!
+            aspectRatio: creativeIntent.aspectRatio,
+            referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+            activeContext: creativeIntent.isRevision ? activeArtifactCtx : undefined,
+            previousLogoPlan: creativeIntent.isRevision ? activeArtifactCtx.logoPlan : undefined,
+            parentArtifactId: creativeIntent.isRevision ? activeArtifactCtx.artifactId : undefined,
+          })
+        });
+
+        const generated: CreativeImageResult = await imageResponse.json().catch(() => ({} as any));
+        if (!imageResponse.ok || !generated.success || !generated.primaryImageUrl || !generated.quality?.valid) {
+          const reason = generated?.error || `Image generation failed (${imageResponse.status})`;
+          const guidance = generated?.recoveryGuidance ? ` ${generated.recoveryGuidance}` : '';
+          throw new Error(`${reason}${guidance}`);
+        }
+
+        const project = creativeArtifactStore.ensureProject(generated.logoBundle?.plan.brandName || 'King Ken Studios');
+        creativeArtifactStore.saveArtifact({
+          id: generated.artifactId,
+          projectId: project.id,
+          studio: 'graphics',
+          domain: 'IMAGE',
+          category: generated.classification.category,
+          title: generated.logoBundle ? `${generated.logoBundle.plan.brandName} Logo Kit (Rev ${generated.revisionNumber})` : query.slice(0, 60),
+          prompt: query,
+          enhancedPrompt: generated.enhancedPrompt.enhancedPrompt,
+          provider: generated.provider,
+          model: generated.model,
+          format: generated.primaryFormat,
+          mimeType: generated.primaryMimeType,
+          url: generated.primaryImageUrl,
+          thumbnailUrl: generated.primaryImageUrl,
+          revisionNumber: generated.revisionNumber,
+          parentArtifactId: generated.parentArtifactId,
+          createdAt: generated.generatedAt,
+          metadata: {
+            brandName: generated.logoBundle?.plan.brandName,
+            logoPlan: generated.logoBundle?.plan,
+            dimensions: `${generated.quality.width}x${generated.quality.height}`,
+          },
+        });
+
+        const summaryText = generated.logoBundle
+          ? `Your verified ${generated.logoBundle.plan.brandName} brand logo kit is ready (Rev ${generated.revisionNumber}, ${generated.logoBundle.variants.length} scalable SVG variants: dark lockup, light background, transparent icon mark, and emblem seal). You can ask me to refine colors, style, or typography anytime.`
+          : `Your verified ${generated.classification.category.toLowerCase().replace(/_/g, ' ')} (${generated.primaryFormat.toUpperCase()}, ${generated.quality.width}×${generated.quality.height}) is ready via ${generated.provider}.`;
+
+        const finalMsg = {
+          id: botMsgId,
+          role: 'assistant' as const,
+          content: formatNaturalConversation(summaryText, { preserveStructured: false }),
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isGeneratingImage: false,
+          generatedImages: [{
+            url: generated.primaryImageUrl,
+            prompt: query,
+            timestamp: new Date().toLocaleTimeString(),
+            format: generated.primaryFormat,
+            mimeType: generated.primaryMimeType,
+            width: generated.quality.width,
+            height: generated.quality.height,
+            provider: generated.provider,
+            category: generated.classification.category,
+            logoBundle: generated.logoBundle,
+          }]
+        };
+        setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? finalMsg : msg));
+        if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => prevMsgs.map(m => m.id === botMsgId ? finalMsg : m));
+        if (safeStorage.getItem('anny_auto_speak') !== 'false') annyVoiceService.speakConversation(finalMsg.content);
+      } catch (error: any) {
+        const errorText = `I could not generate a verified image for this request. ${error?.message || 'No image provider succeeded.'}`;
+        const failedMsg = { id: botMsgId, role: 'assistant' as const, content: formatNaturalConversation(errorText), timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), isGeneratingImage: false };
+        setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? failedMsg : msg));
+        if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => prevMsgs.map(m => m.id === botMsgId ? failedMsg : m));
+      } finally {
+        setIsGenerating(false);
+        isSubmittingRef.current = false;
+      }
+      return;
+    }
+
+    // 2. REAL VIDEO GENERATION & STORYBOARD WORKFLOW
+    if (isVideoRequest) {
+      const botMsgId = (Date.now() + 1).toString();
+      const initialBotMsg = {
+        id: botMsgId,
+        role: 'assistant' as const,
+        content: `Preparing your ${creativeIntent.category.toLowerCase().replace(/_/g, ' ')} production...`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isGeneratingImage: true,
+        imagePrompt: query,
+        imageProgress: 20,
+        imageStage: 'Submitting video production job...'
+      };
+      const historyWithBot = [...updatedHistory, initialBotMsg];
+      setChatHistory(historyWithBot);
+      if (onUpdateMessages) onUpdateMessages(historyWithBot);
+
+      try {
+        const referenceImages = currentAttached
+          .filter((f: any) => (f.type || '').startsWith('image/') && f.data)
+          .slice(0, 6)
+          .map((f: any) => ({ name: f.name, mimeType: f.type || 'image/png', data: f.data }));
+
+        const videoRes = await fetchWithAuth('/api/creative/video/jobs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: query,
+            category: creativeIntent.category,
+            aspectRatio: creativeIntent.aspectRatio === '9:16' ? '9:16' : '16:9',
+            durationSeconds: 8,
+            resolution: '720p',
+            referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+            parentJobId: creativeIntent.isRevision ? activeArtifactCtx.videoJobId : undefined,
+            previousInteractionId: creativeIntent.isRevision ? activeArtifactCtx.videoInteractionId : undefined,
+          })
+        });
+
+        let job: VideoJobRecord = await videoRes.json();
+        if (!job?.jobId) {
+          throw new Error((job as any)?.error || 'Video production job failed to start.');
+        }
+
+        // Poll real backend job status until terminal (max ~4 min)
+        let attempts = 0;
+        while (['QUEUED', 'PLANNING', 'GENERATING', 'VALIDATING'].includes(job.status) && attempts < 90) {
+          setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? { ...msg, imageProgress: Math.max(25, job.progressPct || 40), imageStage: job.stageMessage } : msg));
+          await new Promise(resolve => setTimeout(resolve, 2500));
+          attempts++;
+          const pollRes = await fetchWithAuth(`/api/creative/video/jobs/${encodeURIComponent(job.jobId)}`);
+          if (pollRes.ok) {
+            job = await pollRes.json();
+          }
+        }
+
+        let summaryText = '';
+        if (job.status === 'COMPLETED' && job.playableValidated && job.videoUrl) {
+          summaryText = `Your video is rendered, verified playable (${job.aspectRatio}, ${job.durationSeconds}s, ${job.resolution}), and ready to preview or download.`;
+          const project = creativeArtifactStore.ensureProject(creativeIntent.extractedBrandName || 'King Ken Studios');
+          creativeArtifactStore.saveArtifact({
+            id: job.jobId,
+            projectId: project.id,
+            studio: 'video',
+            domain: 'VIDEO',
+            category: job.category,
+            title: job.productionPlan?.title || query.slice(0, 60),
+            prompt: query,
+            enhancedPrompt: job.enhancedPrompt,
+            provider: job.provider,
+            model: job.model,
+            format: 'mp4',
+            mimeType: job.mimeType || 'video/mp4',
+            url: job.videoUrl,
+            revisionNumber: job.parentJobId ? 2 : 1,
+            parentArtifactId: job.parentJobId,
+            createdAt: job.completedAt || new Date().toISOString(),
+            metadata: { jobId: job.jobId, interactionId: job.interactionId },
+          });
+        } else if (job.status === 'STORYBOARD_PLAN_ONLY') {
+          summaryText = `Directorial storyboard and shot plan ready (${job.productionPlan?.shots.length || 0} shots). No MP4 video file was rendered because this request was handled in storyboard planning mode.`;
+        } else if (job.status === 'PROVIDER_UNCONFIGURED') {
+          summaryText = `No video rendering provider is configured on the server right now, so I prepared a complete directorial storyboard and shot plan instead. ${job.recoveryGuidance || ''}`;
+        } else {
+          summaryText = `Video rendering did not complete (${job.status}): ${job.error || job.stageMessage}`;
+        }
+
+        const finalMsg = {
+          id: botMsgId,
+          role: 'assistant' as const,
+          content: formatNaturalConversation(summaryText, { preserveStructured: false }),
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isGeneratingImage: false,
+          generatedVideo: job,
+        };
+        setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? finalMsg : msg));
+        if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => prevMsgs.map(m => m.id === botMsgId ? finalMsg : m));
+      } catch (error: any) {
+        const errorText = `I could not complete the video request. ${error?.message || 'Video service unavailable.'}`;
+        const failedMsg = { id: botMsgId, role: 'assistant' as const, content: formatNaturalConversation(errorText), timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), isGeneratingImage: false };
+        setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? failedMsg : msg));
+        if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => prevMsgs.map(m => m.id === botMsgId ? failedMsg : m));
+      } finally {
+        setIsGenerating(false);
+        isSubmittingRef.current = false;
+      }
+      return;
+    }
+
+    if (isBuildRequest && !isSplitScreen) {
+      setIsSplitScreen(true);
+    }
+
+    // Do NOT show temporary placeholder messages with action icons during generation.
+    // Keep chat history clean with only user message until ANNY completes the response.
+    const cleanHistory = updatedHistory.filter((m: any) => !isSynthesisOrPlaceholderContent(m.content));
+    setChatHistory(cleanHistory);
+    if (onUpdateMessages) {
+      onUpdateMessages(cleanHistory);
+    }
+
+    try {
+      const execId = 'ANNY_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+      const isExplicitUpdate = projectModification && vfsHasCode;
+      let projectId = safeStorage.getItem('anny_current_project_id') || WorkspaceManager.getInstance().getActiveProjectId();
+      if (isBuildRequest && !isExplicitUpdate) {
+        projectId = WorkspaceManager.getInstance().createProjectWorkspace(generateRealProjectTitle(query), user?.uid || 'global', 'fullstack');
+        safeStorage.setItem('anny_current_project_id', projectId);
+      }
+      if (isBuildRequest) {
+        executionStreamManager.startExecution('Executing application generation pipeline...', execId);
+        executionStreamManager.setStage('analyzing', 'Synthesizing application architecture plan...');
+      }
+
+      const textAttachments = currentAttached
+        .filter((f: any) => typeof f.textContent === 'string' && f.textContent.trim().length > 0)
+        .map((f: any) => ({ name: f.name, type: f.type, size: f.size, textContent: f.textContent }));
+
+      const visualAttachments = [
+        ...currentAttached
+          .filter((file: any) => {
+            if (!file.data || typeof file.textContent === 'string') return false;
+            if (/\.(zip|tar|tgz)$/i.test(file.name || '')) return false;
+            return (
+              file.type?.startsWith('image/') ||
+              file.type === 'application/pdf' ||
+              /\.(png|jpe?g|webp|gif|bmp|pdf)$/i.test(file.name || '')
+            );
+          })
+          .map((file: any) => ({
+            mimeType: file.type || 'image/jpeg',
+            data: typeof file.data === 'string' && file.data.includes(',') ? file.data.split(',').pop() : file.data,
+          })),
+        ...(capturedVision ? [{ mimeType: 'image/jpeg', data: capturedVision }] : []),
+      ].filter((image: any) => Boolean(image.data));
+
+      const liveState = sceneUnderstanding.getState();
+      const liveVisionActive = liveState.status.videoStreamActive && !liveState.status.paused;
+      const isVisualQuery = /\b(see|looking at|look at|camera|screen|moved|moving|behind|front|holding|read this|what is this|what'?s this|describe|room|desk|person|object|track)\b/i.test(query);
+      let autoLiveFrame: string | null = null;
+      if (!capturedVision && liveVisionActive && isVisualQuery && !liveState.capabilities.offlineMode) {
+        const snap = liveVisionController.captureSnapshotJpeg();
+        if (snap?.base64) autoLiveFrame = snap.base64;
+      }
+      const effectiveVisualAttachments = autoLiveFrame
+        ? [...visualAttachments, { mimeType: 'image/jpeg', data: autoLiveFrame }]
+        : visualAttachments;
+      const liveVisionContext = liveVisionActive ? sceneUnderstanding.buildPromptContext() : undefined;
+
+      const res = await fetchWithAuth("/api/anny/pipeline", { 
+        method: "POST", 
+        headers: { "Content-Type": "application/json" }, 
+        body: JSON.stringify({ 
+          sessionId: currentChatId || projectId || "workspace_session", 
+          projectId,
+          prompt: query, 
+          history: updatedHistory, 
+          existingVfs: (isBuildRequest && isExplicitUpdate) || includeCodeContext ? getVfsMap() : {},
+          images: effectiveVisualAttachments,
+          files: textAttachments,
+          webSearch: isWebSearchEnabled,
+          proTools: {
+            deepThinking: isDeepThinkingEnabled,
+            includeCodeContext,
+            activeFile: activeCodeFile,
+            saharaMode: isSaharaEnabled,
+            preferredModel: selectedModelId,
+          },
+          generationId: isBuildRequest ? execId : undefined,
+          contextOverride: { updateExisting: isExplicitUpdate, userId: user?.uid || 'anonymous' },
+          requestType: isBuildRequest ? "build" : "chat",
+          ...(sourceUrl ? { url: sourceUrl } : {}),
+          ...(liveVisionContext ? { visionContext: liveVisionContext } : {}),
+          execId,
+          sourceContext: uploadedProjectContext || undefined
+        }) 
+      });
+
+      const orchRes = await res.json().catch(() => ({}));
+      if (!res.ok || orchRes?.success === false) {
+        throw new Error(orchRes?.error || `ANNY pipeline failed with HTTP ${res.status}`);
+      }
+
+      if (isBuildRequest) {
+        const fileCount = orchRes.files && typeof orchRes.files === 'object' ? Object.keys(orchRes.files).length : 0;
+        const isSuccess = orchRes.success !== false && fileCount > 0 && orchRes.verificationStatus !== 'FAILED';
+
+        if (isSuccess) {
+          executionStreamManager.setStage('editing', 'Writing synthesized codebase files to workspace...');
+          const vfs = WorkspaceManager.getInstance().getVFS();
+          for (const [path, content] of Object.entries(orchRes.files)) {
+            vfs._unsafe_writeFile(path, content as string);
+          }
+          
+          // Ensure preview re-renders
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('anny_project_generated', {
+              detail: { projectId: WorkspaceManager.getInstance().getActiveProjectId() }
+            }));
+            window.dispatchEvent(new CustomEvent('anny_vfs_changed'));
+          }
+
+          executionStreamManager.setStage('runtime', 'Opening verified application in preview...');
+          executionStreamManager.completeExecution('Application generation completed successfully. Application is ready and running in preview.');
+        } else {
+          const failureDetail = orchRes.error || orchRes.summary || 'Build failed: Pipeline returned no valid files.';
+          executionStreamManager.failExecution(`BUILD_FAILED: ${failureDetail}`);
+        }
+      }
+
+      let fullText = formatNaturalConversation(orchRes.response || orchRes.summary || 'Request completed.');
+      const finalBotMsg = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant' as const,
+        content: fullText,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        ...(Array.isArray(orchRes.sources) && orchRes.sources.length > 0 ? { sources: orchRes.sources } : {}),
+      };
+
+      setChatHistory((prev) => {
+        const cleanPrev = prev.filter((m: any) => !isSynthesisOrPlaceholderContent(m.content));
+        return [...cleanPrev, finalBotMsg];
+      });
+      if (onUpdateMessages) {
+        onUpdateMessages((prevMsgs: any[]) => {
+          const cleanPrev = prevMsgs.filter((m: any) => !isSynthesisOrPlaceholderContent(m.content));
+          return [...cleanPrev, finalBotMsg];
+        });
+      }
+
+      const autoSpeak = safeStorage.getItem('anny_auto_speak') !== 'false';
+      if (autoSpeak && fullText) {
+        annyVoiceService.speakConversation(fullText);
+      }
+      setIsGenerating(false);
+    } catch (err: any) {
+      console.error('ANNY Stream Error:', err);
+      executionStreamManager.failExecution(err.message || 'Pipeline failed');
+      const errBotMsg = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant' as const,
+        content: formatNaturalConversation(`I could not complete that request. ${err?.message || 'The requested operation failed before completion.'}`),
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      setChatHistory((prev) => {
+        const cleanPrev = prev.filter((m: any) => !isSynthesisOrPlaceholderContent(m.content));
+        return [...cleanPrev, errBotMsg];
+      });
+      if (onUpdateMessages) {
+        onUpdateMessages((prevMsgs: any[]) => {
+          const cleanPrev = prevMsgs.filter((m: any) => !isSynthesisOrPlaceholderContent(m.content));
+          return [...cleanPrev, errBotMsg];
+        });
+      }
+    } finally {
+      setIsGenerating(false);
+      isSubmittingRef.current = false;
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  const copyToClipboard = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  // Categories for the live preview
+  const categoriesList = [
+    {
+      id: 'electronics',
+      name: 'Electronics',
+      count: '120+ Products',
+      img: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400&q=80',
+    },
+    {
+      id: 'fashion',
+      name: 'Fashion',
+      count: '80+ Products',
+      img: 'https://images.unsplash.com/photo-1551028719-00167b16eac5?w=400&q=80',
+    },
+    {
+      id: 'home',
+      name: 'Home & Living',
+      count: '65+ Products',
+      img: 'https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=400&q=80',
+    },
+    {
+      id: 'beauty',
+      name: 'Beauty',
+      count: '45+ Products',
+      img: 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=400&q=80',
+    },
+    {
+      id: 'sports',
+      name: 'Sports',
+      count: '60+ Products',
+      img: 'https://images.unsplash.com/photo-1519861531473-9200262188bf?w=400&q=80',
+    },
+  ];
+
+  if (isVisualEditor) {
+    return (
+      <AnnyProfessionalEditor
+        userEmail={userEmail}
+        userName={userName}
+        sessionId={currentChatId || undefined}
+        onBackToWorkspace={() => {
+          setIsVisualEditor(false);
+          setIsSplitScreen(false);
+        }}
+        onBackToSplitView={() => setIsVisualEditor(false)}
+      />
+    );
+  }
+
+  return (
+    <div className="flex-1 flex flex-col min-w-0 bg-[#040614] text-slate-100 h-full w-full relative overflow-hidden select-none">
+      {/* Background Ambient Glows */}
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-indigo-600/15 rounded-full blur-[140px] pointer-events-none" />
+      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[400px] h-[400px] bg-purple-600/10 rounded-full blur-[100px] pointer-events-none" />
+
+      {/* ========================================================= */}
+      {/* 1. SPLIT SCREEN BUILD VIEW (Matches User Reference Image) */}
+      {/* ========================================================= */}
+      {isSplitScreen ? (
+        <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#040614]">
+          {/* Top Header Bar for Split View */}
+          <header className="px-3 sm:px-4 py-2 bg-[#060818] border-b border-white/10 flex flex-wrap items-center justify-between gap-2 sm:gap-4 z-20 shrink-0">
+            <div className="flex items-center gap-2 sm:gap-3">
+            <MobileLogoMenu onToggleMobileMenu={onToggleMobileMenu} />
+
+              <button
+                onClick={() => setIsSplitScreen(false)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 px-2.5 sm:px-3 py-1.5 rounded-xl border border-white/10 transition-all cursor-pointer"
+              >
+                <ArrowLeft className="w-3.5 h-3.5 text-slate-400" />
+                <span className="hidden sm:inline">Back to Workspace</span>
+                <span className="sm:hidden">Back</span>
+              </button>
+
+              <div className="h-4 w-px bg-white/10 hidden sm:block" />
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-white tracking-wide truncate max-w-[140px] sm:max-w-none">
+                  Anny Workspace
+                </span>
+                <Pencil className="w-3 h-3 text-slate-400 hover:text-white cursor-pointer shrink-0" />
+              </div>
+            </div>
+
+            {/* Mobile View Toggle Switcher (Chat vs Preview) */}
+            <div className="flex lg:hidden items-center p-0.5 rounded-xl bg-slate-900/90 border border-white/10">
+              <button
+                onClick={() => setMobileSplitView('chat')}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                  mobileSplitView === 'chat'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                AI Chat
+              </button>
+              <button
+                onClick={() => setMobileSplitView('preview')}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                  mobileSplitView === 'preview'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Preview / Code
+              </button>
+            </div>
+
+            {/* Right Telemetry & Status */}
+            <div className="flex items-center gap-2 sm:gap-3 text-xs">
+              <div className="hidden lg:flex items-center gap-3 text-[10px] font-mono text-slate-300 bg-white/5 px-2.5 py-1 rounded-lg border border-white/5">
+                <span>
+                  CPU <strong className="text-blue-400">16%</strong>
+                </span>
+                <span>
+                  GPU <strong className="text-emerald-400">35%</strong>
+                </span>
+                <span>
+                  RAM <strong className="text-purple-400">54%</strong>
+                </span>
+                <span className="text-slate-500">|</span>
+                <span className="font-sans text-slate-200">{currentTime}</span>
+              </div>
+
+              <button className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 hidden sm:block">
+                <Bell className="w-3.5 h-3.5" />
+              </button>
+
+              <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center text-white text-[10px] font-bold shadow-md">
+                ∞
+              </div>
+            </div>
+          </header>
+
+          {/* Main 2-Column Split Workspace */}
+          <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
+            {/* ---------------------------------------------------- */}
+            {/* MIDDLE COLUMN: Chat Assistant & Build Telemetry (Left) */}
+            {/* ---------------------------------------------------- */}
+            <div className={`w-full lg:w-[420px] xl:w-[460px] bg-[#06081a] border-r border-white/10 flex flex-col h-full overflow-hidden shrink-0 ${
+              mobileSplitView === 'chat' ? 'flex' : 'hidden lg:flex'
+            }`}>
+              {/* Chat Sub-Header */}
+              <div className="px-4 py-2.5 bg-[#080b22] border-b border-white/10 flex items-center justify-between text-xs text-slate-300">
+                <div className="flex items-center gap-2 font-semibold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  <span>AI Assistant</span>
+                  <span className="text-[10px] text-emerald-400 font-normal">• Online</span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-400">
+                  <Volume2 className="w-3.5 h-3.5 hover:text-white cursor-pointer" />
+                  <Copy className="w-3.5 h-3.5 hover:text-white cursor-pointer" />
+                </div>
+              </div>
+
+              {/* Chat Scrollable Area */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs font-sans">
+                {/* Real Conversation Messages */}
+                {((messages.length > 0 ? messages : chatHistory).length > 0
+                  ? (messages.length > 0 ? messages : chatHistory)
+                  : [
+                      {
+                        id: 'init-user',
+                        role: 'user',
+                        content: 'Generate a modern e-commerce platform with product listing, cart, checkout and user dashboard.',
+                        timestamp: '10:42 AM',
+                      },
+                      {
+                        id: 'init-bot',
+                        role: 'assistant',
+                        content: "I'll create a modern e-commerce platform with all the essential features you requested.",
+                        timestamp: '10:42 AM',
+                      },
+                    ]
+                )
+                  .filter((msg: any) => !isSynthesisOrPlaceholderContent(msg.content))
+                  .map((msg: any) => (
+                  <div
+                    key={msg.id}
+                    className={`flex flex-col space-y-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+                  >
+                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
+                      {msg.role === 'user' ? (
+                        <>
+                          <span>You</span>
+                          <span className="text-slate-500">{msg.timestamp || 'Just now'}</span>
+                          {user?.photoURL ? (
+                            <img src={user.photoURL} alt="User" className="w-5 h-5 rounded-full ml-1" />
+                          ) : (
+                            <div className="w-5 h-5 rounded-full bg-slate-700 flex items-center justify-center ml-1">
+                              <User className="w-3 h-3 text-white" />
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <img src="/logo.png" className="w-5 h-5 object-contain mr-1" alt="Anny" />
+                          <span className="font-semibold animate-aios-shift text-white">Anny</span>
+                          <span className="text-slate-500">{msg.timestamp || 'Just now'}</span>
+                        </>
+                      )}
+                    </div>
+
+                    <div
+                      className={`p-3.5 rounded-2xl max-w-[92%] leading-relaxed text-xs font-sans ${
+                        msg.role === 'user'
+                          ? 'bg-indigo-950/80 border border-indigo-500/30 text-indigo-100 rounded-tr-sm shadow-md'
+                          : 'bg-[#0b0e29] border border-white/10 text-slate-200 rounded-tl-sm w-full'
+                      }`}
+                    >
+                      {msg.attachedFiles && msg.attachedFiles.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mb-2 pb-2 border-b border-white/10">
+                          {msg.attachedFiles.map((f: any, idx: number) => (
+                            <div
+                              key={idx}
+                              className="px-2 py-1 bg-white/5 border border-white/10 rounded-lg flex items-center gap-1.5 text-[10px] text-cyan-300 font-mono"
+                            >
+                              {f.previewUrl ? (
+                                <img src={f.previewUrl} alt={f.name} className="w-5 h-5 object-cover rounded shrink-0" />
+                              ) : (
+                                <FileText className="w-3 h-3 text-cyan-400 shrink-0" />
+                              )}
+                              <span className="truncate max-w-[120px]">{f.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <p className="whitespace-pre-wrap">{msg.content || ''}</p>
+                      {Array.isArray(msg.sources) && msg.sources.length > 0 && (
+                        <div className="mt-2.5 pt-2 border-t border-white/10 flex flex-wrap gap-1.5">
+                          {msg.sources.map((src: any, sIdx: number) => (
+                            <a
+                              key={sIdx}
+                              href={src.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-500/10 hover:bg-blue-500/20 border border-blue-400/30 text-[10px] text-blue-300 transition-colors max-w-[200px]"
+                              title={src.url}
+                            >
+                              <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                              <span className="truncate">{src.title || src.url}</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                      
+                      {/* Action Icons for Split View */}
+                      <div className={`flex items-center gap-3 mt-3 pt-2 border-t border-white/5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        {msg.role === 'user' ? (
+                          <button className="text-slate-500 hover:text-white transition-colors cursor-pointer" title="Copy Message" onClick={() => navigator.clipboard.writeText(msg.content)}>
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                        ) : (
+                          <>
+                            <button className="text-slate-500 hover:text-emerald-400 transition-colors cursor-pointer" title="Good response" onClick={(e) => e.currentTarget?.classList.add('text-emerald-400')}>
+                              <ThumbsUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button className="text-slate-500 hover:text-rose-400 transition-colors cursor-pointer" title="Bad response" onClick={(e) => e.currentTarget?.classList.add('text-rose-400')}>
+                              <ThumbsDown className="w-3.5 h-3.5" />
+                            </button>
+                            <button className="text-slate-500 hover:text-white transition-colors cursor-pointer" title="Copy Message" onClick={(e) => { 
+                              navigator.clipboard.writeText(msg.content); 
+                              const btn = e.currentTarget;
+                              btn?.classList.add('text-cyan-400'); 
+                              setTimeout(() => { if (btn) btn.classList.remove('text-cyan-400'); }, 2000); 
+                            }}>
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                            <button 
+                              className={`transition-colors cursor-pointer ${window.speechSynthesis?.speaking ? 'text-cyan-400 drop-shadow-[0_0_5px_#22d3ee]' : 'text-slate-500 hover:text-white'}`} 
+                              title="Read Aloud"
+                              onClick={() => {
+                                if (annyVoiceService.isSpeaking()) {
+                                  annyVoiceService.stop();
+                                  setCurrentlySpeakingId(null);
+                                } else {
+                                  setCurrentlySpeakingId(msg.id);
+                                  annyVoiceService.speakSpeakerButton(msg.content, () => setCurrentlySpeakingId(null));
+                                }
+                              }}
+                            >
+                              <Volume2 className="w-3.5 h-3.5" />
+                            </button>
+                            {hasBuiltApp && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsSplitScreen(true);
+                                  setPreviewTab('preview');
+                                  setMobileSplitView('preview');
+                                }}
+                                className="ml-auto px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/35 hover:bg-cyan-500/25 text-cyan-300 text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_10px_rgba(6,182,212,0.15)] hover:scale-105 active:scale-95"
+                                title="Launch Live Preview"
+                              >
+                                <Globe className="w-3 h-3 text-cyan-400 animate-pulse" />
+                                <span>Launch Preview</span>
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Real-time Execution Stream View directly above Chat Input */}
+                <ExecutionStreamView className="my-2" />
+                <div ref={chatEndRef} />
+              </div>
+
+              {/* Chat Bottom Input Section */}
+              <div className="p-3 bg-[#080b22] border-t border-white/10 space-y-2 shrink-0 relative">
+                {/* Inline Notice Banner */}
+                {workspaceNotice && (
+                  <div
+                    className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl text-[11px] border ${
+                      workspaceNotice.type === 'error'
+                        ? 'bg-rose-950/80 border-rose-500/40 text-rose-200'
+                        : workspaceNotice.type === 'warning'
+                        ? 'bg-amber-950/80 border-amber-500/40 text-amber-200'
+                        : workspaceNotice.type === 'success'
+                        ? 'bg-emerald-950/80 border-emerald-500/40 text-emerald-200'
+                        : 'bg-cyan-950/80 border-cyan-500/40 text-cyan-200'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5 truncate">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">{workspaceNotice.message}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setWorkspaceNotice(null)}
+                      className="p-0.5 hover:bg-white/10 rounded cursor-pointer shrink-0"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Pro Tools & Model Popovers (Split View) */}
+                {activePopover === 'protools' && (
+                  <div className="absolute bottom-full left-3 right-3 mb-2 bg-[#0b102d]/98 backdrop-blur-xl border border-indigo-500/40 rounded-2xl p-3 shadow-2xl z-50 space-y-2 text-xs">
+                    <div className="flex items-center justify-between border-b border-white/10 pb-1.5">
+                      <span className="font-bold text-white flex items-center gap-1.5">
+                        <Zap className="w-3.5 h-3.5 text-amber-400" />
+                        <span>ANNY Pro Tools</span>
+                      </span>
+                      <button type="button" onClick={() => setActivePopover('none')} className="text-slate-400 hover:text-white cursor-pointer">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setIsDeepThinkingEnabled(!isDeepThinkingEnabled)}
+                        className={`px-2.5 py-2 rounded-xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                          isDeepThinkingEnabled ? 'bg-purple-500/20 border-purple-400/60 text-purple-200' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5"><Brain className="w-3.5 h-3.5 text-purple-400" /> Deep Think</span>
+                        <span className="text-[10px] font-mono">{isDeepThinkingEnabled ? 'ON' : 'OFF'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIncludeCodeContext(!includeCodeContext)}
+                        className={`px-2.5 py-2 rounded-xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                          includeCodeContext ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-200' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5"><Code2 className="w-3.5 h-3.5 text-emerald-400" /> Code Ctx</span>
+                        <span className="text-[10px] font-mono">{includeCodeContext ? 'ON' : 'OFF'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsWebSearchEnabled(!isWebSearchEnabled)}
+                        className={`px-2.5 py-2 rounded-xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                          isWebSearchEnabled ? 'bg-blue-500/20 border-blue-400/60 text-blue-200' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5"><Globe className="w-3.5 h-3.5 text-blue-400" /> Web Live</span>
+                        <span className="text-[10px] font-mono">{isWebSearchEnabled ? 'ON' : 'OFF'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsSaharaEnabled(!isSaharaEnabled)}
+                        className={`px-2.5 py-2 rounded-xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                          isSaharaEnabled ? 'bg-amber-500/20 border-amber-400/60 text-amber-200' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5"><Mic className="w-3.5 h-3.5 text-amber-400" /> Sahara STT</span>
+                        <span className="text-[10px] font-mono">{isSaharaEnabled ? 'ON' : 'OFF'}</span>
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <input
+                        type="url"
+                        value={inspectUrlInput}
+                        onChange={(e) => setInspectUrlInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            void handleInspectPublicUrl();
+                          }
+                        }}
+                        placeholder="https://example.com — Inspect URL"
+                        className="flex-1 bg-[#050817] border border-white/15 rounded-xl px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 outline-none focus:border-cyan-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleInspectPublicUrl()}
+                        disabled={isInspectingUrl || !inspectUrlInput.trim()}
+                        className="px-2.5 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 disabled:opacity-50 border border-cyan-500/40 text-cyan-300 text-[11px] font-semibold cursor-pointer"
+                      >
+                        {isInspectingUrl ? '...' : 'Inspect'}
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleVisionMonitor(true);
+                          setActivePopover('none');
+                        }}
+                        className="flex-1 px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 text-[11px] flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <ScanEye className="w-3.5 h-3.5 text-cyan-400" /> Open Vision Monitor
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPrompt((p) => p.trim() || 'Generate an image of ');
+                          setActivePopover('none');
+                        }}
+                        className="flex-1 px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 text-[11px] flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-fuchsia-400" /> Image Studio
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {activePopover === 'model' && (
+                  <div className="absolute bottom-full left-3 w-64 mb-2 bg-[#0b102d]/98 backdrop-blur-xl border border-purple-500/40 rounded-2xl p-2 shadow-2xl z-50 space-y-1 text-xs">
+                    <div className="flex items-center justify-between px-2 py-1 border-b border-white/10 mb-1">
+                      <span className="font-bold text-white flex items-center gap-1.5">
+                        <Brain className="w-3.5 h-3.5 text-purple-400" /> Select Neural Route
+                      </span>
+                      <button type="button" onClick={() => setActivePopover('none')} className="text-slate-400 hover:text-white cursor-pointer">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    {[
+                      { id: 'auto', label: 'Auto (Best Route)', desc: 'Smart local & cloud routing' },
+                      { id: 'gemini-4-hydrogen', label: 'ANNY Core (Pro)', desc: 'Deep architecture & vision' },
+                      { id: 'gemini-3.1-flash-lite', label: 'ANNY Fast (Lite)', desc: 'Low-latency coding & chat' },
+                      { id: 'ollama', label: 'Local Sovereign (Ollama)', desc: 'Offline-capable local model' },
+                    ].map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedModelId(m.id);
+                          setActiveModel(m.label);
+                          setActivePopover('none');
+                          showNotice(`Active model switched to ${m.label}`, 'info');
+                        }}
+                        className={`w-full px-2.5 py-2 rounded-xl text-left flex items-center justify-between transition-all cursor-pointer ${
+                          selectedModelId === m.id ? 'bg-purple-500/20 border border-purple-400/50 text-white' : 'hover:bg-white/5 text-slate-300'
+                        }`}
+                      >
+                        <div>
+                          <div className="font-semibold text-[11px]">{m.label}</div>
+                          <div className="text-[10px] text-slate-400">{m.desc}</div>
+                        </div>
+                        {selectedModelId === m.id && <Check className="w-3.5 h-3.5 text-purple-300" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Attached Files & Vision Snapshot Preview */}
+                {(attachedFiles.length > 0 || visionSnapshot) && (
+                  <div className="flex flex-wrap items-center gap-1.5 p-2 bg-[#0d1130] rounded-xl border border-white/10 text-xs">
+                    {visionSnapshot && (
+                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-cyan-950/80 border border-cyan-500/40 text-cyan-200 font-mono text-[11px]">
+                        <img
+                          src={`data:image/jpeg;base64,${visionSnapshot}`}
+                          alt="Vision snapshot"
+                          className="w-5 h-5 object-cover rounded shrink-0"
+                        />
+                        <span>vision-snapshot.jpg</span>
+                        <button
+                          type="button"
+                          onClick={() => setVisionSnapshot(null)}
+                          className="text-slate-400 hover:text-white ml-1 font-bold rounded hover:bg-white/10 px-1 cursor-pointer"
+                          title="Remove snapshot"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    )}
+                    {attachedFiles.map((f) => (
+                      <div
+                        key={f.id}
+                        className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-indigo-950/80 border border-indigo-500/40 text-cyan-300 font-mono text-[11px]"
+                      >
+                        {f.previewUrl ? (
+                          <img src={f.previewUrl} alt={f.name} className="w-4 h-4 object-cover rounded shrink-0" />
+                        ) : (
+                          <FileText className="w-3 h-3 text-cyan-400 shrink-0" />
+                        )}
+                        <span className="truncate max-w-[100px]">{f.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeAttachedFile(f.id)}
+                          className="text-slate-400 hover:text-white ml-1 font-bold rounded hover:bg-white/10 px-1 cursor-pointer"
+                          title="Remove file"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Voice Listening / Recording Live Status Strip */}
+                {(isListening || isRecordingAudio || isTranscribingAudio) && (
+                  <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-rose-950/60 border border-rose-500/40 text-[11px] text-rose-200">
+                    <span className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                      <span>
+                        {isTranscribingAudio
+                          ? 'Transcribing voice...'
+                          : isRecordingAudio
+                          ? 'Recording voice... Click Stop to transcribe'
+                          : 'Listening... Speak naturally'}
+                      </span>
+                    </span>
+                    {!isTranscribingAudio && (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => (isRecordingAudio ? stopMediaRecording(false) : stopSpeechRecognition())}
+                          className="px-2 py-0.5 rounded bg-rose-500/30 hover:bg-rose-500/50 text-white text-[10px] font-semibold cursor-pointer"
+                        >
+                          Stop
+                        </button>
+                        {isRecordingAudio && (
+                          <button
+                            type="button"
+                            onClick={() => stopMediaRecording(true)}
+                            className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 text-[10px] cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="relative flex items-center gap-1.5 bg-[#0d1130] rounded-xl border border-white/10 p-2 focus-within:border-indigo-500">
+                  <input
+                    type="text"
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Ask anything or describe what you want to build..."
+                    className="w-full bg-transparent border-none outline-none text-xs text-white placeholder-slate-400 px-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={startListening}
+                    disabled={isTranscribingAudio}
+                    className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 cursor-pointer transition-all ${
+                      isListening || isRecordingAudio
+                        ? 'bg-red-500/25 text-red-300 border border-red-500/60 shadow-[0_0_12px_rgba(239,68,68,0.5)] animate-pulse'
+                        : 'bg-white/5 hover:bg-white/10 text-cyan-300 border border-white/10'
+                    }`}
+                    title={isListening || isRecordingAudio ? 'Stop voice capture' : 'Voice dictation'}
+                  >
+                    {isListening || isRecordingAudio ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isWorking) handleStop();
+                      else handleSend();
+                    }}
+                    disabled={!isWorking && !prompt.trim() && attachedFiles.length === 0 && !visionSnapshot}
+                    className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 cursor-pointer shadow-md transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                      isWorking
+                        ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-[0_0_12px_rgba(225,29,72,0.6)] animate-pulse'
+                        : 'bg-gradient-to-r from-cyan-500 via-indigo-500 to-purple-600 text-white shadow-[0_0_12px_rgba(99,102,241,0.5)] hover:scale-105'
+                    }`}
+                    title={isWorking ? 'Stop building' : 'Send message'}
+                  >
+                    {isWorking ? <Square className="w-3.5 h-3.5 fill-white text-white" /> : <Send className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+
+                {/* Action Chips */}
+                <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-2 py-0.5 rounded bg-white/5 border border-white/10 flex items-center gap-1 text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all"
+                      title="Attach images, PDFs, code, documents, or project archives"
+                    >
+                      <Paperclip className="w-2.5 h-2.5 text-cyan-400" /> Attach Files
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !isWebSearchEnabled;
+                        setIsWebSearchEnabled(next);
+                        showNotice(next ? 'Live Web Search grounding enabled.' : 'Live Web Search disabled.', 'info');
+                      }}
+                      className={`px-2 py-0.5 rounded border flex items-center gap-1 cursor-pointer transition-all ${
+                        isWebSearchEnabled
+                          ? 'bg-blue-500/20 border-blue-400/60 text-blue-200'
+                          : 'bg-white/5 border-white/10 text-slate-300 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      <Globe className="w-2.5 h-2.5 text-blue-400" /> {isWebSearchEnabled ? 'Web Live' : 'Web Search'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActivePopover(activePopover === 'protools' ? 'none' : 'protools')}
+                      className={`px-2 py-0.5 rounded border flex items-center gap-1 cursor-pointer transition-all ${
+                        activePopover === 'protools' || isDeepThinkingEnabled || isSaharaEnabled
+                          ? 'bg-amber-500/20 border-amber-400/60 text-amber-200'
+                          : 'bg-white/5 border-white/10 text-slate-300 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      <Zap className="w-2.5 h-2.5 text-amber-400" /> Pro Tools
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActivePopover(activePopover === 'model' ? 'none' : 'model')}
+                      className={`px-2 py-0.5 rounded border flex items-center gap-1 cursor-pointer transition-all ${
+                        activePopover === 'model' || selectedModelId !== 'auto'
+                          ? 'bg-purple-500/20 border-purple-400/60 text-purple-200'
+                          : 'bg-white/5 border-white/10 text-slate-300 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      <Brain className="w-2.5 h-2.5 text-purple-400" /> {activeModel.split(' ')[0]}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !includeCodeContext;
+                        setIncludeCodeContext(next);
+                        showNotice(
+                          next
+                            ? `Workspace Code Context attached (${Object.keys(vfsFiles).length} files).`
+                            : 'Workspace Code Context detached.',
+                          'info'
+                        );
+                      }}
+                      className={`px-2 py-0.5 rounded border flex items-center gap-1 cursor-pointer transition-all ${
+                        includeCodeContext
+                          ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-200'
+                          : 'bg-white/5 border-white/10 text-slate-300 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      <Code2 className="w-2.5 h-2.5 text-emerald-400" /> Code Context
+                    </button>
+                  </div>
+                </div>
+
+                {/* Model & Tokens Footer bar */}
+                <div className="flex items-center justify-between text-[9px] text-slate-400 pt-1 border-t border-white/5 font-mono">
+                  <span>Model: <strong className="text-slate-200">{activeModel}</strong></span>
+                  <span>Web: <strong className={isWebSearchEnabled ? 'text-blue-400' : 'text-slate-400'}>{isWebSearchEnabled ? 'Live' : 'Standard'}</strong></span>
+                  <span>Context: <strong className={includeCodeContext ? 'text-emerald-400' : 'text-slate-300'}>{Object.keys(vfsFiles).length} files</strong></span>
+                </div>
+              </div>
+            </div>
+
+            {/* ---------------------------------------------------- */}
+            {/* RIGHT COLUMN: Live Interactive App Preview / IDE      */}
+            {/* ---------------------------------------------------- */}
+            <div className={`flex-1 bg-[#030511] flex-col h-full overflow-hidden min-w-0 ${
+              mobileSplitView === 'preview' ? 'flex' : 'hidden lg:flex'
+            }`}>
+              {/* Preview Controls Top Bar */}
+              <div className="px-4 py-2 bg-[#060818] border-b border-white/10 flex items-center justify-between gap-4 z-10 shrink-0">
+                {/* Left Tabs */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPreviewTab('preview')}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                      previewTab === 'preview'
+                        ? 'bg-indigo-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <span>Preview</span>
+                  </button>
+
+                  <button
+                    onClick={() => setPreviewTab('code')}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                      previewTab === 'code'
+                        ? 'bg-indigo-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <Code2 className="w-3.5 h-3.5" />
+                    <span>Code</span>
+                  </button>
+                  <button
+                    onClick={() => setPreviewTab('intelligence')}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                      previewTab === 'intelligence'
+                        ? 'bg-indigo-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <Brain className="w-3.5 h-3.5" />
+                    <span>Intelligence</span>
+                  </button>
+
+                  <button
+                    onClick={() => setIsVisualEditor(true)}
+                    className="px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md hover:brightness-110"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    <span>Visual Edit</span>
+                  </button>
+                </div>
+
+                {/* Center Device Responsive Toggles */}
+                <div className="flex items-center gap-1 bg-[#0a0d28] p-1 rounded-lg border border-white/10">
+                  <button
+                    onClick={() => setDeviceViewport('desktop')}
+                    className={`p-1 rounded ${deviceViewport === 'desktop' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    <Monitor className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setDeviceViewport('tablet')}
+                    className={`p-1 rounded ${deviceViewport === 'tablet' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    <Tablet className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setDeviceViewport('mobile')}
+                    className={`p-1 rounded ${deviceViewport === 'mobile' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Right Action Buttons */}
+                <div className="flex items-center gap-2">
+                  <button className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10">
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+
+                  <button className="px-3 py-1 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white font-semibold text-xs shadow-md hover:brightness-110 flex items-center gap-1">
+                    <span>Deploy</span>
+                    <ChevronDown className="w-3 h-3" />
+                  </button>
+
+                  <button
+                    onClick={() => setIsFullscreenPreview(true)}
+                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs flex items-center gap-1 border border-white/10 cursor-pointer hover:border-indigo-500/50 hover:text-white transition-all shadow-sm"
+                  >
+                    <Maximize2 className="w-3 h-3 text-indigo-400" />
+                    <span className="hidden sm:inline">Fullscreen</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Main Content Stage */}
+              <div className="flex-1 overflow-hidden flex flex-col min-h-0 bg-[#02030d]">
+                {previewTab === 'preview' ? (
+                  <WorkspacePreviewContainer
+                    isPreviewFullScreen={isFullscreenPreview}
+                    setIsPreviewFullScreen={setIsFullscreenPreview}
+                    setReloadKey={setReloadKey}
+                    buildState={isGenerating ? 'in_progress' : 'completed'}
+                    hasExistingProject={!!activeProj}
+                    deviceMode={deviceViewport}
+                    setDeviceMode={setDeviceViewport}
+                    currentBuildPrompt={prompt || 'Synthesizing application...'}
+                    liveBuildAction={isGenerating ? 'Executing build sequence...' : 'Build Ready'}
+                    buildProgressPct={isGenerating ? 75 : 100}
+                    setRightTab={setPreviewTab}
+                    activeProjectId={WorkspaceManager.getInstance().getActiveProjectId() || activeProj?.id || 'anny-project'}
+                    reloadKey={reloadKey}
+                    previewRuntimeReady={hasBuiltApp && !isGenerating}
+                    onOpenVisualEdit={() => setIsVisualEditor(true)}
+                  />
+                ) : previewTab === 'intelligence' ? (
+                  <div className="p-4 flex-1 overflow-y-auto">
+                    <AnnyIntelligenceWorkspacePanel />
+                  </div>
+                ) : (
+                  /* IDE Code Tab View with File & Folder Explorer */
+                    <WorkspaceCodeEditor 
+                      vfsFiles={vfsFiles}
+                      fileListKeys={fileListKeys}
+                      activeCodeFile={activeCodeFile}
+                      setActiveCodeFile={setActiveCodeFile}
+                      openTabs={openTabs}
+                      setOpenTabs={setOpenTabs}
+                      activeFileContent={activeFileContent}
+                      handleCodeChange={handleCodeChange}
+                      handleDeleteFile={handleDeleteFile}
+                      isAddingFile={isAddingFile}
+                      setIsAddingFile={setIsAddingFile}
+                      newFileName={newFileName}
+                      setNewFileName={setNewFileName}
+                      handleCreateNewFile={handleCreateNewFile}
+                      isAddingFolder={isAddingFolder}
+                      setIsAddingFolder={setIsAddingFolder}
+                      newFolderName={newFolderName}
+                      setNewFolderName={setNewFolderName}
+                      handleCreateNewFolder={handleCreateNewFolder}
+                      handleRenameFile={handleRenameFile}
+                      handleMoveFile={handleMoveFile}
+                      fileSearch={fileSearch}
+                      setFileSearch={setFileSearch}
+                      setRightTab={(tab) => setPreviewTab(tab)}
+                      setVfsFiles={setVfsFiles}
+                      projectName={activeProj?.id || WorkspaceManager.getInstance().getActiveProjectId() || 'anny-project'}
+                    />
+                  )}
+              </div>
+
+              {/* Bottom Preview Status Bar */}
+              <div className="px-4 py-1.5 bg-[#060818] border-t border-white/10 flex items-center justify-between text-[10px] text-slate-400 shrink-0 font-mono">
+                <div className="flex items-center gap-3">
+                  <span className="flex items-center gap-1 text-emerald-400">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    Responsive
+                  </span>
+                  <span className="flex items-center gap-1 text-cyan-400">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+                    Ready
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  <span>☁️ Auto-saving...</span>
+                  <span>Last updated: 2s ago</span>
+                  <span className="px-2 py-0.5 rounded-full bg-purple-950 border border-purple-500/40 text-purple-300 font-semibold font-sans">
+                    • Live Preview
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* ========================================================= */
+        /* 2. STANDARD FULL Anny WORKSPACE PAGE                    */
+        /* ========================================================= */
+        <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative">
+          {/* TOP UNIFIED HEADER BAR (Clean Transparent Background) */}
+          <header className="px-4 sm:px-6 py-3 bg-transparent flex items-center justify-between gap-3 sticky top-0 z-30 shrink-0">
+            {/* Left side: Mobile Animated Logo Menu */}
+            <div className="flex items-center gap-3">
+              <MobileLogoMenu onToggleMobileMenu={onToggleMobileMenu} />
+            </div>
+
+            {/* Right side: Vision Monitor, and User Icon */}
+            <div className="flex items-center gap-2 text-xs text-slate-300">
+              {hasBuiltApp && (
+                <button
+                  onClick={() => {
+                    setIsSplitScreen(true);
+                    setPreviewTab('preview');
+                    setMobileSplitView('preview');
+                  }}
+                  className="px-3 py-1.5 rounded-xl border border-cyan-500/30 bg-gradient-to-r from-cyan-500/10 to-indigo-500/10 hover:from-cyan-500/20 hover:to-indigo-500/20 text-cyan-300 hover:text-cyan-200 flex items-center gap-1.5 transition-all cursor-pointer text-xs font-semibold shadow-[0_0_12px_rgba(6,182,212,0.15)] hover:shadow-[0_0_20px_rgba(6,182,212,0.35)] hover:scale-105 active:scale-95 backdrop-blur-sm"
+                  title="Open Live App Preview for this Session"
+                >
+                  <Globe className="w-3.5 h-3.5 animate-pulse text-cyan-400" />
+                  <span>Launch Preview</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => toggleVisionMonitor()}
+                className={`px-3 py-1.5 rounded-xl border text-slate-200 flex items-center gap-1.5 transition-all cursor-pointer text-xs backdrop-blur-sm ${
+                  isVisionOpen
+                    ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-[0_0_15px_rgba(0,229,255,0.3)]'
+                    : 'bg-white/5 hover:bg-white/10 border-white/10'
+                }`}
+                title="Toggle AI Camera & Vision Monitor"
+              >
+                <Camera className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Vision Monitor</span>
+              </button>
+
+              {/* Speaker Voice Control (Icon only, color changes when ON, no text write up) */}
+              <button
+                type="button"
+                onClick={toggleVoice}
+                className={`p-2 rounded-xl transition-all cursor-pointer backdrop-blur-sm border ${
+                  isVoiceActive
+                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400/60 shadow-[0_0_15px_rgba(0,240,255,0.4)] animate-pulse'
+                    : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-400'
+                }`}
+                title={isVoiceActive ? "ANNY Voice Synthesizer: ENABLED (Click to Mute)" : "ANNY Voice Synthesizer: DISABLED (Click to Enable)"}
+              >
+                {isVoiceActive ? (
+                  <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
+                ) : (
+                  <VolumeX className="w-3.5 h-3.5 text-slate-500" />
+                )}
+              </button>
+
+              {/* User Profile Avatar & Dropdown Menu */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                  className="w-8 h-8 rounded-full border border-cyan-400/50 flex items-center justify-center text-white font-bold text-xs shadow-md shrink-0 ml-1 hover:scale-105 hover:ring-2 hover:ring-cyan-400/50 transition-all cursor-pointer overflow-hidden bg-gradient-to-tr from-cyan-500 via-blue-600 to-indigo-600"
+                  title="User Profile & Settings"
+                >
+                  {user?.photoURL ? (
+                    <img src={user.photoURL} alt={userName} className="w-full h-full object-cover" />
+                  ) : (
+                    userName ? userName.charAt(0).toUpperCase() : 'A'
+                  )}
+                </button>
+
+                {isUserMenuOpen && (
+                  <div className="absolute top-full mt-2 right-0 w-64 bg-[#080d22]/98 backdrop-blur-xl border border-cyan-500/30 rounded-2xl p-2.5 shadow-[0_10px_40px_rgba(0,0,0,0.85)] z-[100] text-xs">
+                    {/* Header User Card */}
+                    <div className="p-2 border-b border-white/10 mb-2 flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-cyan-500 to-indigo-600 p-0.5 shrink-0 flex items-center justify-center">
+                        <div className="w-full h-full rounded-full bg-[#030617] flex items-center justify-center text-cyan-300 font-black text-sm">
+                          {userName ? userName.charAt(0).toUpperCase() : 'A'}
+                        </div>
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-bold text-white truncate">{userName}</span>
+                        <span className="text-[10px] text-slate-400 font-mono truncate">{userEmail}</span>
+                        <span className="inline-flex items-center gap-1 text-[9px] font-mono text-cyan-400 mt-0.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                          {user ? 'AUTHENTICATED OPERATOR' : 'GUEST OPERATOR'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Options List */}
+                    <div className="space-y-1 mb-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          if (onSelectSubTab) onSelectSubTab('settings');
+                          else if (setView) setView('profile');
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-slate-200 hover:text-white hover:bg-cyan-500/10 rounded-xl transition-all text-left font-medium cursor-pointer"
+                      >
+                        <Settings className="w-4 h-4 text-cyan-400 shrink-0" />
+                        <span>Profile & Settings</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          if (onSelectSubTab) onSelectSubTab('session-history');
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-slate-200 hover:text-white hover:bg-cyan-500/10 rounded-xl transition-all text-left font-medium cursor-pointer"
+                      >
+                        <History className="w-4 h-4 text-cyan-400 shrink-0" />
+                        <span>Session History</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          if (onSelectSubTab) onSelectSubTab('projects');
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-slate-200 hover:text-white hover:bg-cyan-500/10 rounded-xl transition-all text-left font-medium cursor-pointer"
+                      >
+                        <Folder className="w-4 h-4 text-cyan-400 shrink-0" />
+                        <span>My Projects</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          if (onSelectSubTab) onSelectSubTab('ai-agents');
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-slate-200 hover:text-white hover:bg-cyan-500/10 rounded-xl transition-all text-left font-medium cursor-pointer"
+                      >
+                        <Bot className="w-4 h-4 text-cyan-400 shrink-0" />
+                        <span>AI Agents</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          if (onSelectSubTab) onSelectSubTab('models');
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-slate-200 hover:text-white hover:bg-cyan-500/10 rounded-xl transition-all text-left font-medium cursor-pointer"
+                      >
+                        <Cpu className="w-4 h-4 text-cyan-400 shrink-0" />
+                        <span>Neural Engine Models</span>
+                      </button>
+                    </div>
+
+                    <div className="border-t border-white/10 pt-2">
+                      {user || handleLogout ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            if (handleLogout) handleLogout();
+                            else if (setView) setView('auth');
+                          }}
+                          className="w-full flex items-center justify-center gap-2 px-3 py-2 text-rose-400 hover:bg-rose-500/10 font-bold rounded-xl transition-all cursor-pointer"
+                        >
+                          <LogOut className="w-4 h-4" />
+                          <span>Sign Out / Disconnect</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            if (onOpenAuth) onOpenAuth();
+                            else if (setView) setView('auth');
+                          }}
+                          className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:brightness-110 text-white font-bold rounded-xl shadow-lg transition-all cursor-pointer"
+                        >
+                          <LogIn className="w-4 h-4" />
+                          <span>Sign In / Create Account</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </header>
+
+          {/* MAIN SCROLLABLE WRAPPER (Scrollbar positioned at far right edge) */}
+          <div className="flex-1 w-full overflow-y-auto custom-scrollbar flex flex-col justify-between min-h-0">
+            <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-8 py-4 flex flex-col z-10 min-h-0">
+              {((messages.length > 0 ? messages : chatHistory).length === 0) ? (
+                /* INITIAL HERO DISPLAY */
+                <div className="flex-1 flex flex-col items-center justify-center text-center my-auto py-2 sm:py-4 space-y-3 sm:space-y-5">
+                  {/* Hardware Logo Display */}
+                  <div className="relative group cursor-pointer flex items-center justify-center" onClick={() => handleSend('Build E-commerce Website')}>
+                    <img
+                      src="/logo.png"
+                      alt="Anny Logo"
+                      loading="eager"
+                      fetchPriority="high"
+                      decoding="sync"
+                      referrerPolicy="no-referrer"
+                      className="h-16 sm:h-20 lg:h-24 w-auto object-contain filter drop-shadow-[0_0_20px_rgba(0,229,255,0.6)] group-hover:scale-105 transition-transform duration-300"
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        if (target.src !== logoImg && logoImg) {
+                          target.src = logoImg;
+                        }
+                      }}
+                    />
+                  </div>
+
+                  {/* Title & Subtitle */}
+                  <div className="space-y-1.5 max-w-2xl">
+                    <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight font-heading pb-2 leading-relaxed inline-block overflow-visible animate-aios-shift drop-shadow-[0_0_12px_rgba(0,229,255,0.6)]">
+                      Anny
+                    </h1>
+                    <p className="text-xs sm:text-sm lg:text-base text-slate-300 font-medium tracking-wide">
+                      Your All-in-One AI Developer Assistant
+                    </p>
+                  </div>
+
+                  {/* Quick Action Prompt Cards (Hidden on Mobile & Tablet Mode) */}
+                  <div className="hidden lg:grid lg:grid-cols-4 gap-3 sm:gap-4 w-full pt-2 sm:pt-3 max-w-4xl">
+                    {cardPrompts.map((card) => {
+                      const IconComp = card.icon;
+                      return (
+                        <button
+                          key={card.id}
+                          onClick={() => handleSend(card.title)}
+                          className="bg-[#0b0f2d]/90 hover:bg-[#121742] border border-white/10 hover:border-indigo-500/50 rounded-2xl p-4 text-left transition-all duration-200 cursor-pointer group shadow-lg flex flex-col justify-between hover:shadow-[0_0_25px_rgba(99,102,241,0.25)]"
+                        >
+                          <div className="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-cyan-400 group-hover:scale-110 transition-transform mb-3">
+                            <IconComp className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h3 className="text-xs font-bold text-white group-hover:text-cyan-300 transition-colors">
+                              {card.title}
+                            </h3>
+                            <p className="text-[11px] text-slate-400 mt-1 line-clamp-2">
+                              {card.subtitle}
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                /* CHAT CONVERSATION THREAD */
+                <div className="flex-1 space-y-5 py-2 w-full">
+                  {(messages.length > 0 ? messages : chatHistory)
+                    .filter((msg: any) => !isSynthesisOrPlaceholderContent(msg.content))
+                    .map((msg: any) => (
+                    <div
+                      key={msg.id}
+                      className={`flex flex-col space-y-1.5 w-full ${
+                        msg.role === 'user' ? 'items-end' : 'items-start'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono px-1">
+                        {msg.role === 'user' ? (
+                          <>
+                            <span>You • {msg.timestamp}</span>
+                            {user?.photoURL ? (
+                              <img src={user.photoURL} alt="User" className="w-5 h-5 rounded-full ml-1" />
+                            ) : (
+                              <div className="w-5 h-5 rounded-full bg-slate-700 flex items-center justify-center ml-1">
+                                <User className="w-3 h-3 text-white" />
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <img src="/logo.png" className="w-5 h-5 object-contain mr-1" alt="Anny" />
+                            <span className="text-white font-semibold animate-aios-shift">Anny</span>
+                            <span>• {msg.timestamp}</span>
+                          </>
+                        )}
+                      </div>
+
+                      <div
+                        className={`relative rounded-2xl p-4 text-xs sm:text-sm leading-relaxed ${
+                          msg.role === 'user'
+                            ? 'bg-indigo-950/90 border border-indigo-500/50 text-indigo-100 rounded-tr-xs shadow-lg ml-auto max-w-[90%] sm:max-w-[80%]'
+                            : 'bg-[#0b0e2b] border border-white/10 text-slate-200 rounded-tl-xs shadow-xl space-y-3 mr-auto max-w-[95%] sm:max-w-[88%]'
+                        }`}
+                      >
+                        {msg.attachedFiles && msg.attachedFiles.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mb-2.5 pb-2.5 border-b border-white/10">
+                            {msg.attachedFiles.map((f: any, idx: number) => (
+                              <div
+                                key={idx}
+                                className="px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-xl flex items-center gap-2 text-[11px] text-cyan-200 font-mono"
+                              >
+                                {f.previewUrl ? (
+                                  <img
+                                    src={f.previewUrl}
+                                    alt={f.name}
+                                    className="w-8 h-8 object-cover rounded-lg border border-white/15 shrink-0"
+                                  />
+                                ) : (
+                                  <FileText className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                                )}
+                                <span className="truncate max-w-[160px]">{f.name}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="whitespace-pre-wrap">
+                          <p>{msg.content || ''}</p>
+                        </div>
+                        {Array.isArray(msg.sources) && msg.sources.length > 0 && (
+                          <div className="mt-3 pt-2.5 border-t border-white/10 flex flex-wrap gap-2">
+                            {msg.sources.map((src: any, sIdx: number) => (
+                              <a
+                                key={sIdx}
+                                href={src.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 border border-blue-400/30 text-[11px] text-blue-300 transition-colors max-w-[240px]"
+                                title={src.url}
+                              >
+                                <ExternalLink className="w-3 h-3 shrink-0" />
+                                <span className="truncate">{src.title || src.url}</span>
+                              </a>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Image Generation Loading Animation */}
+                        {msg.isGeneratingImage && (
+                          <div className="w-full mt-3 p-4 sm:p-5 rounded-2xl bg-[#080d2d]/95 border border-cyan-500/40 shadow-[0_0_35px_rgba(0,210,255,0.25)] relative overflow-hidden space-y-3.5">
+                            <div className="flex items-center justify-between z-10 relative">
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300 shadow-[0_0_15px_rgba(0,229,255,0.4)]">
+                                  <Sparkles className="w-4 h-4 animate-spin text-cyan-400" />
+                                </div>
+                                <div>
+                                  <h4 className="text-xs font-black text-white tracking-wide flex items-center gap-2">
+                                    <span>Anny Diffusion Neural Engine</span>
+                                    <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 text-[9px] font-mono border border-cyan-500/40 animate-pulse">
+                                      1024x1024 4K
+                                    </span>
+                                  </h4>
+                                  <p className="text-[10px] text-cyan-300/80 font-mono mt-0.5 animate-pulse">
+                                    {msg.imageStage || 'Synthesizing visual tensors...'}
+                                  </p>
+                                </div>
+                              </div>
+                              <span className="text-xs font-mono font-bold text-cyan-400">{msg.imageProgress || 20}%</span>
+                            </div>
+
+                            {/* Neural Aperture Visualizer Frame */}
+                            <div className="relative w-full h-44 sm:h-52 rounded-xl bg-[#030617] border border-white/10 flex items-center justify-center overflow-hidden">
+                              <div className="absolute inset-0 bg-[radial-gradient(#00d2ff_1px,transparent_1px)] [background-size:16px_16px] opacity-20" />
+                              <div className="absolute inset-0 bg-gradient-to-t from-[#080d2d] via-transparent to-transparent" />
+
+                              <div className="flex flex-col items-center justify-center gap-2.5 z-10 text-center px-4">
+                                <div className="relative w-14 h-14 rounded-full border-2 border-cyan-400/40 flex items-center justify-center shadow-[0_0_30px_rgba(0,210,255,0.5)]">
+                                  <div className="absolute inset-0 rounded-full border-2 border-dashed border-purple-500 animate-spin" style={{ animationDuration: '6s' }} />
+                                  <Sparkles className="w-6 h-6 text-cyan-400 animate-pulse" />
+                                </div>
+                                <span className="text-xs font-bold text-slate-200 tracking-wider">Generating High-Resolution AI Image</span>
+                                <span className="text-[10px] font-mono text-slate-400 max-w-sm truncate italic">"{msg.imagePrompt}"</span>
+                              </div>
+
+                              <div className="absolute left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_15px_#00d2ff] animate-bounce" style={{ animationDuration: '2s' }} />
+                            </div>
+
+                            <div className="w-full bg-slate-900/80 rounded-full h-1.5 overflow-hidden border border-white/10">
+                              <div
+                                className="bg-gradient-to-r from-cyan-500 via-indigo-500 to-fuchsia-500 h-full rounded-full transition-all duration-500 shadow-[0_0_10px_rgba(0,210,255,0.8)]"
+                                style={{ width: `${msg.imageProgress || 20}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Verified Generated Image & Logo Kit Rendering */}
+                        {msg.generatedImages && msg.generatedImages.length > 0 && (
+                          <div className="w-full mt-3 space-y-3">
+                            {msg.generatedImages.map((img: any, idx: number) => {
+                              const ext = img.format || (img.mimeType === 'image/svg+xml' ? 'svg' : 'png');
+                              const dimLabel = img.width && img.height ? `${img.width} × ${img.height}` : 'Verified';
+                              return (
+                                <div key={idx} className="space-y-3">
+                                  <div className="relative group rounded-2xl overflow-hidden border border-cyan-500/30 bg-[#06091e] shadow-[0_10px_30px_rgba(0,0,0,0.6)] transition-all hover:border-cyan-400/60">
+                                    <img
+                                      src={img.url}
+                                      alt={img.prompt}
+                                      loading="lazy"
+                                      className="w-full h-auto max-h-[480px] object-contain bg-[#040610] transition-transform duration-500 group-hover:scale-[1.01]"
+                                    />
+
+                                    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-between p-4 pointer-events-none group-hover:pointer-events-auto">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="px-2.5 py-1 rounded-full bg-black/75 border border-cyan-400/50 text-cyan-300 font-mono text-[10px] font-bold backdrop-blur-md">
+                                          {dimLabel} • {ext.toUpperCase()} • {img.provider || 'Verified'}
+                                        </span>
+                                        <div className="flex items-center gap-2">
+                                          <button
+                                            onClick={() => setLightboxImage(img)}
+                                            className="p-2 rounded-xl bg-black/80 hover:bg-cyan-500 border border-white/20 text-white transition-all cursor-pointer shadow-lg"
+                                            title="Fullscreen Lightbox"
+                                          >
+                                            <Maximize2 className="w-4 h-4" />
+                                          </button>
+                                          <a
+                                            href={img.url}
+                                            download={`anny-${(img.category || 'asset').toLowerCase()}-${Date.now()}.${ext}`}
+                                            className="p-2 rounded-xl bg-black/80 hover:bg-emerald-500 border border-white/20 text-white transition-all cursor-pointer shadow-lg"
+                                            title={`Download ${ext.toUpperCase()}`}
+                                          >
+                                            <Download className="w-4 h-4" />
+                                          </a>
+                                        </div>
+                                      </div>
+
+                                      <div className="space-y-2">
+                                        <p className="text-xs text-slate-200 font-medium line-clamp-2 bg-black/60 p-2.5 rounded-xl border border-white/10 backdrop-blur-md">
+                                          "{img.prompt}"
+                                        </p>
+                                        <div className="flex items-center justify-between pt-1">
+                                          <button
+                                            onClick={() => navigator.clipboard.writeText(img.prompt)}
+                                            className="text-[11px] font-semibold text-cyan-300 hover:text-white flex items-center gap-1 cursor-pointer"
+                                          >
+                                            <Copy className="w-3.5 h-3.5" />
+                                            <span>Copy Prompt</span>
+                                          </button>
+                                          <button
+                                            onClick={() => handleSend(img.prompt)}
+                                            className="px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-lg"
+                                          >
+                                            <RotateCw className="w-3.5 h-3.5" />
+                                            <span>Regenerate</span>
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Logo Brand Kit Variants & Palette Swatches */}
+                                  {img.logoBundle?.variants && img.logoBundle.variants.length > 1 && (
+                                    <div className="rounded-2xl border border-amber-400/25 bg-[#06091b] p-3.5 space-y-3">
+                                      <div className="flex items-center justify-between text-[11px]">
+                                        <span className="font-bold text-amber-300 uppercase tracking-wider">
+                                          {img.logoBundle.plan.brandName} — Scalable SVG Brand Kit ({img.logoBundle.plan.monogram})
+                                        </span>
+                                        <span className="text-slate-400 font-mono">{img.logoBundle.plan.logoType}</span>
+                                      </div>
+                                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                                        {img.logoBundle.variants.map((variant: any) => (
+                                          <a
+                                            key={variant.id}
+                                            href={variant.dataUrl}
+                                            download={`${img.logoBundle.plan.brandName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${variant.id}.svg`}
+                                            className="rounded-xl border border-white/10 hover:border-amber-400/60 bg-black/40 p-2 flex flex-col gap-1.5 transition-colors"
+                                            title={`Download ${variant.label} (SVG)`}
+                                          >
+                                            <div className="h-16 flex items-center justify-center rounded-lg bg-[#040610] p-1">
+                                              <img src={variant.dataUrl} alt={variant.label} className="max-h-full max-w-full object-contain" />
+                                            </div>
+                                            <span className="text-[10px] font-medium text-slate-200 truncate">{variant.label}</span>
+                                          </a>
+                                        ))}
+                                      </div>
+                                      <div className="flex flex-wrap gap-1.5 pt-1">
+                                        {img.logoBundle.plan.palette.slice(0, 5).map((sw: any) => (
+                                          <span key={sw.name} className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-black/50 border border-white/10 text-[10px] text-slate-300">
+                                            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: sw.hex }} />
+                                            {sw.name} ({sw.hex})
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Verified Video Player / Directorial Storyboard Rendering */}
+                        {msg.generatedVideo && (
+                          <div className="w-full mt-3 rounded-2xl border border-cyan-500/30 bg-[#06091e] p-4 space-y-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-bold text-white">
+                                {msg.generatedVideo.productionPlan?.title || 'Video Production'}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-white/10 text-cyan-300">
+                                {msg.generatedVideo.status}
+                              </span>
+                            </div>
+
+                            {msg.generatedVideo.status === 'COMPLETED' && msg.generatedVideo.playableValidated && msg.generatedVideo.videoUrl && (
+                              <div className="space-y-2">
+                                <video
+                                  controls
+                                  playsInline
+                                  src={msg.generatedVideo.videoUrl}
+                                  className="w-full max-h-[380px] rounded-xl bg-black border border-white/10"
+                                />
+                                <div className="flex justify-end">
+                                  <a
+                                    href={msg.generatedVideo.videoUrl}
+                                    download={`${msg.generatedVideo.jobId}.mp4`}
+                                    className="px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 text-xs font-semibold flex items-center gap-1.5"
+                                  >
+                                    <Download className="w-3.5 h-3.5" />
+                                    Download MP4
+                                  </a>
+                                </div>
+                              </div>
+                            )}
+
+                            {msg.generatedVideo.productionPlan?.shots && msg.generatedVideo.productionPlan.shots.length > 0 && (
+                              <div className="space-y-1.5">
+                                <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
+                                  Directorial Shot List ({msg.generatedVideo.aspectRatio} · {msg.generatedVideo.durationSeconds}s)
+                                </div>
+                                {msg.generatedVideo.productionPlan.shots.map((shot) => (
+                                  <div key={shot.shotNumber} className="rounded-lg bg-black/40 border border-white/10 p-2.5 text-[11px] text-slate-200">
+                                    <span className="font-bold text-cyan-300">Shot {shot.shotNumber} ({shot.durationSeconds}s):</span> {shot.visualDescription}
+                                    <div className="text-[10px] text-slate-400 mt-0.5">
+                                      Camera: {shot.cameraMovement} · Audio: {shot.audioCue}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Action Icons */}
+                        <div className={`flex items-center gap-3 mt-3 pt-2 border-t border-white/5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                          {msg.role === 'user' ? (
+                            <button className="text-slate-500 hover:text-white transition-colors cursor-pointer" title="Copy Message" onClick={() => navigator.clipboard.writeText(msg.content)}>
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <>
+                            <button className="text-slate-500 hover:text-emerald-400 transition-colors cursor-pointer" title="Good response" onClick={(e) => e.currentTarget?.classList.add('text-emerald-400')}>
+                                <ThumbsUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button className="text-slate-500 hover:text-rose-400 transition-colors cursor-pointer" title="Bad response" onClick={(e) => e.currentTarget?.classList.add('text-rose-400')}>
+                                <ThumbsDown className="w-3.5 h-3.5" />
+                              </button>
+                              <button className="text-slate-500 hover:text-white transition-colors cursor-pointer" title="Copy Message" onClick={(e) => { 
+                                navigator.clipboard.writeText(msg.content); 
+                                const btn = e.currentTarget;
+                                btn?.classList.add('text-cyan-400'); 
+                                setTimeout(() => { if (btn) btn.classList.remove('text-cyan-400'); }, 2000); 
+                              }}>
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
+                              <button 
+                                className={`transition-colors cursor-pointer ${window.speechSynthesis?.speaking ? 'text-cyan-400 drop-shadow-[0_0_5px_#22d3ee]' : 'text-slate-500 hover:text-white'}`} 
+                                title="Read Aloud"
+                                onClick={() => {
+                                  if (annyVoiceService.isSpeaking()) {
+                                    annyVoiceService.stop();
+                                    setCurrentlySpeakingId(null);
+                                  } else {
+                                    setCurrentlySpeakingId(msg.id);
+                                    annyVoiceService.speakSpeakerButton(msg.content, () => setCurrentlySpeakingId(null));
+                                  }
+                                }}
+                              >
+                                <Volume2 className="w-3.5 h-3.5" />
+                              </button>
+                              {hasBuiltApp && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsSplitScreen(true);
+                                    setPreviewTab('preview');
+                                    setMobileSplitView('preview');
+                                  }}
+                                  className="ml-auto px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/35 hover:bg-cyan-500/25 text-cyan-300 text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_10px_rgba(6,182,212,0.15)] hover:scale-105 active:scale-95"
+                                  title="Launch Live Preview"
+                                >
+                                  <Globe className="w-3 h-3 text-cyan-400 animate-pulse" />
+                                  <span>Launch Preview</span>
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Google AI Studio Style Loading Details Indicator at BOTTOM of Chat Thread */}
+                  <AnimatePresence>
+                    {isWorking && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 6 }}
+                        className="self-start text-left font-sans select-none pt-2 pb-2 border-t border-white/5 w-full mt-2 mb-1"
+                      >
+                        {/* Line 1: Anny • Running for Xs */}
+                        <div className="text-sm font-normal text-slate-300 flex items-center gap-1.5">
+                          <span className="bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400 bg-clip-text text-transparent font-bold tracking-tight animate-pulse">
+                            Anny
+                          </span>
+                          <span className="text-slate-400">•</span>
+                          <span className="text-slate-400">Running for {elapsedSec}s</span>
+                        </div>
+
+                        {/* Line 2: [logo.png] Launching */}
+                        <div className="flex items-center gap-2 mt-1">
+                          <img
+                            src="/logo.png"
+                            alt="Anny"
+                            className="w-4 h-4 object-contain animate-spin-slow drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]"
+                          />
+                          <span className="text-sm text-slate-400 font-sans tracking-wide">
+                            {activeProj?.currentStage || (isGenerating ? 'Synthesizing response' : 'Launching')}
+                          </span>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                  <div ref={chatEndRef} />
+                </div>
+              )}
+            </main>
+          </div>
+
+          {/* ANCHORED CHAT BOX (Stands completely still at bottom) */}
+          <div className="shrink-0 w-full max-w-3xl mx-auto px-4 pb-4 sm:pb-6 pt-2 z-20 relative">
+            {/* Inline Notice Banner */}
+            {workspaceNotice && (
+              <div
+                className={`mb-2 flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs border backdrop-blur-md ${
+                  workspaceNotice.type === 'error'
+                    ? 'bg-rose-950/90 border-rose-500/40 text-rose-200'
+                    : workspaceNotice.type === 'warning'
+                    ? 'bg-amber-950/90 border-amber-500/40 text-amber-200'
+                    : workspaceNotice.type === 'success'
+                    ? 'bg-emerald-950/90 border-emerald-500/40 text-emerald-200'
+                    : 'bg-cyan-950/90 border-cyan-500/40 text-cyan-200'
+                }`}
+              >
+                <span className="flex items-center gap-2 truncate">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span className="truncate">{workspaceNotice.message}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setWorkspaceNotice(null)}
+                  className="p-0.5 hover:bg-white/10 rounded cursor-pointer shrink-0"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Pro Tools & Model Popovers (Main View) */}
+            {activePopover === 'protools' && (
+              <div className="mb-2 bg-[#0b102d]/98 backdrop-blur-xl border border-indigo-500/40 rounded-2xl p-3.5 shadow-2xl z-40 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                  <span className="font-bold text-white flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-amber-400" />
+                    <span>ANNY Pro Tools</span>
+                  </span>
+                  <button type="button" onClick={() => setActivePopover('none')} className="text-slate-400 hover:text-white cursor-pointer">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsDeepThinkingEnabled(!isDeepThinkingEnabled)}
+                    className={`px-3 py-2 rounded-xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                      isDeepThinkingEnabled ? 'bg-purple-500/20 border-purple-400/60 text-purple-200' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5"><Brain className="w-3.5 h-3.5 text-purple-400" /> Deep Think</span>
+                    <span className="text-[10px] font-mono">{isDeepThinkingEnabled ? 'ON' : 'OFF'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIncludeCodeContext(!includeCodeContext)}
+                    className={`px-3 py-2 rounded-xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                      includeCodeContext ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-200' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5"><Code2 className="w-3.5 h-3.5 text-emerald-400" /> Code Ctx</span>
+                    <span className="text-[10px] font-mono">{includeCodeContext ? 'ON' : 'OFF'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsWebSearchEnabled(!isWebSearchEnabled)}
+                    className={`px-3 py-2 rounded-xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                      isWebSearchEnabled ? 'bg-blue-500/20 border-blue-400/60 text-blue-200' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5"><Globe className="w-3.5 h-3.5 text-blue-400" /> Web Live</span>
+                    <span className="text-[10px] font-mono">{isWebSearchEnabled ? 'ON' : 'OFF'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsSaharaEnabled(!isSaharaEnabled)}
+                    className={`px-3 py-2 rounded-xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                      isSaharaEnabled ? 'bg-amber-500/20 border-amber-400/60 text-amber-200' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5"><Mic className="w-3.5 h-3.5 text-amber-400" /> Sahara STT</span>
+                    <span className="text-[10px] font-mono">{isSaharaEnabled ? 'ON' : 'OFF'}</span>
+                  </button>
+                </div>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+                  <div className="flex-1 flex items-center gap-2 bg-[#050817] border border-white/15 rounded-xl px-2.5 py-1.5 focus-within:border-cyan-400">
+                    <Link2 className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                    <input
+                      type="url"
+                      value={inspectUrlInput}
+                      onChange={(e) => setInspectUrlInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void handleInspectPublicUrl();
+                        }
+                      }}
+                      placeholder="Paste public URL (https://...) to inspect or summarize"
+                      className="flex-1 bg-transparent text-xs text-white placeholder-slate-500 outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleInspectPublicUrl()}
+                    disabled={isInspectingUrl || !inspectUrlInput.trim()}
+                    className="px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 disabled:opacity-50 border border-cyan-500/40 text-cyan-300 font-semibold cursor-pointer"
+                  >
+                    {isInspectingUrl ? 'Inspecting...' : 'Inspect URL'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      toggleVisionMonitor(true);
+                      setActivePopover('none');
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-slate-200 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <ScanEye className="w-3.5 h-3.5 text-cyan-400" /> Vision
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPrompt((p) => p.trim() || 'Generate an image of ');
+                      setActivePopover('none');
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-slate-200 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-fuchsia-400" /> Image
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {activePopover === 'model' && (
+              <div className="mb-2 bg-[#0b102d]/98 backdrop-blur-xl border border-purple-500/40 rounded-2xl p-2.5 shadow-2xl z-40 grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
+                {[
+                  { id: 'auto', label: 'Auto (Best Route)', desc: 'Smart local & cloud routing' },
+                  { id: 'gemini-4-hydrogen', label: 'ANNY Core (Pro)', desc: 'Deep architecture & vision' },
+                  { id: 'gemini-3.1-flash-lite', label: 'ANNY Fast (Lite)', desc: 'Low-latency coding & chat' },
+                  { id: 'ollama', label: 'Local Sovereign (Ollama)', desc: 'Offline-capable local model' },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedModelId(m.id);
+                      setActiveModel(m.label);
+                      setActivePopover('none');
+                      showNotice(`Active model switched to ${m.label}`, 'info');
+                    }}
+                    className={`px-3 py-2 rounded-xl text-left flex items-center justify-between transition-all cursor-pointer ${
+                      selectedModelId === m.id ? 'bg-purple-500/20 border border-purple-400/50 text-white' : 'bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-semibold text-xs">{m.label}</div>
+                      <div className="text-[10px] text-slate-400">{m.desc}</div>
+                    </div>
+                    {selectedModelId === m.id && <Check className="w-3.5 h-3.5 text-purple-300" />}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="bg-[#0b0f2d]/90 border border-white/15 rounded-2xl p-2.5 sm:p-3 shadow-[0_10px_30px_rgba(0,0,0,0.5)] focus-within:border-indigo-500/80 focus-within:ring-2 focus-within:ring-indigo-500/30 transition-all backdrop-blur-md">
+              {/* Attached Files & Vision Snapshot Preview Strip (Main View) */}
+              {(attachedFiles.length > 0 || visionSnapshot) && (
+                <div className="flex flex-wrap items-center gap-1.5 mb-2 p-2 bg-[#06091e] rounded-xl border border-white/10 text-xs">
+                  {visionSnapshot && (
+                    <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-cyan-950/80 border border-cyan-500/40 text-cyan-200 font-mono text-[11px]">
+                      <img
+                        src={`data:image/jpeg;base64,${visionSnapshot}`}
+                        alt="Vision snapshot"
+                        className="w-5 h-5 object-cover rounded shrink-0"
+                      />
+                      <span>vision-snapshot.jpg</span>
+                      <button
+                        type="button"
+                        onClick={() => setVisionSnapshot(null)}
+                        className="text-slate-400 hover:text-white ml-1 font-bold rounded hover:bg-white/10 px-1 cursor-pointer"
+                        title="Remove snapshot"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
+                  {attachedFiles.map((f) => (
+                    <div
+                      key={f.id}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-indigo-950/80 border border-indigo-500/40 text-cyan-300 font-mono text-[11px]"
+                    >
+                      {f.previewUrl ? (
+                        <img src={f.previewUrl} alt={f.name} className="w-4 h-4 object-cover rounded shrink-0" />
+                      ) : (
+                        <FileText className="w-3 h-3 text-cyan-400 shrink-0" />
+                      )}
+                      <span className="truncate max-w-[140px]">{f.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeAttachedFile(f.id)}
+                        className="text-slate-400 hover:text-white ml-1 font-bold rounded hover:bg-white/10 px-1 cursor-pointer"
+                        title="Remove file"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Voice Listening / Recording Live Status Strip */}
+              {(isListening || isRecordingAudio || isTranscribingAudio) && (
+                <div className="mb-2 flex items-center justify-between px-3 py-1.5 rounded-xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-200">
+                  <span className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                    <span>
+                      {isTranscribingAudio
+                        ? 'Transcribing voice...'
+                        : isRecordingAudio
+                        ? 'Recording voice... Click Stop to transcribe'
+                        : 'Listening... Speak naturally'}
+                    </span>
+                  </span>
+                  {!isTranscribingAudio && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => (isRecordingAudio ? stopMediaRecording(false) : stopSpeechRecognition())}
+                        className="px-2.5 py-0.5 rounded-lg bg-rose-500/30 hover:bg-rose-500/50 text-white text-[11px] font-semibold cursor-pointer"
+                      >
+                        Stop
+                      </button>
+                      {isRecordingAudio && (
+                        <button
+                          type="button"
+                          onClick={() => stopMediaRecording(true)}
+                          className="px-2.5 py-0.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 text-[11px] cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 px-2">
+                <input
+                  type="text"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Ask Anny to build an app, website, search the web, or analyze files..."
+                  className="w-full bg-transparent border-none outline-none text-xs sm:text-sm text-white placeholder-slate-400 py-1"
+                />
+                <button
+                  type="button"
+                  onClick={startListening}
+                  disabled={isTranscribingAudio}
+                  className={`p-2 sm:p-2.5 rounded-xl flex items-center justify-center shrink-0 transition-all cursor-pointer ${
+                    isListening || isRecordingAudio
+                      ? 'bg-red-500/25 text-red-300 border border-red-500/60 shadow-[0_0_15px_rgba(239,68,68,0.5)] animate-pulse'
+                      : 'bg-white/5 hover:bg-white/10 text-cyan-300 border border-white/10 hover:scale-105'
+                  }`}
+                  title={isListening || isRecordingAudio ? 'Stop voice capture' : 'Voice dictation'}
+                >
+                  {isListening || isRecordingAudio ? (
+                    <MicOff className="w-4 h-4 text-red-400 animate-pulse" />
+                  ) : (
+                    <Mic className="w-4 h-4 text-cyan-300" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isWorking) handleStop();
+                    else handleSend();
+                  }}
+                  disabled={!isWorking && !prompt.trim() && attachedFiles.length === 0 && !visionSnapshot}
+                  className={`p-2 sm:p-2.5 rounded-xl flex items-center justify-center shrink-0 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                    isWorking
+                      ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-[0_0_15px_rgba(225,29,72,0.6)] animate-pulse'
+                      : 'bg-gradient-to-r from-cyan-500 via-indigo-500 to-purple-600 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)] hover:scale-105'
+                  }`}
+                  title={isWorking ? 'Stop building' : 'Send message'}
+                >
+                  {isWorking ? <Square className="w-4 h-4 fill-white text-white" /> : <Send className="w-4 h-4" />}
+                </button>
+              </div>
+
+              {/* Bottom Chips */}
+              <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-white/5 mt-2 px-1 gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 flex items-center gap-1 text-slate-300 hover:text-white transition-all cursor-pointer"
+                    title="Attach images, PDFs, code, documents, or project archives"
+                  >
+                    <Paperclip className="w-3 h-3 text-cyan-400" />
+                    <span>Attach</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !isWebSearchEnabled;
+                      setIsWebSearchEnabled(next);
+                      showNotice(next ? 'Live Web Search grounding enabled.' : 'Live Web Search disabled.', 'info');
+                    }}
+                    className={`px-2 py-1 rounded-lg border flex items-center gap-1 transition-all cursor-pointer ${
+                      isWebSearchEnabled
+                        ? 'bg-blue-500/20 border-blue-400/60 text-blue-200'
+                        : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
+                    }`}
+                    title="Toggle live web search grounding"
+                  >
+                    <Globe className="w-3 h-3 text-blue-400" />
+                    <span>{isWebSearchEnabled ? 'Web Live' : 'Web'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActivePopover(activePopover === 'protools' ? 'none' : 'protools')}
+                    className={`px-2 py-1 rounded-lg border flex items-center gap-1 transition-all cursor-pointer ${
+                      activePopover === 'protools' || isDeepThinkingEnabled || isSaharaEnabled || includeCodeContext
+                        ? 'bg-amber-500/20 border-amber-400/60 text-amber-200'
+                        : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
+                    }`}
+                    title="Open ANNY Pro Tools (Deep Think, Code Context, URL Inspector, Vision, Sahara)"
+                  >
+                    <Zap className="w-3 h-3 text-amber-400" />
+                    <span>Pro Tools</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActivePopover(activePopover === 'model' ? 'none' : 'model')}
+                    className={`px-2 py-1 rounded-lg border flex items-center gap-1 transition-all cursor-pointer ${
+                      activePopover === 'model' || selectedModelId !== 'auto'
+                        ? 'bg-purple-500/20 border-purple-400/60 text-purple-200'
+                        : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
+                    }`}
+                    title="Select AI Model / Neural Route"
+                  >
+                    <Brain className="w-3 h-3 text-purple-400" />
+                    <span className="hidden sm:inline">{activeModel.split(' ')[0]}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !includeCodeContext;
+                      setIncludeCodeContext(next);
+                      showNotice(
+                        next
+                          ? `Workspace Code Context attached (${Object.keys(vfsFiles).length} files).`
+                          : 'Workspace Code Context detached.',
+                        'info'
+                      );
+                    }}
+                    className={`px-2 py-1 rounded-lg border flex items-center gap-1 transition-all cursor-pointer ${
+                      includeCodeContext
+                        ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-200'
+                        : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
+                    }`}
+                    title="Include workspace VFS files as context"
+                  >
+                    <Code2 className="w-3 h-3 text-emerald-400" />
+                    <span className="hidden sm:inline">Code</span>
+                  </button>
+                </div>
+
+                <span className="text-[10px] text-slate-500 font-mono">
+                  Press Enter to send
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FULLSCREEN LIVE PREVIEW MODAL */}
+      {isFullscreenPreview && (
+        <div className="fixed inset-0 z-[9999] bg-[#02030e] flex flex-col w-screen h-screen overflow-hidden">
+          {/* Persistent Floating Backup Exit Button */}
+          <button
+            onClick={() => setIsFullscreenPreview(false)}
+            className="fixed top-3 right-4 z-[999999] px-3.5 py-1.5 rounded-xl bg-red-600/90 hover:bg-red-500 text-white text-xs font-bold border border-red-400/50 flex items-center gap-1.5 transition-all cursor-pointer shadow-2xl backdrop-blur-md"
+            title="Exit Fullscreen Preview"
+          >
+            <Minimize2 className="w-4 h-4" />
+            <span>Exit Fullscreen</span>
+          </button>
+
+          {/* Top Header Bar */}
+          <div className="px-4 sm:px-6 py-3 bg-[#060818] border-b border-white/10 flex items-center justify-between gap-4 shrink-0 z-[10000] relative">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                <span className="text-sm font-extrabold text-white tracking-wide truncate font-heading">
+                  {activeProj?.id ? `Project: ${activeProj.id}` : 'ANNY Generated Application'} — Live Fullscreen
+                </span>
+              </div>
+              <span className="hidden sm:inline-block px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-[10px] font-bold uppercase tracking-wider shrink-0">
+                Fullscreen Mode
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3 shrink-0 pr-36">
+              {/* Responsive Device Viewport Switcher */}
+              <div className="flex items-center gap-1 bg-[#0a0d28] p-1 rounded-lg border border-white/10">
+                <button
+                  onClick={() => setDeviceViewport('desktop')}
+                  className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                    deviceViewport === 'desktop' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Monitor className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Desktop</span>
+                </button>
+                <button
+                  onClick={() => setDeviceViewport('tablet')}
+                  className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                    deviceViewport === 'tablet' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Tablet className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Tablet</span>
+                </button>
+                <button
+                  onClick={() => setDeviceViewport('mobile')}
+                  className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                    deviceViewport === 'mobile' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Mobile</span>
+                </button>
+              </div>
+
+              {/* View Tab Switcher */}
+              <div className="flex items-center gap-1 bg-[#0a0d28] p-1 rounded-lg border border-white/10">
+                <button
+                  onClick={() => setPreviewTab('preview')}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                    previewTab === 'preview' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Preview
+                </button>
+                <button
+                  onClick={() => setPreviewTab('code')}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                    previewTab === 'code' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Code
+                </button>
+                <button
+                  onClick={() => setPreviewTab('intelligence')}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                    previewTab === 'intelligence' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Intelligence
+                </button>
+              </div>
+
+              {/* Close Fullscreen Button */}
+              <button
+                onClick={() => setIsFullscreenPreview(false)}
+                className="px-3.5 py-1.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 hover:text-red-100 text-xs font-bold border border-red-500/40 flex items-center gap-1.5 transition-all cursor-pointer shadow-lg"
+              >
+                <Minimize2 className="w-4 h-4" />
+                <span>Exit Fullscreen</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Fullscreen Body Stage */}
+          <div className="flex-1 p-2 sm:p-4 bg-[#01020a] flex items-start justify-center overflow-y-auto min-h-0 custom-scrollbar">
+            <div
+              className={`transition-all duration-300 min-h-full w-full bg-[#080b22] border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-y-auto custom-scrollbar ${
+                deviceViewport === 'mobile'
+                  ? 'max-w-sm h-[88vh]'
+                  : deviceViewport === 'tablet'
+                  ? 'max-w-3xl h-[90vh]'
+                  : 'w-full h-full max-w-7xl mx-auto'
+              }`}
+            >
+              {previewTab === 'preview' ? (
+                <div className="flex-1 flex flex-col h-full bg-white relative overflow-y-auto custom-scrollbar isolate [transform:translateZ(0)]">
+                  <DynamicVFSAppRunner projectId={WorkspaceManager.getInstance().getActiveProjectId() || activeProj?.id} />
+                </div>
+              ) : previewTab === 'intelligence' ? (
+                <AnnyIntelligenceWorkspacePanel />
+              ) : (
+                /* IDE Code View Fullscreen with File & Folder Explorer */
+                <WorkspaceCodeEditor 
+                  vfsFiles={vfsFiles}
+                  fileListKeys={fileListKeys}
+                  activeCodeFile={activeCodeFile}
+                  setActiveCodeFile={setActiveCodeFile}
+                  openTabs={openTabs}
+                  setOpenTabs={setOpenTabs}
+                  activeFileContent={activeFileContent}
+                  handleCodeChange={handleCodeChange}
+                  handleDeleteFile={handleDeleteFile}
+                  isAddingFile={isAddingFile}
+                  setIsAddingFile={setIsAddingFile}
+                  newFileName={newFileName}
+                  setNewFileName={setNewFileName}
+                  handleCreateNewFile={handleCreateNewFile}
+                  isAddingFolder={isAddingFolder}
+                  setIsAddingFolder={setIsAddingFolder}
+                  newFolderName={newFolderName}
+                  setNewFolderName={setNewFolderName}
+                  handleCreateNewFolder={handleCreateNewFolder}
+                  handleRenameFile={handleRenameFile}
+                  handleMoveFile={handleMoveFile}
+                  fileSearch={fileSearch}
+                  setFileSearch={setFileSearch}
+                  setRightTab={(tab) => setPreviewTab(tab)}
+                  setVfsFiles={setVfsFiles}
+                  projectName={activeProj?.id || WorkspaceManager.getInstance().getActiveProjectId() || 'anny-project'}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Fullscreen AI Image Lightbox Modal */}
+      {lightboxImage && (
+        <div
+          className="fixed inset-0 bg-black/90 backdrop-blur-md z-[250] flex items-center justify-center p-4 sm:p-8"
+          onClick={() => setLightboxImage(null)}
+        >
+          <div
+            className="relative max-w-5xl w-full max-h-[90vh] bg-[#070a21] border border-cyan-500/40 rounded-3xl overflow-hidden shadow-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-white/10 bg-[#040618]">
+              <span className="text-xs font-bold text-cyan-300 font-mono truncate max-w-md">
+                "{lightboxImage.prompt}"
+              </span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={lightboxImage.url}
+                  download={`anny-ai-image-${Date.now()}.jpg`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-lg"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download HD</span>
+                </a>
+                <button
+                  onClick={() => setLightboxImage(null)}
+                  className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto flex items-center justify-center p-4 bg-black">
+              <img
+                src={lightboxImage.url}
+                alt={lightboxImage.prompt}
+                className="max-w-full max-h-[80vh] object-contain rounded-2xl shadow-2xl"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Shared Hidden File Input (Accessible in both Main & Split Views) */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileSelect}
+        accept="image/*,.pdf,.txt,.md,.markdown,.csv,.json,.ts,.tsx,.js,.jsx,.py,.html,.css,.scss,.sql,.yaml,.yml,.xml,.zip,.tar,.tgz,.log"
+        multiple
+        className="hidden"
+      />
+
+      {/* Vision Monitor Camera / Screen Overlay */}
+      {isVisionOpen && (
+        <VisionSensor
+          ref={visionRef}
+          onCapture={handleVisionCapture}
+          onAnalyze={handleAnalyzeVisionFrame}
+          onLiveTranscript={(entry: VisionTranscriptEntry) => {
+            if (entry.role === 'user' || entry.role === 'assistant') {
+              const liveMsg = {
+                id: `live-${entry.id}`,
+                role: entry.role,
+                content: formatNaturalConversation(entry.text),
+                timestamp: new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              };
+              setChatHistory((prev) => [...prev, liveMsg]);
+              if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => [...prevMsgs, liveMsg]);
+            }
+          }}
+          onClose={() => toggleVisionMonitor(false)}
+          isGuidanceActive={true}
+          isAnalyzing={isVisionAnalyzing}
+        />
+      )}
+      {/* Intelligence Telemetry Debug Panel */}
+      <AnnyDebugIntelligencePanel
+        isOpen={isDebugPanelOpen}
+        onClose={() => setIsDebugPanelOpen(false)}
+      />
+    </div>
+  );
+};

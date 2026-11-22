@@ -1,0 +1,49 @@
+name: ANNY CodeQL Security Analysis
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "primary-anny/**"
+      - ".github/workflows/codeql.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "primary-anny/**"
+      - ".github/workflows/codeql.yml"
+  schedule:
+    - cron: "17 2 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze JavaScript and TypeScript
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          source-root: primary-anny
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+      - name: Perform CodeQL analysis without requiring repository code-scanning entitlement
+        uses: github/codeql-action/analyze@v3
+        with:
+          upload: false
+      - name: Preserve SARIF report as workflow artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: codeql-sarif-report
+          path: results/*.sarif
+          if-no-files-found: ignore
+          retention-days: 14

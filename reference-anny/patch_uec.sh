@@ -1,0 +1,1 @@
+sed -i 's|import { masterDevelopmentOrchestrator, OrchestrationBuildResult } from '"'"'./masterDevelopmentOrchestrator'"'"';|import { synthesizeAppFiles } from '"'"'./realAppCodeSynthesizer'"'"';|g' src/core/universalExecutionController.ts

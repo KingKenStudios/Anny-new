@@ -1,0 +1,96 @@
+name: Consolidate ANNY source repositories
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type CONSOLIDATE to confirm copying both source repositories"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: anny-source-consolidation
+  cancel-in-progress: false
+
+jobs:
+  consolidate:
+    if: ${{ inputs.confirm == 'CONSOLIDATE' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out destination repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out primary ANNY source
+        uses: actions/checkout@v4
+        with:
+          repository: KingKenStudios/primary-anny
+          ref: main
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          path: .migration/primary
+
+      - name: Check out reference ANNY source
+        uses: actions/checkout@v4
+        with:
+          repository: KingKenStudios/reference-anny
+          ref: main
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          path: .migration/reference
+
+      - name: Assemble independent source snapshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p primary-anny reference-anny documentation
+          rsync -a --delete --exclude='.git' --exclude='.env' --exclude='.env.*.local' .migration/primary/ primary-anny/
+          rsync -a --delete --exclude='.git' --exclude='.env' --exclude='.env.*.local' .migration/reference/ reference-anny/
+          python3 scripts/sanitize-env-examples.py primary-anny reference-anny
+          rm -rf .migration
+
+      - name: Record consolidation metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > documentation/CONSOLIDATION_STATUS.md <<'EOF'
+          # ANNY source consolidation
+
+          This repository preserves two independent source snapshots:
+
+          - `primary-anny/`: selected primary development baseline.
+          - `reference-anny/`: reference implementation for comparison and selective porting.
+
+          The original repositories were not modified by this workflow.
+
+          ## Security handling
+
+          Real `.env` files and local environment overrides are excluded. Values for
+          secret-like variables in copied `.env.example` templates are blanked.
+          Review all source code and audit reports before deployment. This transfer
+          does not certify either application as secure or production-ready.
+
+          ## Integration policy
+
+          Do not merge files blindly. Compare components, retain provenance, run
+          tests, and independently review security-sensitive changes before porting.
+          EOF
+          git status --short
+
+      - name: Commit and push consolidated snapshots
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A primary-anny reference-anny documentation
+          if git diff --cached --quiet; then
+            echo "No source changes to commit."
+            exit 0
+          fi
+          git commit -m "Consolidate primary and reference ANNY source snapshots"
+          git push origin HEAD:main

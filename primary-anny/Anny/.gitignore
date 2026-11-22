@@ -1,0 +1,13 @@
+node_modules/
+build/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Local secrets
+config/secrets.vault
+.env
+*.pem
+*.key

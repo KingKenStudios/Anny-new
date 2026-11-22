@@ -1,0 +1,106 @@
+name: ANNY Primary Application CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - "index.html"
+      - "vite.config.ts"
+      - "tsconfig.json"
+      - "src/**"
+      - "primary-anny/**"
+      - ".github/workflows/anny-primary-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - "index.html"
+      - "vite.config.ts"
+      - "tsconfig.json"
+      - "src/**"
+      - "primary-anny/**"
+      - ".github/workflows/anny-primary-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: anny-primary-ci-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Node 22 npm install, unit tests, type-check, and production build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Clean install root workspace dependencies
+        run: npm ci
+
+      - name: Run unit, vision, creative, auth, storage, and upload policy tests
+        run: npm test
+
+      - name: TypeScript type-check
+        run: npm run lint
+
+      - name: Production build (frontend + server bundle)
+        run: npm run build
+
+  storage-integration:
+    name: Live S3/MinIO storage integration test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Start pinned MinIO container with explicit server command
+        run: |
+          docker run -d --name anny-minio-ci \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=annyciaccesskey \
+            -e MINIO_ROOT_PASSWORD=annycisecretkey_strong_2026 \
+            minio/minio:RELEASE.2025-04-22T22-12-26Z \
+            server /data --console-address ":9001"
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live; then
+              echo "MinIO is healthy and ready."
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs anny-minio-ci
+          exit 1
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run live S3/MinIO integration suite
+        env:
+          MINIO_ENDPOINT: http://127.0.0.1:9000
+          MINIO_ACCESS_KEY: annyciaccesskey
+          MINIO_SECRET_KEY: annycisecretkey_strong_2026
+          MINIO_BUCKET: anny-ci-artifacts
+          MINIO_USE_SSL: "false"
+        run: npm run test:storage
+
+      - name: Stop MinIO container
+        if: always()
+        run: docker rm -f anny-minio-ci || true

@@ -1,0 +1,61 @@
+name: ANNY Safe Dependency Remediation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/safe-dependency-remediation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  safe-updates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Update frontend dependencies within declared semver ranges
+        working-directory: primary-anny
+        run: bun update
+      - name: Install nested server dependencies
+        working-directory: primary-anny/Anny
+        run: npm ci
+      - name: Apply non-breaking npm audit remediations only
+        working-directory: primary-anny/Anny
+        run: npm audit fix --no-fund --no-progress || true
+      - name: Reinstall frontend from updated lockfile
+        working-directory: primary-anny
+        run: bun install --frozen-lockfile
+      - name: Run service tests
+        working-directory: primary-anny
+        run: bun test Anny/src/services
+      - name: TypeScript validation
+        working-directory: primary-anny
+        run: bun run lint
+      - name: Production build
+        working-directory: primary-anny
+        run: bun run build
+      - name: Publish tested dependency remediation branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B security/semver-safe-dependency-remediation
+          git add primary-anny/package.json primary-anny/bun.lock primary-anny/Anny/package.json primary-anny/Anny/package-lock.json
+          if git diff --cached --quiet; then
+            echo "No dependency changes to publish."
+            exit 0
+          fi
+          git commit -m "chore(security): apply safe dependency updates"
+          git push --force origin HEAD:refs/heads/security/semver-safe-dependency-remediation

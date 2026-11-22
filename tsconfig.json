@@ -1,0 +1,48 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false,
+    "module": "ESNext",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "allowJs": true,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./primary-anny/*"],
+      "@anny/*": ["./primary-anny/Anny/src/*"]
+    },
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "primary-anny/src/**/*.ts",
+    "primary-anny/src/**/*.tsx",
+    "primary-anny/Anny/src/**/*.ts",
+    "primary-anny/Anny/src/**/*.tsx",
+    "primary-anny/Anny/server.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "reference-anny",
+    "primary-anny/node_modules",
+    "primary-anny/dist",
+    "primary-anny/Anny/node_modules",
+    "primary-anny/Anny/dist",
+    "primary-anny/Anny/modly-main",
+    "primary-anny/Anny/scripts",
+    "primary-anny/Anny/vite.config.ts",
+    "primary-anny/Anny/**/*.test.ts"
+  ]
+}

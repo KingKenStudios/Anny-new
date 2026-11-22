@@ -1,0 +1,1217 @@
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  LayoutDashboard, MessageSquare, Code2, TerminalSquare, Cpu, Workflow,
+  Database, BarChart3, HardDrive, ScrollText, Settings, Command, Search,
+  Send, Paperclip, Plus, ChevronRight, Circle, Zap, Bell, User, Pin,
+  Sparkles, ArrowUpRight, Folder, Star, Clock, X, Mic, ChevronDown,
+  GitBranch, GitCommit, Bug, FileCode, Play, Square, Container, Boxes,
+  Thermometer, Wifi, Activity, TrendingUp, TrendingDown, Filter,
+  BookMarked, Layers, Network, Gauge, ShieldCheck, CreditCard, Bell as BellIcon,
+  Palette, Keyboard, Users, Puzzle, ClipboardList, FolderGit2, Braces,
+  ChevronsRight, MoreHorizontal, Check, AlertTriangle, Info, Rocket,
+  Sun, Moon, RefreshCw, Download, Share2, ListFilter,
+} from "lucide-react";
+import {
+  AreaChart, Area, ResponsiveContainer, YAxis, LineChart, Line, BarChart, Bar,
+  RadialBarChart, RadialBar, PieChart, Pie, Cell, XAxis, Tooltip,
+} from "recharts";
+
+/* ============================== DESIGN SYSTEM ==============================
+   Palette — "Obsidian & Aurum"
+   Type — display: Space Grotesk · body: Inter · data: JetBrains Mono
+   Signature — the System Pulse, a live waveform threading every screen
+============================================================================ */
+
+const T = {
+  void: "#0B0D12", void2: "#0D1017", panel: "#161A23", elevated: "#1F2530",
+  raised: "#262D3A", line: "#262C39", lineSoft: "#1D222C",
+  bone: "#EDEFF4", mist: "#8890A0", mistDim: "#5C6478",
+  aurum: "#D8A857", aurumSoft: "rgba(216,168,87,0.12)", aurumDim: "#8A6E3E",
+  mint: "#46C994", mintSoft: "rgba(70,201,148,0.12)",
+  coral: "#E5665C", coralSoft: "rgba(229,102,92,0.12)",
+  violet: "#7C83E8", violetSoft: "rgba(124,131,232,0.12)",
+  amber: "#E0A83D", amberSoft: "rgba(224,168,61,0.12)",
+};
+
+const fade = {
+  initial: { opacity: 0, y: 10 }, animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -6 }, transition: { duration: 0.22, ease: [0.4, 0, 0.2, 1] },
+};
+const stagger = { animate: { transition: { staggerChildren: 0.045 } } };
+const rise = { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 } };
+
+const NAV = [
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "chat", label: "Neural chat", icon: MessageSquare },
+  { id: "code", label: "Code workspace", icon: Code2 },
+  { id: "terminal", label: "Terminal", icon: TerminalSquare },
+  { id: "models", label: "Models hub", icon: Cpu },
+  { id: "automation", label: "Automation", icon: Workflow },
+  { id: "data", label: "Data hub", icon: Database },
+  { id: "analytics", label: "Analytics", icon: BarChart3 },
+  { id: "hardware", label: "Hardware", icon: HardDrive },
+  { id: "logs", label: "Logs", icon: ScrollText },
+];
+
+/* ============================== ROOT APP ============================== */
+
+export default function AkinwumiAnny() {
+  const [active, setActive] = useState("dashboard");
+  const [pinned, setPinned] = useState(true);
+  const [hovering, setHovering] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [clock, setClock] = useState(new Date());
+
+  useEffect(() => {
+    const id = setInterval(() => setClock(new Date()), 1000);
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen((v) => !v); }
+      if (e.key === "Escape") { setPaletteOpen(false); setNotifOpen(false); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => { clearInterval(id); window.removeEventListener("keydown", onKey); };
+  }, []);
+
+  const expanded = pinned || hovering;
+  const item = NAV.find((n) => n.id === active) || { id: "settings", label: "Settings", icon: Settings };
+
+  return (
+    <div style={{
+      fontFamily: "'Inter', -apple-system, sans-serif", background: T.void, color: T.bone,
+      height: "820px", width: "100%", display: "flex", overflow: "hidden", position: "relative",
+      border: `1px solid ${T.line}`, borderRadius: "14px",
+      backgroundImage: `radial-gradient(560px 340px at 88% -8%, rgba(216,168,87,0.07), transparent 60%),
+                         radial-gradient(420px 300px at 10% 108%, rgba(124,131,232,0.05), transparent 60%)`,
+    }}>
+      <GlobalFonts />
+
+      <Sidebar expanded={expanded} setHovering={setHovering} pinned={pinned} setPinned={setPinned}
+        active={active} setActive={setActive} setPaletteOpen={setPaletteOpen} />
+
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
+        <TopBar item={item} clock={clock} notifOpen={notifOpen} setNotifOpen={setNotifOpen} setPaletteOpen={setPaletteOpen} />
+        <SystemPulse />
+        <div style={{ flex: 1, overflow: "auto", position: "relative" }}>
+          <AnimatePresence mode="wait">
+            <motion.div key={active} {...fade} style={{ minHeight: "100%" }}>
+              {active === "dashboard" && <Dashboard onNavigate={setActive} />}
+              {active === "chat" && <Chat />}
+              {active === "code" && <CodeWorkspace />}
+              {active === "terminal" && <Terminal />}
+              {active === "models" && <ModelsHub />}
+              {active === "automation" && <Automation />}
+              {active === "data" && <DataHub />}
+              {active === "analytics" && <Analytics />}
+              {active === "hardware" && <Hardware />}
+              {active === "logs" && <Logs />}
+              {active === "settings" && <SettingsPage />}
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} onNavigate={(id) => { setActive(id); setPaletteOpen(false); }} />}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+const kbdStyle = { fontSize: 10, fontFamily: "'JetBrains Mono', monospace", background: T.void, border: `1px solid ${T.line}`, borderRadius: 4, padding: "1px 5px", color: T.mistDim };
+
+/* ============================== SIDEBAR ============================== */
+
+const PINNED_ITEMS = [
+  { label: "Support Copilot", icon: MessageSquare, sub: "Chat" },
+  { label: "Billing refactor", icon: FolderGit2, sub: "Project" },
+];
+const RUNNING_TASKS = [
+  { label: "Fine-tune support-v3", pct: 72, color: T.aurum },
+  { label: "Batch embed docs-corpus", pct: 41, color: T.violet },
+];
+const FAV_MODELS = [
+  { name: "Frontier-2", latency: "128ms" },
+  { name: "Vision-Mini", latency: "54ms" },
+];
+
+function Sidebar({ expanded, setHovering, pinned, setPinned, active, setActive, setPaletteOpen }) {
+  return (
+    <motion.div
+      onMouseEnter={() => setHovering(true)} onMouseLeave={() => setHovering(false)}
+      animate={{ width: expanded ? 236 : 64 }} transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
+      style={{ background: T.panel, borderRight: `1px solid ${T.line}`, display: "flex", flexDirection: "column", flexShrink: 0, position: "relative", zIndex: 20, overflow: "hidden" }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 16px 10px", height: 24 }}>
+        <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, background: `linear-gradient(135deg, ${T.aurum}, #A67B36)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Sparkles size={14} color={T.void} strokeWidth={2.5} />
+        </div>
+        {expanded && <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 14.5, whiteSpace: "nowrap" }}>AKINWUMI <span style={{ color: T.mist, fontWeight: 500 }}>Anny</span></span>}
+      </div>
+
+      {expanded && (
+        <div style={{ margin: "6px 12px 4px", padding: "7px 9px", borderRadius: 8, border: `1px solid ${T.line}`, background: T.elevated, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <div style={{ width: 16, height: 16, borderRadius: 4, background: T.violetSoft, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Boxes size={10} color={T.violet} />
+          </div>
+          <span style={{ fontSize: 11.5, flex: 1 }}>Owner workspace</span>
+          <ChevronDown size={12} color={T.mistDim} />
+        </div>
+      )}
+
+      <button onClick={() => setPaletteOpen(true)} style={{ margin: "8px 12px 12px", display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.line}`, background: T.elevated, color: T.mist, cursor: "pointer", fontSize: 12.5 }}>
+        <Search size={13} />
+        {expanded && <span style={{ flex: 1, textAlign: "left" }}>Search or jump to…</span>}
+        {expanded && <kbd style={kbdStyle}>⌘K</kbd>}
+      </button>
+
+      <nav style={{ display: "flex", flexDirection: "column", gap: 2, padding: "0 10px" }}>
+        {NAV.map((n) => <NavItem key={n.id} item={n} active={active === n.id} expanded={expanded} onClick={() => setActive(n.id)} />)}
+      </nav>
+
+      {expanded && (
+        <div style={{ padding: "14px 14px 0", overflowY: "auto", flex: 1 }}>
+          <SideSection title="Pinned">
+            {PINNED_ITEMS.map((p) => (
+              <div key={p.label} style={sideRow}>
+                <p.icon size={13} color={T.mistDim} />
+                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.label}</span>
+              </div>
+            ))}
+          </SideSection>
+          <SideSection title="Running tasks">
+            {RUNNING_TASKS.map((r) => (
+              <div key={r.label} style={{ padding: "5px 6px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: T.mist, marginBottom: 4 }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.label}</span>
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", color: T.mistDim }}>{r.pct}%</span>
+                </div>
+                <Progress value={r.pct} color={r.color} thin />
+              </div>
+            ))}
+          </SideSection>
+          <SideSection title="Favorite models">
+            {FAV_MODELS.map((m) => (
+              <div key={m.name} style={sideRow}>
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.mint, flexShrink: 0 }} />
+                <span style={{ flex: 1 }}>{m.name}</span>
+                <span style={{ fontSize: 10, color: T.mistDim, fontFamily: "'JetBrains Mono', monospace" }}>{m.latency}</span>
+              </div>
+            ))}
+          </SideSection>
+        </div>
+      )}
+
+      <div style={{ padding: 12, borderTop: `1px solid ${T.line}`, marginTop: expanded ? 0 : "auto" }}>
+        {expanded && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: T.mistDim, marginBottom: 4 }}>
+              <span>Storage</span><span>62% · 620GB / 1TB</span>
+            </div>
+            <Progress value={62} color={T.aurum} thin />
+          </div>
+        )}
+        <NavItem item={{ id: "settings", label: "Settings", icon: Settings }} active={active === "settings"} expanded={expanded} onClick={() => setActive("settings")} />
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 8px 2px" }}>
+          <div style={{ width: 26, height: 26, borderRadius: "50%", background: T.elevated, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <User size={13} color={T.mist} />
+          </div>
+          {expanded && (
+            <div style={{ lineHeight: 1.2, overflow: "hidden", flex: 1 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 500 }}>T. Akinwumi</div>
+              <div style={{ fontSize: 11, color: T.mistDim }}>Owner</div>
+            </div>
+          )}
+          {expanded && (
+            <button onClick={() => setPinned((p) => !p)} style={{ background: "none", border: "none", cursor: "pointer", color: pinned ? T.aurum : T.mistDim, padding: 4 }}>
+              <Pin size={13} fill={pinned ? T.aurum : "none"} />
+            </button>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+const sideRow = { display: "flex", alignItems: "center", gap: 8, padding: "6px 6px", borderRadius: 6, fontSize: 12, color: T.mist, cursor: "pointer" };
+
+function SideSection({ title, children }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontSize: 10, color: T.mistDim, textTransform: "uppercase", letterSpacing: "0.06em", padding: "0 6px 4px" }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function NavItem({ item, active, expanded, onClick }) {
+  const [hover, setHover] = useState(false);
+  const Icon = item.icon;
+  return (
+    <button onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 10px", borderRadius: 8, border: "none", cursor: "pointer", width: "100%", background: active ? T.elevated : hover ? "rgba(255,255,255,0.03)" : "transparent", color: active ? T.bone : T.mist, position: "relative", transition: "background 120ms" }}>
+      {active && <div style={{ position: "absolute", left: -10, top: 8, bottom: 8, width: 2.5, borderRadius: 2, background: T.aurum }} />}
+      <Icon size={16} strokeWidth={1.8} style={{ flexShrink: 0 }} />
+      {expanded && <span style={{ fontSize: 13, whiteSpace: "nowrap", fontWeight: active ? 500 : 400 }}>{item.label}</span>}
+    </button>
+  );
+}
+
+/* ============================== TOP BAR ============================== */
+
+const NOTIFICATIONS = [
+  { title: "GPU pool us-east recovered", time: "3m", tone: T.mint },
+  { title: "Fine-tune job finished — support-v3", time: "12m", tone: T.aurum },
+  { title: "3 workflow runs failed retry threshold", time: "44m", tone: T.coral },
+];
+
+function TopBar({ item, clock, notifOpen, setNotifOpen, setPaletteOpen }) {
+  const [gauges, setGauges] = useState({ cpu: 34, gpu: 71, ram: 58 });
+  useEffect(() => {
+    const id = setInterval(() => setGauges((g) => ({
+      cpu: clamp(g.cpu + (Math.random() * 8 - 4)), gpu: clamp(g.gpu + (Math.random() * 6 - 3)), ram: clamp(g.ram + (Math.random() * 4 - 2)),
+    })), 1400);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div style={{ height: 54, borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "center", padding: "0 18px", justifyContent: "space-between", flexShrink: 0, background: T.void2, gap: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, flexShrink: 0 }}>
+        <span style={{ color: T.mistDim }}>Workspace</span>
+        <ChevronRight size={13} color={T.mistDim} />
+        <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 500 }}>{item?.label}</span>
+      </div>
+
+      <button onClick={() => setPaletteOpen(true)} style={{ flex: 1, maxWidth: 360, display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, border: `1px solid ${T.line}`, background: T.elevated, color: T.mistDim, cursor: "pointer", fontSize: 12.5 }}>
+        <Sparkles size={12} color={T.aurum} /> Ask AI or search everything…
+      </button>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 16, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5 }}>
+          <Gauge label="CPU" value={gauges.cpu} color={T.violet} />
+          <Gauge label="GPU" value={gauges.gpu} color={T.aurum} />
+          <Gauge label="RAM" value={gauges.ram} color={T.mint} />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: T.mistDim }}>
+          <Wifi size={13} color={T.mint} /> <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{clock.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+        </div>
+        <div style={{ position: "relative" }}>
+          <button onClick={() => setNotifOpen((v) => !v)} style={{ background: "none", border: "none", cursor: "pointer", position: "relative", padding: 4 }}>
+            <Bell size={16} color={T.mist} />
+            <span style={{ position: "absolute", top: 1, right: 1, width: 7, height: 7, borderRadius: "50%", background: T.coral, border: `1.5px solid ${T.void2}` }} />
+          </button>
+          <AnimatePresence>
+            {notifOpen && (
+              <motion.div initial={{ opacity: 0, y: -6, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -6, scale: 0.97 }} transition={{ duration: 0.15 }}
+                style={{ position: "absolute", top: 30, right: 0, width: 280, background: T.raised, border: `1px solid ${T.line}`, borderRadius: 10, boxShadow: "0 16px 40px rgba(0,0,0,0.45)", zIndex: 40, overflow: "hidden" }}>
+                <div style={{ padding: "10px 12px", fontSize: 12, fontWeight: 500, borderBottom: `1px solid ${T.lineSoft}` }}>Notifications</div>
+                {NOTIFICATIONS.map((n, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, padding: "9px 12px", borderBottom: i < NOTIFICATIONS.length - 1 ? `1px solid ${T.lineSoft}` : "none" }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: n.tone, marginTop: 5, flexShrink: 0 }} />
+                    <div>
+                      <div style={{ fontSize: 12 }}>{n.title}</div>
+                      <div style={{ fontSize: 10.5, color: T.mistDim, marginTop: 1 }}>{n.time} ago</div>
+                    </div>
+                  </div>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+        <div style={{ width: 26, height: 26, borderRadius: "50%", background: T.elevated, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <User size={13} color={T.mist} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function clamp(v) { return Math.max(4, Math.min(98, v)); }
+
+function Gauge({ label, value, color }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      <span style={{ color: T.mistDim }}>{label}</span>
+      <span style={{ color }}>{Math.round(value)}%</span>
+    </div>
+  );
+}
+
+/* ============================== SIGNATURE: SYSTEM PULSE ============================== */
+
+function SystemPulse() {
+  const [t, setT] = useState(0);
+  useEffect(() => { const id = setInterval(() => setT((v) => v + 1), 90); return () => clearInterval(id); }, []);
+  const bars = 72;
+  const values = useMemo(() => Array.from({ length: bars }, (_, i) => {
+    const phase = (i - t * 0.6) * 0.35;
+    return 0.15 + Math.abs(Math.sin(phase) * Math.cos(phase * 0.4)) * 0.85;
+  }), [t]);
+
+  return (
+    <div style={{ height: 28, borderBottom: `1px solid ${T.lineSoft}`, display: "flex", alignItems: "center", gap: 2, padding: "0 18px", background: "linear-gradient(180deg, rgba(216,168,87,0.03), transparent)", flexShrink: 0, overflow: "hidden" }}>
+      <Zap size={11} color={T.aurum} style={{ marginRight: 6, flexShrink: 0 }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 2, height: 15, flex: 1 }}>
+        {values.map((v, i) => (
+          <div key={i} style={{ width: 2.4, height: `${v * 100}%`, borderRadius: 1, flexShrink: 0, background: i > bars - 9 ? T.aurum : T.mistDim, opacity: 0.35 + v * 0.5, transition: "height 90ms linear" }} />
+        ))}
+      </div>
+      <span style={{ marginLeft: 10, fontSize: 10.5, fontFamily: "'JetBrains Mono', monospace", color: T.mistDim, flexShrink: 0 }}>847 inf/s</span>
+    </div>
+  );
+}
+
+/* ============================== SHARED DESIGN-SYSTEM PRIMITIVES ============================== */
+
+function Panel({ title, subtitle, icon: Icon, actions, children, style, noPad }) {
+  return (
+    <motion.div whileHover={{ y: -1, borderColor: T.line === T.line ? "rgba(216,168,87,0.28)" : T.line }} transition={{ duration: 0.15 }}
+      style={{ background: T.panel, border: `1px solid ${T.line}`, borderRadius: 12, padding: noPad ? 0 : 16, ...style }}>
+      {(title || actions) && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: noPad ? "14px 16px 0" : 0, marginBottom: title ? 10 : 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {Icon && <Icon size={14} color={T.aurum} />}
+            <div>
+              <div style={{ fontSize: 13.5, fontWeight: 500 }}>{title}</div>
+              {subtitle && <div style={{ fontSize: 11, color: T.mistDim, marginTop: 1 }}>{subtitle}</div>}
+            </div>
+          </div>
+          {actions}
+        </div>
+      )}
+      {children}
+    </motion.div>
+  );
+}
+
+function Stat({ label, value, delta, icon: Icon, color }) {
+  const up = delta && !delta.startsWith("-");
+  return (
+    <motion.div whileHover={{ y: -2 }} style={{ background: T.panel, border: `1px solid ${T.line}`, borderRadius: 12, padding: "14px 16px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 11.5, color: T.mistDim }}>{label}</span>
+        {Icon && <Icon size={14} color={color} />}
+      </div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 6 }}>
+        <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 22, fontWeight: 600 }}>{value}</span>
+        {delta && <span style={{ fontSize: 11, color: up ? T.mint : T.coral, fontFamily: "'JetBrains Mono', monospace", display: "flex", alignItems: "center", gap: 2 }}>
+          {up ? <TrendingUp size={10} /> : <TrendingDown size={10} />}{delta}</span>}
+      </div>
+    </motion.div>
+  );
+}
+
+function Progress({ value, color = T.aurum, thin }) {
+  return (
+    <div style={{ height: thin ? 4 : 6, borderRadius: 4, background: T.elevated, overflow: "hidden" }}>
+      <motion.div initial={{ width: 0 }} animate={{ width: `${value}%` }} transition={{ duration: 0.6, ease: "easeOut" }} style={{ height: "100%", background: color, borderRadius: 4 }} />
+    </div>
+  );
+}
+
+function Badge({ children, color = T.aurum, bg }) {
+  return <span style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", color, background: bg || `${color}20`, padding: "2px 7px", borderRadius: 5, border: `1px solid ${color}33`, whiteSpace: "nowrap" }}>{children}</span>;
+}
+
+function Row({ children, first }) {
+  return <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 0", borderTop: first ? "none" : `1px solid ${T.lineSoft}` }}>{children}</div>;
+}
+
+function MiniTable({ columns, rows }) {
+  return (
+    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+      <thead>
+        <tr>{columns.map((c) => <th key={c} style={{ textAlign: "left", color: T.mistDim, fontWeight: 400, fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.04em", padding: "0 10px 8px 0", borderBottom: `1px solid ${T.lineSoft}` }}>{c}</th>)}</tr>
+      </thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={i}>{r.map((cell, j) => <td key={j} style={{ padding: "9px 10px 9px 0", borderBottom: i < rows.length - 1 ? `1px solid ${T.lineSoft}` : "none" }}>{cell}</td>)}</tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function SectionHeader({ title, subtitle, icon: Icon, right }) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", padding: "22px 24px 4px" }}>
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {Icon && <div style={{ width: 30, height: 30, borderRadius: 8, background: T.aurumSoft, display: "flex", alignItems: "center", justifyContent: "center" }}><Icon size={15} color={T.aurum} /></div>}
+          <h1 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 19, fontWeight: 600, margin: 0 }}>{title}</h1>
+        </div>
+        {subtitle && <p style={{ color: T.mistDim, fontSize: 12.5, margin: "5px 0 0", marginLeft: Icon ? 38 : 0 }}>{subtitle}</p>}
+      </div>
+      {right}
+    </div>
+  );
+}
+
+function QuickActions({ items }) {
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      {items.map((a) => (
+        <button key={a.label} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: T.mist, background: T.elevated, border: `1px solid ${T.line}`, borderRadius: 7, padding: "6px 10px", cursor: "pointer" }}>
+          <a.icon size={12} color={T.aurum} /> {a.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Sparkline({ data, color }) {
+  return (
+    <div style={{ height: 34, width: 90 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data}><Line type="monotone" dataKey="v" stroke={color} strokeWidth={1.6} dot={false} /></LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+const spark = (n = 10, base = 50) => Array.from({ length: n }, () => ({ v: base + Math.random() * 40 - 20 }));
+
+/* ============================== DASHBOARD ============================== */
+
+const chartData = [40, 55, 48, 70, 62, 88, 76, 95, 84, 110, 98, 120].map((v) => ({ v }));
+const METRICS = [
+  { label: "AI health score", value: "94", delta: "+2", icon: ShieldCheck, color: T.mint },
+  { label: "Inference / sec", value: "847", delta: "+64", icon: Zap, color: T.aurum },
+  { label: "Active models", value: "12", delta: "+2", icon: Cpu, color: T.violet },
+  { label: "Tasks running", value: "31", delta: "-4", icon: Workflow, color: T.mist },
+  { label: "GPU utilization", value: "71%", delta: "+6%", icon: HardDrive, color: T.amber },
+  { label: "Uptime (30d)", value: "99.98%", icon: Circle, color: T.mint },
+];
+const ACTIVITY = [
+  { title: "Fine-tune job finetune-2a9f completed", time: "2 min ago", tag: "Models" },
+  { title: "Workflow invoice-triage executed 340 runs", time: "8 min ago", tag: "Automation" },
+  { title: "New dataset customer-events-q3 ingested", time: "22 min ago", tag: "Data" },
+  { title: "Anomaly cleared on inference-node-04", time: "41 min ago", tag: "Hardware" },
+  { title: "Agent Support Copilot deployed to prod", time: "1 hr ago", tag: "Deployments" },
+];
+const HEALTH = [
+  { name: "Inference cluster", status: "Operational", color: T.mint },
+  { name: "Vector store", status: "Operational", color: T.mint },
+  { name: "Automation engine", status: "Operational", color: T.mint },
+  { name: "GPU pool (us-east)", status: "Degraded", color: T.amber },
+];
+const TASK_QUEUE = [
+  ["train-support-v3", <Badge color={T.aurum}>running</Badge>, "72%", "6 min"],
+  ["embed-docs-corpus", <Badge color={T.violet}>running</Badge>, "41%", "18 min"],
+  ["eval-frontier-2-bench", <Badge color={T.mist}>queued</Badge>, "0%", "—"],
+  ["export-analytics-q3", <Badge color={T.mint}>done</Badge>, "100%", "—"],
+];
+const SUGGESTIONS = [
+  { title: "Scale GPU pool us-east", desc: "Utilization has stayed above 85% for 40 minutes.", icon: Rocket },
+  { title: "Archive 4 stale datasets", desc: "Unused for 90+ days, freeing ~180GB.", icon: Database },
+  { title: "Promote finetune-2a9f to prod", desc: "Eval score improved 3.1pts over current model.", icon: Sparkles },
+];
+const QUICK_LAUNCH = [
+  { id: "chat", label: "New chat", icon: MessageSquare },
+  { id: "models", label: "Deploy model", icon: Cpu },
+  { id: "automation", label: "New workflow", icon: Workflow },
+  { id: "data", label: "Run query", icon: Database },
+];
+
+function Dashboard({ onNavigate }) {
+  return (
+    <motion.div variants={stagger} initial="initial" animate="animate" style={{ padding: "0 24px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+      <SectionHeader icon={LayoutDashboard} title="Mission control" subtitle="Executive overview across every connected system — demo data, wire to your backend to go live."
+        right={<QuickActions items={[{ label: "New workflow", icon: Workflow }, { label: "Deploy model", icon: Rocket }]} />} />
+
+      <motion.div variants={stagger} style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
+        {METRICS.map((m) => <motion.div key={m.label} variants={rise}><Stat {...m} /></motion.div>)}
+      </motion.div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 12, alignItems: "start" }}>
+        <Panel title="Inference throughput" subtitle="Requests handled, last 12 intervals" icon={Activity}>
+          <div style={{ height: 150 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData}>
+                <defs><linearGradient id="fillAurum" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.aurum} stopOpacity={0.35} /><stop offset="100%" stopColor={T.aurum} stopOpacity={0} /></linearGradient></defs>
+                <YAxis hide domain={["dataMin - 10", "dataMax + 10"]} />
+                <Area type="monotone" dataKey="v" stroke={T.aurum} strokeWidth={2} fill="url(#fillAurum)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+        <Panel title="System health" subtitle="Live component status" icon={ShieldCheck}>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {HEALTH.map((h, i) => (
+              <Row key={h.name} first={i === 0}>
+                <span style={{ color: T.mist, fontSize: 12.5 }}>{h.name}</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 6, color: h.color, fontWeight: 500, fontSize: 12 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: h.color }} />{h.status}
+                </span>
+              </Row>
+            ))}
+          </div>
+        </Panel>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <Panel title="Resource allocation" icon={Gauge}>
+          {[["CPU", 34, T.violet], ["GPU", 71, T.aurum], ["Memory", 58, T.mint], ["Disk I/O", 22, T.mist]].map(([l, v, c]) => (
+            <div key={l} style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: T.mist, marginBottom: 4 }}><span>{l}</span><span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{v}%</span></div>
+              <Progress value={v} color={c} thin />
+            </div>
+          ))}
+        </Panel>
+        <Panel title="AI suggestions" icon={Sparkles}>
+          {SUGGESTIONS.map((s, i) => (
+            <Row key={s.title} first={i === 0}>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <s.icon size={13} color={T.aurum} style={{ marginTop: 2, flexShrink: 0 }} />
+                <div><div style={{ fontSize: 12 }}>{s.title}</div><div style={{ fontSize: 10.5, color: T.mistDim, marginTop: 1 }}>{s.desc}</div></div>
+              </div>
+            </Row>
+          ))}
+        </Panel>
+        <Panel title="Quick launch" icon={Rocket}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {QUICK_LAUNCH.map((q) => (
+              <button key={q.label} onClick={() => onNavigate?.(q.id)} style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start", padding: "10px", borderRadius: 8, border: `1px solid ${T.line}`, background: T.elevated, cursor: "pointer", color: T.bone }}>
+                <q.icon size={14} color={T.aurum} /><span style={{ fontSize: 11 }}>{q.label}</span>
+              </button>
+            ))}
+          </div>
+        </Panel>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Panel title="Task queue" icon={ClipboardList}>
+          <MiniTable columns={["Task", "Status", "Progress", "ETA"]} rows={TASK_QUEUE} />
+        </Panel>
+        <Panel title="Recent activity" subtitle="Across all connected modules" icon={Clock}>
+          {ACTIVITY.map((a, i) => (
+            <Row key={i} first={i === 0}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Badge>{a.tag}</Badge><span style={{ fontSize: 12.5 }}>{a.title}</span>
+              </div>
+              <span style={{ fontSize: 11, color: T.mistDim, flexShrink: 0, marginLeft: 12 }}>{a.time}</span>
+            </Row>
+          ))}
+        </Panel>
+      </div>
+    </motion.div>
+  );
+}
+
+/* ============================== CHAT ============================== */
+
+const CONVERSATIONS = [
+  { id: 1, title: "Q3 churn root-cause analysis", pinned: true, time: "2m", tag: "Analytics" },
+  { id: 2, title: "Refactor plan for billing service", pinned: true, time: "1h", tag: "Engineering" },
+  { id: 3, title: "Draft investor update", pinned: false, time: "3h", tag: "Writing" },
+  { id: 4, title: "Debug flaky CI on worker pool", pinned: false, time: "Yesterday", tag: "Engineering" },
+  { id: 5, title: "Summarize support tickets — GPU pool", pinned: false, time: "Yesterday", tag: "Support" },
+];
+const MEMORY_NOTES = ["Prefers concise, numbered breakdowns", "Working on billing service refactor", "Timezone: WAT (UTC+1)"];
+const PROMPT_LIBRARY = ["Summarize this thread", "Draft a status update", "Find edge cases in this plan"];
+
+function Chat() {
+  const [messages, setMessages] = useState([
+    { role: "assistant", text: "I've pulled the last 30 days of churn events. Net revenue churn is down to 1.8%, driven mostly by the mid-market segment. Want the cohort breakdown?" },
+    { role: "user", text: "Yes — break it down by plan tier and show what changed month over month." },
+  ]);
+  const [input, setInput] = useState("");
+  const [typing, setTyping] = useState(false);
+  const [rightPanel, setRightPanel] = useState("memory");
+  const endRef = useRef(null);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, typing]);
+
+  const send = () => {
+    if (!input.trim()) return;
+    setMessages((m) => [...m, { role: "user", text: input }]);
+    setInput(""); setTyping(true);
+    setTimeout(() => {
+      setTyping(false);
+      setMessages((m) => [...m, { role: "assistant", text: "Here's the tier breakdown — Starter churn fell 0.6pt, Growth is flat, and Enterprise improved 1.1pt after the onboarding change shipped mid-month." }]);
+    }, 1300);
+  };
+
+  return (
+    <div style={{ display: "flex", height: "100%" }}>
+      <div style={{ width: 230, borderRight: `1px solid ${T.line}`, display: "flex", flexDirection: "column", flexShrink: 0, overflowY: "auto" }}>
+        <div style={{ padding: 14 }}>
+          <button style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", padding: "8px 0", borderRadius: 8, border: `1px solid ${T.line}`, background: T.elevated, color: T.bone, fontSize: 12.5, cursor: "pointer" }}><Plus size={13} /> New conversation</button>
+        </div>
+        <SideSection title="Pinned">{CONVERSATIONS.filter((c) => c.pinned).map((c) => <ConvoRow key={c.id} c={c} active={c.id === 2} />)}</SideSection>
+        <SideSection title="Recent">{CONVERSATIONS.filter((c) => !c.pinned).map((c) => <ConvoRow key={c.id} c={c} />)}</SideSection>
+      </div>
+
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <div style={{ padding: "10px 20px", borderBottom: `1px solid ${T.lineSoft}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 13.5, fontWeight: 500 }}>Refactor plan for billing service</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 3 }}>
+              <div style={{ width: 90 }}><Progress value={34} color={T.violet} thin /></div>
+              <span style={{ fontSize: 10, color: T.mistDim, fontFamily: "'JetBrains Mono', monospace" }}>34K / 200K tokens</span>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: T.mist, background: T.elevated, border: `1px solid ${T.line}`, borderRadius: 7, padding: "5px 10px", cursor: "pointer" }}><Sparkles size={12} color={T.aurum} /> Frontier-2 <ChevronDown size={12} /></button>
+            <button onClick={() => setRightPanel(rightPanel ? null : "memory")} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: T.mist, background: rightPanel ? T.elevated : "transparent", border: `1px solid ${T.line}`, borderRadius: 7, padding: "5px 10px", cursor: "pointer" }}><BookMarked size={12} /> Memory</button>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: "18px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+            {messages.map((m, i) => <Bubble key={i} role={m.role} text={m.text} />)}
+            {typing && <Bubble role="assistant" typing />}
+            <div ref={endRef} />
+          </div>
+
+          <AnimatePresence>
+            {rightPanel && (
+              <motion.div initial={{ width: 0, opacity: 0 }} animate={{ width: 220, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={{ duration: 0.2 }}
+                style={{ borderLeft: `1px solid ${T.line}`, overflow: "hidden", flexShrink: 0 }}>
+                <div style={{ width: 220, padding: 14 }}>
+                  <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                    {["memory", "prompts"].map((k) => (
+                      <button key={k} onClick={() => setRightPanel(k)} style={{ fontSize: 11, padding: "4px 9px", borderRadius: 6, border: `1px solid ${T.line}`, background: rightPanel === k ? T.elevated : "transparent", color: rightPanel === k ? T.bone : T.mistDim, cursor: "pointer", textTransform: "capitalize" }}>{k}</button>
+                    ))}
+                  </div>
+                  {rightPanel === "memory" ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {MEMORY_NOTES.map((n, i) => <div key={i} style={{ fontSize: 11.5, color: T.mist, padding: "8px 9px", borderRadius: 7, background: T.elevated, border: `1px solid ${T.line}` }}>{n}</div>)}
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {PROMPT_LIBRARY.map((p, i) => <div key={i} onClick={() => setInput(p)} style={{ fontSize: 11.5, color: T.mist, padding: "8px 9px", borderRadius: 7, border: `1px solid ${T.line}`, cursor: "pointer" }}>{p}</div>)}
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <div style={{ padding: "12px 20px 16px" }}>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 8, background: T.panel, border: `1px solid ${T.line}`, borderRadius: 12, padding: "10px 12px" }}>
+            <Paperclip size={16} color={T.mistDim} style={{ cursor: "pointer", marginBottom: 3 }} />
+            <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+              placeholder="Ask anything, or type / for commands" rows={1}
+              style={{ flex: 1, background: "transparent", border: "none", outline: "none", resize: "none", color: T.bone, fontSize: 13.5, fontFamily: "inherit", maxHeight: 120, lineHeight: 1.5 }} />
+            <Mic size={16} color={T.mistDim} style={{ cursor: "pointer", marginBottom: 3 }} />
+            <button onClick={send} style={{ width: 28, height: 28, borderRadius: 8, border: "none", cursor: "pointer", background: input.trim() ? T.aurum : T.elevated, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Send size={13} color={input.trim() ? T.void : T.mistDim} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConvoRow({ c, active }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 3, padding: "7px 14px", cursor: "pointer", background: active ? T.elevated : "transparent", borderLeft: active ? `2px solid ${T.aurum}` : "2px solid transparent" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12.5, color: active ? T.bone : T.mist }}>{c.title}</span>
+        <span style={{ fontSize: 10, color: T.mistDim, flexShrink: 0, marginLeft: 8 }}>{c.time}</span>
+      </div>
+      <Badge color={T.mistDim}>{c.tag}</Badge>
+    </div>
+  );
+}
+
+function Bubble({ role, text, typing }) {
+  const isUser = role === "user";
+  return (
+    <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start" }}>
+      <div style={{ maxWidth: "70%", padding: "10px 14px", borderRadius: 14, borderBottomRightRadius: isUser ? 4 : 14, borderBottomLeftRadius: isUser ? 14 : 4, background: isUser ? T.aurum : T.panel, color: isUser ? T.void : T.bone, border: isUser ? "none" : `1px solid ${T.line}`, fontSize: 13.5, lineHeight: 1.55 }}>
+        {typing ? <div style={{ display: "flex", gap: 4, padding: "2px 0" }}>{[0, 1, 2].map((i) => <span key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: T.mistDim, animation: `pulse-dot 1s ${i * 0.15}s infinite ease-in-out` }} />)}</div> : text}
+      </div>
+    </div>
+  );
+}
+
+/* ============================== CODE WORKSPACE ============================== */
+
+const FILE_TREE = [
+  { name: "src", type: "dir", children: [{ name: "billing", type: "dir", children: [{ name: "invoice.ts", type: "file" }, { name: "ledger.ts", type: "file" }] }, { name: "index.ts", type: "file" }] },
+  { name: "tests", type: "dir", children: [{ name: "billing.test.ts", type: "file" }] },
+  { name: "package.json", type: "file" },
+];
+const OPEN_TABS = ["invoice.ts", "ledger.ts", "billing.test.ts"];
+const CODE_LINES = [
+  "export class InvoiceService {", "  constructor(private ledger: Ledger) {}", "",
+  "  async issue(customerId: string, amount: number) {", "    const invoice = await this.ledger.create({ customerId, amount });",
+  "    return invoice;", "  }", "}",
+];
+const GIT_CHANGES = [["invoice.ts", "M", T.amber], ["ledger.ts", "M", T.amber], ["billing.test.ts", "A", T.mint]];
+const PROBLEMS = [["ledger.ts:42", "Unused variable 'legacyRate'", "warning"], ["invoice.ts:18", "Missing return type annotation", "info"]];
+
+function CodeWorkspace() {
+  const [openFile, setOpenFile] = useState("invoice.ts");
+  return (
+    <div style={{ display: "flex", height: "100%" }}>
+      <div style={{ width: 210, borderRight: `1px solid ${T.line}`, padding: 12, overflowY: "auto", flexShrink: 0 }}>
+        <div style={{ fontSize: 10.5, color: T.mistDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Explorer</div>
+        <FileTree nodes={FILE_TREE} depth={0} onOpen={setOpenFile} />
+        <div style={{ fontSize: 10.5, color: T.mistDim, textTransform: "uppercase", letterSpacing: "0.06em", margin: "16px 0 8px" }}>Git changes</div>
+        {GIT_CHANGES.map(([f, s, c]) => (
+          <div key={f} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, padding: "4px 4px", color: T.mist }}>
+            <span style={{ color: c, fontFamily: "'JetBrains Mono', monospace", fontSize: 10, width: 12 }}>{s}</span>{f}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <div style={{ display: "flex", borderBottom: `1px solid ${T.line}` }}>
+          {OPEN_TABS.map((t) => (
+            <div key={t} onClick={() => setOpenFile(t)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", fontSize: 12, cursor: "pointer", background: openFile === t ? T.panel : "transparent", borderRight: `1px solid ${T.line}`, color: openFile === t ? T.bone : T.mistDim, borderTop: openFile === t ? `2px solid ${T.aurum}` : "2px solid transparent" }}>
+              <FileCode size={12} /> {t}
+            </div>
+          ))}
+        </div>
+        <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+          <div style={{ flex: 1, background: T.void2, padding: "14px 0", overflowY: "auto", fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5, lineHeight: 1.75 }}>
+            {CODE_LINES.map((l, i) => (
+              <div key={i} style={{ display: "flex", gap: 16, padding: "0 16px" }}>
+                <span style={{ color: T.mistDim, width: 18, textAlign: "right", flexShrink: 0 }}>{i + 1}</span>
+                <span style={{ color: T.mist, whiteSpace: "pre" }}>{colorizeCode(l)}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ width: 230, borderLeft: `1px solid ${T.line}`, padding: 12, flexShrink: 0, overflowY: "auto" }}>
+            <div style={{ fontSize: 10.5, color: T.mistDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Problems (2)</div>
+            {PROBLEMS.map(([loc, msg, sev], i) => (
+              <div key={i} style={{ display: "flex", gap: 7, marginBottom: 10, fontSize: 11.5 }}>
+                {sev === "warning" ? <AlertTriangle size={12} color={T.amber} style={{ marginTop: 2, flexShrink: 0 }} /> : <Info size={12} color={T.violet} style={{ marginTop: 2, flexShrink: 0 }} />}
+                <div><div style={{ color: T.mist }}>{msg}</div><div style={{ color: T.mistDim, fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>{loc}</div></div>
+              </div>
+            ))}
+            <div style={{ fontSize: 10.5, color: T.mistDim, textTransform: "uppercase", letterSpacing: "0.06em", margin: "14px 0 8px" }}>Outline</div>
+            {["class InvoiceService", "  constructor()", "  issue()"].map((o) => <div key={o} style={{ fontSize: 11.5, color: T.mist, padding: "3px 0" }}>{o}</div>)}
+          </div>
+        </div>
+        <div style={{ borderTop: `1px solid ${T.line}`, padding: "8px 16px", display: "flex", alignItems: "center", gap: 14, fontSize: 11, color: T.mistDim }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 4 }}><GitBranch size={12} /> billing-refactor</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 4 }}><GitCommit size={12} /> 3 ahead</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: "auto", color: T.mint }}><Sparkles size={12} color={T.aurum} /> AI assistant active</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FileTree({ nodes, depth, onOpen }) {
+  return nodes.map((n) => (
+    <div key={n.name}>
+      <div onClick={() => n.type === "file" && onOpen(n.name)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 4px", paddingLeft: depth * 12, fontSize: 12.5, color: T.mist, cursor: "pointer" }}>
+        {n.type === "dir" ? <Folder size={12} color={T.aurumDim} /> : <FileCode size={12} color={T.mistDim} />}{n.name}
+      </div>
+      {n.children && <FileTree nodes={n.children} depth={depth + 1} onOpen={onOpen} />}
+    </div>
+  ));
+}
+
+function colorizeCode(line) { return line; }
+
+/* ============================== TERMINAL ============================== */
+
+const TERMINAL_LINES = [
+  { t: "$ kubectl get pods -n inference", c: T.mist },
+  { t: "NAME                READY   STATUS    RESTARTS", c: T.mistDim },
+  { t: "inference-node-01   1/1     Running   0", c: T.mint },
+  { t: "inference-node-04   0/1     CrashLoop 3", c: T.coral },
+  { t: "$ docker compose up -d worker", c: T.mist },
+  { t: "✓ worker started on :4020", c: T.mint },
+];
+const QUICK_COMMANDS = ["kubectl get pods", "docker ps", "npm run test", "git status"];
+
+function Terminal() {
+  const [tabs] = useState(["main", "worker-pool", "ssh: prod-01"]);
+  const [active, setActive] = useState(0);
+  return (
+    <div style={{ display: "flex", height: "100%" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <div style={{ display: "flex", borderBottom: `1px solid ${T.line}` }}>
+          {tabs.map((t, i) => (
+            <div key={t} onClick={() => setActive(i)} style={{ padding: "9px 16px", fontSize: 12, cursor: "pointer", background: active === i ? T.panel : "transparent", borderRight: `1px solid ${T.line}`, color: active === i ? T.bone : T.mistDim, borderTop: active === i ? `2px solid ${T.aurum}` : "2px solid transparent" }}>{t}</div>
+          ))}
+          <div style={{ padding: "9px 12px", color: T.mistDim, cursor: "pointer" }}><Plus size={13} /></div>
+        </div>
+        <div style={{ flex: 1, background: T.void2, padding: 16, fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5, lineHeight: 1.8, overflowY: "auto" }}>
+          {TERMINAL_LINES.map((l, i) => <div key={i} style={{ color: l.c }}>{l.t}</div>)}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+            <span style={{ color: T.aurum }}>$</span>
+            <span style={{ width: 7, height: 14, background: T.mist, animation: "blink 1s infinite" }} />
+          </div>
+        </div>
+        <div style={{ borderTop: `1px solid ${T.line}`, padding: "8px 16px", display: "flex", gap: 16, fontSize: 11, color: T.mistDim, fontFamily: "'JetBrains Mono', monospace" }}>
+          <span>CPU 34%</span><span>RAM 58%</span><span>GPU 71%</span><span style={{ marginLeft: "auto", color: T.mint }}>● connected</span>
+        </div>
+      </div>
+      <div style={{ width: 220, borderLeft: `1px solid ${T.line}`, padding: 14, flexShrink: 0 }}>
+        <div style={{ fontSize: 10.5, color: T.mistDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Quick commands</div>
+        {QUICK_COMMANDS.map((c) => <div key={c} style={{ fontSize: 11.5, color: T.mist, padding: "7px 9px", borderRadius: 7, border: `1px solid ${T.line}`, marginBottom: 6, fontFamily: "'JetBrains Mono', monospace", cursor: "pointer" }}>{c}</div>)}
+        <div style={{ fontSize: 10.5, color: T.mistDim, textTransform: "uppercase", letterSpacing: "0.06em", margin: "14px 0 8px" }}>AI suggestion</div>
+        <div style={{ fontSize: 11.5, color: T.mist, padding: "9px 10px", borderRadius: 8, background: T.aurumSoft, border: `1px solid ${T.line}` }}>Restart inference-node-04 — it's crash-looping on OOM.</div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== MODELS HUB ============================== */
+
+const MODELS = [
+  { name: "Frontier-2", status: "Serving", latency: "128ms", throughput: "412 req/s", version: "v2.3.1", gpu: "A100 ×4" },
+  { name: "Vision-Mini", status: "Serving", latency: "54ms", throughput: "890 req/s", version: "v1.8.0", gpu: "L40 ×2" },
+  { name: "support-v3", status: "Fine-tuning", latency: "—", throughput: "—", version: "v0.9-rc", gpu: "H100 ×8" },
+  { name: "Embed-Base", status: "Serving", latency: "12ms", throughput: "2.1K req/s", version: "v3.1.0", gpu: "A10 ×2" },
+];
+const TRAINING_JOBS = [["train-support-v3", "72%", "H100 ×8", "6m left"], ["eval-frontier-2-bench", "queued", "—", "—"]];
+const BENCHMARKS = [["MMLU", 87], ["HumanEval", 79], ["GSM8K", 92], ["TruthfulQA", 74]];
+
+function ModelsHub() {
+  return (
+    <div style={{ padding: "0 24px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+      <SectionHeader icon={Cpu} title="Models hub" subtitle="Deployment, performance, and lifecycle for every model in your fleet."
+        right={<QuickActions items={[{ label: "Deploy model", icon: Rocket }, { label: "Fine-tune", icon: Sparkles }]} />} />
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        {MODELS.map((m) => (
+          <Panel key={m.name}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 500 }}>{m.name}</div>
+                <Badge color={m.status === "Serving" ? T.mint : T.amber}>{m.status}</Badge>
+              </div>
+              <Sparkline data={spark()} color={T.aurum} />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10, fontSize: 11 }}>
+              <div><div style={{ color: T.mistDim }}>Latency</div><div style={{ fontFamily: "'JetBrains Mono', monospace" }}>{m.latency}</div></div>
+              <div><div style={{ color: T.mistDim }}>Throughput</div><div style={{ fontFamily: "'JetBrains Mono', monospace" }}>{m.throughput}</div></div>
+              <div><div style={{ color: T.mistDim }}>Version</div><div style={{ fontFamily: "'JetBrains Mono', monospace" }}>{m.version}</div></div>
+              <div><div style={{ color: T.mistDim }}>GPU</div><div style={{ fontFamily: "'JetBrains Mono', monospace" }}>{m.gpu}</div></div>
+            </div>
+          </Panel>
+        ))}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Panel title="Training jobs" icon={Layers}><MiniTable columns={["Job", "Progress", "GPU", "ETA"]} rows={TRAINING_JOBS} /></Panel>
+        <Panel title="Benchmark scores" icon={BarChart3}>
+          {BENCHMARKS.map(([b, v]) => (
+            <div key={b} style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: T.mist, marginBottom: 4 }}><span>{b}</span><span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{v}</span></div>
+              <Progress value={v} color={T.violet} thin />
+            </div>
+          ))}
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== AUTOMATION ============================== */
+
+const WORKFLOWS = [
+  ["invoice-triage", <Badge color={T.mint}>active</Badge>, "340", "98.2%"],
+  ["support-escalation", <Badge color={T.mint}>active</Badge>, "128", "96.5%"],
+  ["nightly-data-sync", <Badge color={T.mist}>scheduled</Badge>, "1", "100%"],
+  ["churn-alert", <Badge color={T.coral}>failing</Badge>, "12", "41.0%"],
+];
+const EXEC_TIMELINE = [
+  { title: "invoice-triage run #341 succeeded", time: "1 min ago" },
+  { title: "churn-alert run #12 failed — API timeout", time: "9 min ago" },
+  { title: "support-escalation run #128 succeeded", time: "24 min ago" },
+];
+
+function Automation() {
+  return (
+    <div style={{ padding: "0 24px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+      <SectionHeader icon={Workflow} title="Automation" subtitle="Workflow builder, schedules, and execution history across all triggers."
+        right={<QuickActions items={[{ label: "New workflow", icon: Plus }]} />} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        <Stat label="Active workflows" value="9" icon={Workflow} color={T.aurum} />
+        <Stat label="Runs today" value="481" delta="+52" icon={Play} color={T.mint} />
+        <Stat label="Success rate" value="94.1%" delta="+1.2%" icon={ShieldCheck} color={T.violet} />
+        <Stat label="Failed runs" value="12" delta="-3" icon={AlertTriangle} color={T.coral} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12 }}>
+        <Panel title="Workflows" icon={Boxes}><MiniTable columns={["Workflow", "Status", "Runs today", "Success"]} rows={WORKFLOWS} /></Panel>
+        <Panel title="Execution timeline" icon={Clock}>
+          {EXEC_TIMELINE.map((e, i) => (
+            <Row key={i} first={i === 0}><span style={{ fontSize: 12 }}>{e.title}</span><span style={{ fontSize: 10.5, color: T.mistDim, flexShrink: 0, marginLeft: 10 }}>{e.time}</span></Row>
+          ))}
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== DATA HUB ============================== */
+
+const DATASETS = [["customer-events-q3", "1.2GB", "Ready", "2h ago"], ["support-tickets-2026", "480MB", "Ready", "1d ago"], ["product-catalog", "90MB", "Indexing", "4m ago"]];
+const PIPELINES = [{ name: "events → warehouse", status: T.mint }, { name: "tickets → embeddings", status: T.mint }, { name: "catalog → vector-db", status: T.amber }];
+
+function DataHub() {
+  return (
+    <div style={{ padding: "0 24px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+      <SectionHeader icon={Database} title="Data hub" subtitle="Datasets, pipelines, and the knowledge graph powering retrieval."
+        right={<QuickActions items={[{ label: "Run query", icon: Braces }]} />} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        <Stat label="Datasets" value="24" icon={Database} color={T.aurum} />
+        <Stat label="Vector embeddings" value="4.8M" delta="+120K" icon={Network} color={T.violet} />
+        <Stat label="Storage used" value="620GB" icon={HardDrive} color={T.mist} />
+        <Stat label="Data quality score" value="96%" delta="+1%" icon={ShieldCheck} color={T.mint} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12 }}>
+        <Panel title="Datasets" icon={Folder}><MiniTable columns={["Name", "Size", "Status", "Updated"]} rows={DATASETS} /></Panel>
+        <Panel title="Pipelines" icon={Workflow}>
+          {PIPELINES.map((p, i) => (
+            <Row key={p.name} first={i === 0}><span style={{ fontSize: 12.5 }}>{p.name}</span><span style={{ width: 7, height: 7, borderRadius: "50%", background: p.status }} /></Row>
+          ))}
+        </Panel>
+      </div>
+      <Panel title="Query console" icon={Braces} subtitle="Read-only preview">
+        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, background: T.void2, borderRadius: 8, padding: 12, color: T.mist }}>
+          <div><span style={{ color: T.violet }}>SELECT</span> customer_id, churn_score <span style={{ color: T.violet }}>FROM</span> events <span style={{ color: T.violet }}>WHERE</span> churn_score &gt; 0.7 <span style={{ color: T.violet }}>LIMIT</span> 5;</div>
+          <div style={{ marginTop: 8, color: T.mistDim }}>→ 5 rows returned in 84ms</div>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+/* ============================== ANALYTICS ============================== */
+
+const REV_CHART = [30, 42, 38, 55, 61, 58, 70, 78, 74, 88, 95, 102].map((v) => ({ v }));
+const FUNNEL = [["Visited", 100], ["Signed up", 62], ["Activated", 38], ["Converted", 21]];
+const REGIONS = [["United States", "42%"], ["Nigeria", "18%"], ["United Kingdom", "11%"], ["Germany", "8%"]];
+
+function Analytics() {
+  return (
+    <div style={{ padding: "0 24px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+      <SectionHeader icon={BarChart3} title="Analytics" subtitle="Executive view of revenue, usage, and growth trends."
+        right={<QuickActions items={[{ label: "Export report", icon: Download }]} />} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        <Stat label="MRR" value="$412K" delta="+8.4%" icon={CreditCard} color={T.mint} />
+        <Stat label="Active users" value="18.2K" delta="+5.1%" icon={Users} color={T.aurum} />
+        <Stat label="Churn" value="1.8%" delta="-0.4%" icon={TrendingDown} color={T.violet} />
+        <Stat label="Forecast (Q4)" value="$480K" icon={TrendingUp} color={T.mist} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 12 }}>
+        <Panel title="Revenue growth" subtitle="Last 12 months" icon={TrendingUp}>
+          <div style={{ height: 150 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={REV_CHART}><Bar dataKey="v" fill={T.aurum} radius={[3, 3, 0, 0]} /></BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+        <Panel title="Top regions" icon={Network}>
+          {REGIONS.map(([r, v], i) => (
+            <Row key={r} first={i === 0}><span style={{ fontSize: 12.5 }}>{r}</span><span style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: T.mist }}>{v}</span></Row>
+          ))}
+        </Panel>
+      </div>
+      <Panel title="Conversion funnel" icon={Filter}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {FUNNEL.map(([l, v]) => (
+            <div key={l} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 11.5, width: 90, color: T.mist }}>{l}</span>
+              <div style={{ flex: 1 }}><Progress value={v} color={T.violet} /></div>
+              <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: T.mistDim, width: 32 }}>{v}%</span>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+/* ============================== HARDWARE ============================== */
+
+const PROCESSES = [["inference-server", "34%", "2.1GB"], ["vector-indexer", "12%", "890MB"], ["automation-worker", "8%", "410MB"]];
+const CONTAINERS = [{ name: "inference-node-01", status: T.mint }, { name: "inference-node-04", status: T.coral }, { name: "worker-pool-a", status: T.mint }];
+
+function Hardware() {
+  const [live, setLive] = useState({ cpu: 34, gpu: 71, ram: 58, disk: 22, temp: 62 });
+  useEffect(() => { const id = setInterval(() => setLive((l) => ({ cpu: clamp(l.cpu + rand()), gpu: clamp(l.gpu + rand()), ram: clamp(l.ram + rand()), disk: clamp(l.disk + rand()), temp: Math.max(40, Math.min(85, l.temp + rand())) })), 1500); return () => clearInterval(id); }, []);
+  function rand() { return Math.random() * 6 - 3; }
+  return (
+    <div style={{ padding: "0 24px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+      <SectionHeader icon={HardDrive} title="Hardware" subtitle="Live infrastructure monitoring across the inference fleet." />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+        <Stat label="CPU" value={`${Math.round(live.cpu)}%`} icon={Cpu} color={T.violet} />
+        <Stat label="GPU" value={`${Math.round(live.gpu)}%`} icon={HardDrive} color={T.aurum} />
+        <Stat label="Memory" value={`${Math.round(live.ram)}%`} icon={Layers} color={T.mint} />
+        <Stat label="Disk I/O" value={`${Math.round(live.disk)}%`} icon={Database} color={T.mist} />
+        <Stat label="Temperature" value={`${Math.round(live.temp)}°C`} icon={Thermometer} color={T.amber} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Panel title="Top processes" icon={Activity}><MiniTable columns={["Process", "CPU", "Memory"]} rows={PROCESSES} /></Panel>
+        <Panel title="Containers" icon={Container}>
+          {CONTAINERS.map((c, i) => (
+            <Row key={c.name} first={i === 0}><span style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 7 }}><Container size={13} color={T.mistDim} />{c.name}</span><span style={{ width: 7, height: 7, borderRadius: "50%", background: c.status }} /></Row>
+          ))}
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== LOGS ============================== */
+
+const LOG_LINES = [
+  { sev: "info", t: "13:02:41", src: "inference-server", msg: "Request handled in 84ms" },
+  { sev: "warn", t: "13:02:38", src: "worker-pool-a", msg: "Queue depth exceeded 500" },
+  { sev: "error", t: "13:02:20", src: "inference-node-04", msg: "OOM kill — restarting container" },
+  { sev: "info", t: "13:01:58", src: "automation-engine", msg: "Workflow invoice-triage run #341 completed" },
+  { sev: "info", t: "13:01:40", src: "vector-indexer", msg: "Indexed 1,204 new embeddings" },
+];
+const SEV_COLOR = { info: T.mist, warn: T.amber, error: T.coral };
+
+function Logs() {
+  const [filter, setFilter] = useState("all");
+  const rows = filter === "all" ? LOG_LINES : LOG_LINES.filter((l) => l.sev === filter);
+  return (
+    <div style={{ padding: "0 24px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+      <SectionHeader icon={ScrollText} title="Logs" subtitle="Streaming logs across every service, searchable and filterable."
+        right={<QuickActions items={[{ label: "Export", icon: Download }, { label: "Save view", icon: BookMarked }]} />} />
+      <div style={{ display: "flex", gap: 8 }}>
+        {["all", "info", "warn", "error"].map((f) => (
+          <button key={f} onClick={() => setFilter(f)} style={{ fontSize: 11.5, padding: "5px 11px", borderRadius: 7, border: `1px solid ${T.line}`, background: filter === f ? T.elevated : "transparent", color: filter === f ? T.bone : T.mistDim, cursor: "pointer", textTransform: "capitalize" }}>{f}</button>
+        ))}
+      </div>
+      <Panel noPad>
+        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, padding: "10px 4px" }}>
+          {rows.map((l, i) => (
+            <div key={i} style={{ display: "flex", gap: 12, padding: "5px 16px", borderTop: i > 0 ? `1px solid ${T.lineSoft}` : "none" }}>
+              <span style={{ color: T.mistDim, flexShrink: 0 }}>{l.t}</span>
+              <span style={{ color: SEV_COLOR[l.sev], width: 46, flexShrink: 0, textTransform: "uppercase", fontSize: 10.5 }}>{l.sev}</span>
+              <span style={{ color: T.aurumDim, flexShrink: 0, width: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.src}</span>
+              <span style={{ color: T.mist }}>{l.msg}</span>
+            </div>
+          ))}
+        </div>
+      </Panel>
+      <Panel title="Log volume" icon={BarChart3}>
+        <div style={{ height: 80 }}>
+          <ResponsiveContainer width="100%" height="100%"><BarChart data={spark(20, 30)}><Bar dataKey="v" fill={T.violet} radius={[2, 2, 0, 0]} /></BarChart></ResponsiveContainer>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+/* ============================== SETTINGS ============================== */
+
+const SETTINGS_SECTIONS = [
+  { id: "profile", label: "Profile", icon: User },
+  { id: "workspace", label: "Workspace", icon: Boxes },
+  { id: "security", label: "Security", icon: ShieldCheck },
+  { id: "billing", label: "Billing", icon: CreditCard },
+  { id: "notifications", label: "Notifications", icon: BellIcon },
+  { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "keys", label: "API keys", icon: Braces },
+  { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
+];
+
+function SettingsPage() {
+  const [sec, setSec] = useState("profile");
+  const [toggles, setToggles] = useState({ email: true, push: false, weekly: true });
+  return (
+    <div style={{ display: "flex", height: "100%" }}>
+      <div style={{ width: 200, borderRight: `1px solid ${T.line}`, padding: 14, flexShrink: 0 }}>
+        <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Settings</div>
+        {SETTINGS_SECTIONS.map((s) => (
+          <div key={s.id} onClick={() => setSec(s.id)} style={{ display: "flex", alignItems: "center", gap: 9, padding: "8px 9px", borderRadius: 7, cursor: "pointer", background: sec === s.id ? T.elevated : "transparent", color: sec === s.id ? T.bone : T.mist, fontSize: 12.5, marginBottom: 2 }}>
+            <s.icon size={14} /> {s.label}
+          </div>
+        ))}
+      </div>
+      <div style={{ flex: 1, padding: 24, overflowY: "auto" }}>
+        {sec === "notifications" ? (
+          <Panel title="Notification preferences" icon={BellIcon}>
+            {[["email", "Email notifications"], ["push", "Push notifications"], ["weekly", "Weekly digest"]].map(([k, label]) => (
+              <Row key={k} first={k === "email"}>
+                <span style={{ fontSize: 13 }}>{label}</span>
+                <Toggle on={toggles[k]} onClick={() => setToggles((t) => ({ ...t, [k]: !t[k] }))} />
+              </Row>
+            ))}
+          </Panel>
+        ) : sec === "appearance" ? (
+          <Panel title="Appearance" icon={Palette}>
+            <div style={{ display: "flex", gap: 10 }}>
+              {[{ l: "Dark", i: Moon, on: true }, { l: "Light", i: Sun, on: false }].map((o) => (
+                <div key={o.l} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: `1px solid ${o.on ? T.aurum : T.line}`, color: o.on ? T.aurum : T.mist, fontSize: 12.5 }}><o.i size={13} />{o.l}</div>
+              ))}
+            </div>
+          </Panel>
+        ) : sec === "keys" ? (
+          <Panel title="API keys" icon={Braces} actions={<QuickActions items={[{ label: "New key", icon: Plus }]} />}>
+            <MiniTable columns={["Name", "Prefix", "Created", "Last used"]} rows={[["Production", "sk-live-••••", "Jan 12", "2m ago"], ["Staging", "sk-test-••••", "Feb 3", "1h ago"]]} />
+          </Panel>
+        ) : (
+          <Panel title={SETTINGS_SECTIONS.find((s) => s.id === sec)?.label} icon={SETTINGS_SECTIONS.find((s) => s.id === sec)?.icon}>
+            <div style={{ fontSize: 12.5, color: T.mistDim }}>This section follows the same design system — wire it to your real account, auth, and billing data.</div>
+          </Panel>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Toggle({ on, onClick }) {
+  return (
+    <div onClick={onClick} style={{ width: 34, height: 19, borderRadius: 10, background: on ? T.aurum : T.elevated, border: `1px solid ${on ? T.aurum : T.line}`, cursor: "pointer", position: "relative", transition: "background 150ms" }}>
+      <motion.div animate={{ x: on ? 15 : 1 }} transition={{ duration: 0.15 }} style={{ width: 15, height: 15, borderRadius: "50%", background: on ? T.void : T.mist, position: "absolute", top: 1 }} />
+    </div>
+  );
+}
+
+/* ============================== COMMAND PALETTE ============================== */
+
+const PALETTE_ACTIONS = NAV.map((n) => ({ id: n.id, label: `Go to ${n.label}`, icon: n.icon }));
+
+function CommandPalette({ onClose, onNavigate }) {
+  const [q, setQ] = useState("");
+  const filtered = PALETTE_ACTIONS.filter((a) => a.label.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(5,6,9,0.6)", zIndex: 50, display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 100, borderRadius: 14 }}>
+      <motion.div initial={{ opacity: 0, y: -10, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -10, scale: 0.97 }} transition={{ duration: 0.16 }}
+        onClick={(e) => e.stopPropagation()} style={{ width: 420, background: T.panel, border: `1px solid ${T.line}`, borderRadius: 12, boxShadow: "0 20px 60px rgba(0,0,0,0.5)", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderBottom: `1px solid ${T.lineSoft}` }}>
+          <Command size={14} color={T.aurum} />
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Jump to a module, action, or search…" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: T.bone, fontSize: 13.5 }} />
+          <X size={14} color={T.mistDim} style={{ cursor: "pointer" }} onClick={onClose} />
+        </div>
+        <div style={{ padding: 6, maxHeight: 280, overflowY: "auto" }}>
+          {filtered.map((a) => {
+            const Icon = a.icon;
+            return (
+              <div key={a.id} onClick={() => onNavigate(a.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = T.elevated)} onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
+                <Icon size={14} color={T.mist} />{a.label}<ArrowUpRight size={12} color={T.mistDim} style={{ marginLeft: "auto" }} />
+              </div>
+            );
+          })}
+          {filtered.length === 0 && <div style={{ padding: 14, fontSize: 12.5, color: T.mistDim }}>No matches.</div>}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+/* ============================== FONTS ============================== */
+
+function GlobalFonts() {
+  return (
+    <style>{`
+      @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap');
+      @keyframes pulse-dot { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }
+      @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-thumb { background: ${T.line}; border-radius: 4px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      textarea::placeholder, input::placeholder { color: ${T.mistDim}; }
+    `}</style>
+  );
+}

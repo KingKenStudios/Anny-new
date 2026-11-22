@@ -1,0 +1,1589 @@
+# ANNY — COMPLETE PROJECT DISCOVERY, FORENSIC AUDIT, ARCHITECTURE INVENTORY & PROJECT ASSESSMENT
+
+## MISSION
+
+I have two separate versions of ANNY, my personal AI assistant and intelligence ecosystem.
+
+I need to conduct a complete, independent investigation of this application to understand exactly what it is, what has been built, what works, what doesn't work, what is incomplete, what is secure, what is insecure, what architecture it uses, what capabilities it possesses, what its development history and current phase are, and what is required to make it the ultimate ANNY.
+
+I will conduct this exact investigation on both applications independently.
+
+I will subsequently compare your report with the report from the other ANNY application and use the results to decide which application should become the primary ANNY project.
+
+**Your task is to investigate and document this application. Do not modify the application. Do not fix anything. Do not begin development. Do not attempt to persuade me that this application is superior.**
+
+I need an honest, comprehensive, evidence-based report.
+
+---
+
+# 1. YOUR ROLE
+
+Act as a team of independent senior specialists:
+
+- Principal Software Architect.
+- Senior AI Systems Engineer.
+- Principal Full-Stack Engineer.
+- Senior Application Security Auditor.
+- Senior DevOps and Infrastructure Engineer.
+- Senior Database Architect.
+- Offline-First Systems Architect.
+- AI Model Integration Specialist.
+- Robotics and Mechatronics Systems Engineer.
+- Software Forensic Investigator.
+- Independent Technical Due-Diligence Auditor.
+- Product Systems Analyst.
+- Quality Assurance and Test Engineer.
+
+You must investigate the actual application and its source code.
+
+Do not rely on project names, README claims, marketing descriptions, previous AI-generated reports, or comments as proof of functionality.
+
+Verify claims against the actual source code, architecture, dependencies, tests, configuration, runtime behavior, and available execution results.
+
+---
+
+# 2. STRICT READ-ONLY MODE
+
+This is an investigation ONLY.
+
+You are not authorized to:
+
+- Modify source code.
+- Create files.
+- Delete files.
+- Rename files.
+- Move files.
+- Install dependencies.
+- Update dependencies.
+- Modify configuration.
+- Modify database schemas.
+- Run migrations.
+- Modify environment variables.
+- Modify authentication.
+- Change security rules.
+- Change Git branches.
+- Create commits.
+- Push to GitHub.
+- Deploy.
+- Start feature development.
+- Fix existing bugs.
+- Refactor.
+- Automatically format files.
+- Rewrite the architecture.
+- Change project settings.
+- Reset the workspace.
+- Delete user data.
+- Perform destructive tests.
+
+You may inspect files, analyze code, run safe read-only checks, execute existing non-destructive tests if they are safe, inspect Git status, and analyze build output already available.
+
+If a test or command might modify application data, configuration, databases, generated files, or the workspace, do not run it without explicit authorization.
+
+If an operation cannot be safely executed, report it as NOT TESTED.
+
+**Do not modify this application under any circumstances during this assessment.**
+
+---
+
+# 3. IDENTIFY THIS APPLICATION
+
+Begin by identifying the actual project you are inspecting.
+
+Report:
+
+- Application name.
+- Project root.
+- Repository name.
+- Git remote URL, if available.
+- Git branch.
+- Current commit hash.
+- Whether Git is initialized.
+- Whether the working directory contains uncommitted changes.
+- Framework.
+- Language.
+- Application type.
+- Frontend.
+- Backend.
+- Database.
+- Runtime.
+- Package manager.
+- Build system.
+- Deployment configuration.
+- Operating system assumptions.
+- Hardware requirements.
+- Existing documentation.
+- Approximate project size.
+- Total source files.
+- Total components.
+- Total services.
+- Total modules.
+- Total routes.
+- Total tests.
+- Total dependencies.
+- Approximate source-code lines.
+- Existing project development phase, if identifiable.
+
+Do not invent missing information.
+
+Use:
+
+- VERIFIED.
+- PARTIALLY VERIFIED.
+- UNVERIFIED.
+- NOT IMPLEMENTED.
+- NOT TESTED.
+- UNKNOWN.
+
+Explain the difference between code existing and functionality being proven.
+
+---
+
+# 4. COMPLETE PROJECT STRUCTURE
+
+Produce a comprehensive inventory of the application.
+
+Inspect the project directory and identify all significant folders and files.
+
+Explain the purpose of:
+
+- Application entry points.
+- Frontend.
+- Backend.
+- Core AI engine.
+- AI agents.
+- Model providers.
+- Model routing.
+- Memory.
+- Database.
+- Authentication.
+- Authorization.
+- Security.
+- Workspace.
+- File system.
+- Project management.
+- Code generation.
+- Preview systems.
+- Voice.
+- Speech recognition.
+- Text-to-speech.
+- Vision.
+- Image generation.
+- Video generation.
+- Audio generation.
+- Robotics.
+- Engineering.
+- Mechatronics.
+- Automation.
+- Networking.
+- APIs.
+- Integrations.
+- Utilities.
+- Testing.
+- Deployment.
+- Configuration.
+- Documentation.
+
+Produce a structural architecture tree.
+
+Do not simply list thousands of files.
+
+Group files by their functional responsibility and identify important files by exact path.
+
+For each major subsystem, explain:
+
+1. What it is.
+2. What it does.
+3. Where it is implemented.
+4. What it depends on.
+5. What depends on it.
+6. Whether it is functional.
+7. Whether it is partially implemented.
+8. Whether it is duplicated.
+9. Whether it is disconnected from the application.
+10. Whether it has been tested.
+
+---
+
+# 5. ANNY'S IDENTITY AND CORE ARCHITECTURE
+
+Determine the actual identity and design of ANNY as implemented.
+
+Investigate:
+
+- Is ANNY a single AI assistant?
+- Is it an AI platform?
+- Is it an agent system?
+- Is it a cognitive architecture?
+- Is it a chatbot?
+- Is it an AI operating system?
+- Does it have multiple agents?
+- Does it have a central intelligence?
+- Are specialist agents coordinated?
+- Is there a central orchestrator?
+- Are there multiple independent AI brains?
+- Are agents merely names without functioning logic?
+- Does the application support autonomous tasks?
+- Does it support planning?
+- Does it support tool use?
+- Does it support task execution?
+- Does it support long-term memory?
+- Does it support self-improvement?
+- Does it support context awareness?
+- Does it support multimodal intelligence?
+
+Document the actual architecture.
+
+Identify the central intelligence, orchestrator, cognitive kernel, model router, tool execution system, memory system, planning system, agent system, and user interface.
+
+Explain how a user request travels through the system from input to final output.
+
+Produce a complete architecture diagram using Mermaid if supported.
+
+Use actual verified components, not conceptual components that have not been implemented.
+
+---
+
+# 6. COMPLETE FEATURE INVENTORY
+
+Identify every capability that has been implemented, partially implemented, planned, or merely mentioned in documentation.
+
+Organize the inventory into the following categories.
+
+## A. General AI assistant
+
+- Conversation.
+- Question answering.
+- Reasoning.
+- Context awareness.
+- Instructions.
+- Personality.
+- Personal assistant.
+- Task management.
+- Planning.
+- Research.
+- Summarization.
+- Translation.
+- Writing.
+- Memory.
+- Learning.
+- Decision support.
+- Tool use.
+- Autonomous tasks.
+- Agent execution.
+- Multi-agent coordination.
+
+## B. Software engineering
+
+- Code generation.
+- Code editing.
+- Code explanation.
+- Debugging.
+- Error detection.
+- Error correction.
+- Refactoring.
+- Software architecture.
+- Application generation.
+- Website generation.
+- Backend generation.
+- Database generation.
+- API generation.
+- Testing.
+- Git integration.
+- Repository understanding.
+- Terminal execution.
+- File manipulation.
+- IDE/workspace.
+- Code preview.
+- Application deployment.
+
+## C. AI and machine learning
+
+- Local models.
+- Cloud models.
+- Model selection.
+- Model routing.
+- Model fallback.
+- Model discovery.
+- Model installation.
+- Model management.
+- Embeddings.
+- Vector databases.
+- RAG.
+- Fine-tuning.
+- Training.
+- Inference.
+- AI agents.
+- AI orchestration.
+
+## D. Creative production
+
+- Image generation.
+- Image editing.
+- Graphics.
+- Logo generation.
+- Photo editing.
+- Music generation.
+- Beat creation.
+- Songwriting.
+- Audio generation.
+- Voice generation.
+- Voice cloning.
+- Video generation.
+- Video editing.
+- Animation.
+- 3D generation.
+- Website design.
+
+## E. Engineering and industrial systems
+
+- Electrical engineering.
+- Electronics.
+- Industrial electrical systems.
+- Automation.
+- PLC.
+- SCADA.
+- Robotics.
+- ROS.
+- Mechatronics.
+- CAD.
+- Mechanical engineering.
+- Circuit design.
+- Engineering calculations.
+- Troubleshooting.
+- Industrial maintenance.
+- Instrumentation.
+- Telecommunications.
+- Networking.
+- Cybersecurity.
+- Industrial security.
+- Embedded systems.
+- IoT.
+
+## F. Personal assistant capabilities
+
+- Calendar.
+- Reminders.
+- Notifications.
+- Email.
+- Search.
+- Personal files.
+- Contacts.
+- Scheduling.
+- Personal knowledge.
+- Voice assistant.
+- Desktop integration.
+- Mobile integration.
+- Operating-system integration.
+
+## G. Nigerian and African capabilities
+
+Investigate whether ANNY supports:
+
+- Nigerian English.
+- Yoruba.
+- Hausa.
+- Igbo.
+- Nigerian Pidgin.
+- Nigerian accents.
+- Nigerian context.
+- Local engineering context.
+- Local businesses.
+- Nigerian laws and regulations.
+- Nigerian educational systems.
+- Local speech recognition.
+- Local text-to-speech.
+
+Determine which are genuinely implemented and which are only planned.
+
+## H. Security and fraud intelligence
+
+Investigate:
+
+- Scam detection.
+- Fraud detection.
+- Phishing detection.
+- Malicious URL detection.
+- Malware analysis.
+- Security analysis.
+- Privacy protection.
+- Identity protection.
+- Security monitoring.
+- Cybersecurity assistance.
+- Threat intelligence.
+
+For every capability, identify actual implementation and evidence.
+
+---
+
+# 7. FEATURE STATUS CLASSIFICATION
+
+Every feature must be classified using the following categories.
+
+### VERIFIED WORKING
+
+Evidence demonstrates that the feature operates as intended.
+
+### IMPLEMENTED BUT UNVERIFIED
+
+Code exists and appears connected, but actual execution has not been demonstrated.
+
+### PARTIALLY IMPLEMENTED
+
+Some functionality exists but important components are missing.
+
+### PLACEHOLDER
+
+UI, function, or interface exists, but real implementation is missing.
+
+### MOCKED
+
+Uses simulated responses, test data, fake services, or mock implementations.
+
+### DISCONNECTED
+
+Implemented somewhere in the source code but not connected to the actual application workflow.
+
+### BROKEN
+
+Evidence shows that it fails.
+
+### PLANNED
+
+Mentioned in documentation, roadmap, comments, or design but not implemented.
+
+### NOT IMPLEMENTED
+
+No actual implementation identified.
+
+Do not classify a capability as VERIFIED WORKING merely because:
+
+- A UI button exists.
+- A function exists.
+- A class exists.
+- A README claims it exists.
+- A test is mocked.
+- A component renders.
+- A build succeeds.
+
+---
+
+# 8. AI MODEL AND PROVIDER ARCHITECTURE
+
+Identify every AI model, AI provider, API, model endpoint, and local inference engine used or supported.
+
+Investigate:
+
+- Ollama.
+- LM Studio.
+- llama.cpp.
+- Transformers.
+- Gemini.
+- OpenAI.
+- Anthropic.
+- DeepSeek.
+- Groq.
+- OpenRouter.
+- Hugging Face.
+- Pollinations.
+- Other providers.
+
+Only report providers that are actually present or referenced in the application.
+
+For each provider, report:
+
+| Provider | Integration | Models | Online/Offline | Cost | Status | Fallback |
+|---|---|---|---|---|---|---|
+
+Identify:
+
+- The primary model.
+- The default model.
+- The fallback model.
+- The local model.
+- The online model.
+- Model routing logic.
+- Provider selection.
+- API-key handling.
+- Authentication.
+- Timeout handling.
+- Retry handling.
+- Rate limits.
+- Error handling.
+- Model availability checks.
+- Automatic failover.
+- Offline behavior.
+
+Explain whether the application can function without an internet connection.
+
+Explain whether the application can function without any external API keys.
+
+Identify any mandatory paid services or potential future billing requirements.
+
+---
+
+# 9. OFFLINE CAPABILITY — DEEP INVESTIGATION
+
+Offline operation is a fundamental requirement for ANNY.
+
+Investigate the complete offline architecture.
+
+Identify every component that works offline.
+
+Identify every component that requires internet access.
+
+Determine:
+
+- Whether the application starts offline.
+- Whether login is possible offline.
+- Whether local projects are accessible offline.
+- Whether the AI works offline.
+- Whether models can run locally.
+- Whether memory works offline.
+- Whether databases work offline.
+- Whether tools work offline.
+- Whether code generation works offline.
+- Whether preview works offline.
+- Whether voice works offline.
+- Whether image generation works offline.
+- Whether creative capabilities work offline.
+- Whether local files work offline.
+- Whether settings work offline.
+- Whether cloud synchronization works offline.
+- Whether the application silently falls back to cloud.
+- Whether OFFLINE_ONLY mode is enforced.
+- Whether internet-dependent components fail safely.
+
+Produce a table:
+
+| Capability | Offline? | Dependency | Evidence | Limitation |
+|---|---|---|---|---|
+
+Identify the application's true offline capabilities.
+
+Do not confuse a UI that loads offline with a fully functional offline AI.
+
+---
+
+# 10. ZERO-COST ARCHITECTURE
+
+My permanent requirement is that ANNY's core functionality must not require payments.
+
+Investigate every cost-bearing dependency.
+
+Inspect:
+
+- APIs.
+- AI providers.
+- Model inference.
+- Hosting.
+- Databases.
+- Authentication.
+- Storage.
+- Embeddings.
+- Voice.
+- Image generation.
+- Video generation.
+- Music generation.
+- Search.
+- Networking.
+- Monitoring.
+- Deployment.
+- Third-party integrations.
+
+For each component, classify:
+
+- FREE AND SELF-HOSTABLE.
+- LOCAL AND OPEN SOURCE.
+- OPTIONAL FREE SERVICE.
+- FREE-TIER DEPENDENCY.
+- BILLING-REQUIRED.
+- METERED.
+- PAID.
+- UNKNOWN.
+
+Determine whether the app has any dependency that could unexpectedly require:
+
+- A credit card.
+- Billing activation.
+- Paid subscription.
+- Paid API credits.
+- Usage-based payment.
+- Paid hosting.
+
+Report the exact files and integrations.
+
+Identify the components that must be replaced to make ANNY permanently zero-cost.
+
+Do not assume that a free tier satisfies my permanent zero-payment requirement.
+
+---
+
+# 11. DATABASE, STORAGE AND MEMORY
+
+Inspect all database and storage systems.
+
+Identify:
+
+- PostgreSQL.
+- SQLite.
+- IndexedDB.
+- LocalStorage.
+- Filesystem.
+- Redis.
+- Qdrant.
+- Chroma.
+- Other vector stores.
+- Cloud databases.
+- Memory systems.
+
+For each, report:
+
+- Purpose.
+- Implementation.
+- Location.
+- Data model.
+- Persistence.
+- Ownership.
+- Offline capability.
+- Cloud capability.
+- Security.
+- Backup.
+- Migration.
+- Reliability.
+- Status.
+
+Investigate all types of memory:
+
+- Short-term conversation memory.
+- Long-term memory.
+- Personal memory.
+- Project memory.
+- Engineering memory.
+- Learning memory.
+- Vector memory.
+- Persistent memory.
+- Session memory.
+- Context storage.
+
+Determine whether the AI actually retrieves memory during conversations.
+
+Determine whether memory is:
+
+- Real.
+- Persistent.
+- User-isolated.
+- Project-isolated.
+- Searchable.
+- Vector-based.
+- Indexed.
+- Secure.
+- Offline-capable.
+
+Identify fake embeddings, simulated vector stores, in-memory fallbacks, incomplete database integrations, or misleading health indicators.
+
+---
+
+# 12. SECURITY FORENSIC AUDIT
+
+Perform a thorough read-only security investigation.
+
+Investigate:
+
+## Authentication
+
+- Authentication mechanisms.
+- Firebase authentication.
+- Local authentication.
+- Token validation.
+- Token expiry.
+- Session management.
+- Logout.
+- Account switching.
+- Password handling.
+- MFA.
+- Anonymous users.
+
+## Authorization
+
+- User ownership.
+- Project ownership.
+- Memory ownership.
+- File ownership.
+- Admin privileges.
+- Server authorization.
+- Client-side authorization.
+- API authorization.
+- Cross-user access.
+- IDOR.
+- Privilege escalation.
+
+## Secrets
+
+- API keys.
+- Tokens.
+- Passwords.
+- Environment variables.
+- Private keys.
+- Database credentials.
+- Hardcoded secrets.
+- LocalStorage secrets.
+- Logs containing secrets.
+- Secret leakage into previews.
+
+## API security
+
+- Unauthenticated routes.
+- Missing authorization.
+- SSRF.
+- CORS.
+- Rate limiting.
+- Input validation.
+- Request validation.
+- Webhooks.
+- File uploads.
+- Path traversal.
+- SQL injection.
+- Command injection.
+- XSS.
+- CSRF.
+- Unsafe deserialization.
+
+## Preview and sandbox security
+
+- Iframes.
+- CSP.
+- Sandbox attributes.
+- `postMessage`.
+- Message origin validation.
+- Message authentication.
+- Preview isolation.
+- Network access.
+- Generated code execution.
+- `eval`.
+- `new Function`.
+- Blob execution.
+- Source maps.
+- Secrets in preview.
+- Cross-origin protections.
+
+## Dependency security
+
+- Vulnerable dependencies.
+- Abandoned packages.
+- Excessive permissions.
+- Unnecessary packages.
+- Supply-chain risks.
+
+## Offline security
+
+- Local secrets.
+- Local data exposure.
+- Unauthorized local access.
+- Local ownership.
+- Device identity.
+- Local authentication bypass.
+
+For each finding, classify:
+
+- CRITICAL.
+- HIGH.
+- MEDIUM.
+- LOW.
+- INFORMATIONAL.
+
+Include:
+
+- Exact file path.
+- Exact code or implementation.
+- Vulnerability.
+- Exploit scenario.
+- Impact.
+- Evidence.
+- Recommended remediation.
+
+Do not modify anything.
+
+Do not assume previous security reports are correct.
+
+Verify the current application.
+
+---
+
+# 13. DEVELOPMENT HISTORY AND CURRENT PHASE
+
+Investigate the development history available to you.
+
+Inspect:
+
+- Git history.
+- Commit messages.
+- Branches.
+- Documentation.
+- Phase names.
+- Audit reports.
+- Roadmaps.
+- TODOs.
+- FIXME comments.
+- Known bugs.
+- Development notes.
+- Test reports.
+- Build reports.
+- Previous implementation summaries.
+
+Determine:
+
+- What has been completed.
+- What is currently being developed.
+- Which phase the application is in.
+- Which phases are approved.
+- Which phases are incomplete.
+- Which phases were skipped.
+- Which changes were never verified.
+- Whether previous audit findings remain unresolved.
+- Whether the application has regressed.
+- Whether there are conflicting specifications.
+- Whether there are abandoned development paths.
+- Whether duplicated implementations exist.
+
+If the current development phase cannot be verified, report:
+
+**CURRENT DEVELOPMENT PHASE: UNKNOWN — INSUFFICIENT VERIFIED EVIDENCE.**
+
+Do not invent phase numbers.
+
+---
+
+# 14. TESTING, QUALITY AND RELIABILITY
+
+Investigate all tests.
+
+Identify:
+
+- Unit tests.
+- Integration tests.
+- End-to-end tests.
+- Security tests.
+- Authentication tests.
+- API tests.
+- Database tests.
+- UI tests.
+- Offline tests.
+- Browser tests.
+- Performance tests.
+- Stress tests.
+- Regression tests.
+
+Report:
+
+- Test framework.
+- Total tests.
+- Passing tests.
+- Failing tests.
+- Skipped tests.
+- Mocked tests.
+- Test coverage.
+- Untested subsystems.
+- Test reliability.
+- CI configuration.
+
+Investigate:
+
+- TypeScript errors.
+- Build errors.
+- Lint errors.
+- Runtime errors.
+- Console errors.
+- Failed API requests.
+- Broken components.
+- Dead code.
+- Duplicate code.
+- Circular dependencies.
+- File-size problems.
+- Memory leaks.
+- Race conditions.
+- Poor error handling.
+- False-positive health checks.
+
+Run only safe, non-destructive checks.
+
+If you cannot execute tests, clearly state that.
+
+Do not invent test results.
+
+---
+
+# 15. USER INTERFACE AND USER EXPERIENCE
+
+Analyze the actual application interface.
+
+Inspect:
+
+- Main dashboard.
+- Navigation.
+- Chat.
+- Settings.
+- Model selection.
+- Workspace.
+- Project management.
+- Developer tools.
+- Memory interface.
+- Agent interface.
+- Voice interface.
+- Creative studios.
+- Engineering tools.
+- Admin panels.
+- Mobile responsiveness.
+- Accessibility.
+- Loading states.
+- Error states.
+- Empty states.
+- Offline states.
+
+Identify:
+
+- Duplicated UI.
+- Inconsistent design.
+- Broken navigation.
+- Unconnected buttons.
+- Placeholder screens.
+- Confusing workflows.
+- Excessive complexity.
+- Missing functionality.
+- Usability issues.
+- Missing mobile support.
+- Performance issues.
+
+Assess the interface based on actual functionality.
+
+---
+
+# 16. ARCHITECTURAL QUALITY
+
+Evaluate:
+
+- Modular architecture.
+- Separation of concerns.
+- Dependency management.
+- Service architecture.
+- State management.
+- Component architecture.
+- Data flow.
+- API boundaries.
+- Browser/server separation.
+- Security boundaries.
+- Offline boundaries.
+- Error handling.
+- Logging.
+- Configuration.
+- Extensibility.
+- Maintainability.
+- Scalability.
+- Reliability.
+
+Identify:
+
+- Architectural strengths.
+- Architectural weaknesses.
+- Technical debt.
+- Duplicate services.
+- Over-engineering.
+- Under-engineering.
+- Tight coupling.
+- Dead code.
+- Circular dependencies.
+- Unnecessary complexity.
+- Fragile components.
+- Single points of failure.
+
+Determine whether the architecture is genuinely suitable for the ANNY vision or whether it needs future restructuring.
+
+Do not recommend a complete rewrite merely because a different architecture is fashionable.
+
+---
+
+# 17. HARDWARE AND PERFORMANCE
+
+Identify the actual hardware assumptions.
+
+Investigate whether ANNY can realistically operate on a machine with:
+
+- AMD Ryzen 7 Pro 4750U.
+- 16GB RAM.
+- Windows 10/11.
+- No dedicated GPU.
+
+Analyze:
+
+- Local model requirements.
+- CPU inference.
+- RAM usage.
+- GPU requirements.
+- Storage requirements.
+- Startup time.
+- Memory consumption.
+- Performance bottlenecks.
+- Model compatibility.
+- Offline model management.
+- Browser performance.
+- Backend performance.
+
+Identify the minimum and recommended hardware for the current application.
+
+Determine whether the architecture can support low-resource local machines.
+
+---
+
+# 18. COMPLETENESS AGAINST THE ULTIMATE ANNY VISION
+
+Compare the actual implementation against this intended vision.
+
+ANNY should ultimately become a unified personal AI intelligence capable of:
+
+- General intelligence and assistance.
+- Conversational reasoning.
+- Long-term memory.
+- Learning.
+- Personalization.
+- Autonomous task planning.
+- Tool use.
+- Software engineering.
+- Application creation.
+- Website creation.
+- Backend development.
+- Database engineering.
+- Cybersecurity.
+- Electrical engineering.
+- Electronics.
+- Industrial maintenance.
+- Automation.
+- PLC.
+- Robotics.
+- Mechatronics.
+- Telecommunications.
+- Networking.
+- Engineering calculations.
+- Technical troubleshooting.
+- Research.
+- Image creation.
+- Image editing.
+- Music creation.
+- Audio.
+- Video.
+- Graphics.
+- Animation.
+- 3D.
+- Voice.
+- Nigerian languages.
+- Nigerian context.
+- Scam detection.
+- Fraud detection.
+- Personal productivity.
+- File management.
+- AIOS integration.
+- Offline operation.
+- Online operation.
+- Privacy.
+- Zero-cost core functionality.
+
+For each capability, classify:
+
+- COMPLETE.
+- PARTIALLY COMPLETE.
+- BASIC.
+- NOT IMPLEMENTED.
+- PLANNED.
+- NOT APPLICABLE.
+
+Provide an honest gap analysis.
+
+---
+
+# 19. WHAT MAKES THIS VERSION UNIQUE?
+
+Identify capabilities or architectural strengths that distinguish this version of ANNY.
+
+Look for:
+
+- Unique systems.
+- Better architecture.
+- More complete offline functionality.
+- Better security.
+- Better memory.
+- Better AI orchestration.
+- Better agent coordination.
+- Better workspace.
+- Better project management.
+- Better engineering systems.
+- Better local intelligence.
+- Better creative systems.
+- Better integrations.
+- Better performance.
+- Better maintainability.
+
+Only claim uniqueness when supported by evidence.
+
+Identify features that are impressive in documentation but not genuinely implemented.
+
+---
+
+# 20. WHAT IS THE CURRENT REAL-WORLD CAPABILITY?
+
+Describe what I can actually do with this application TODAY.
+
+Give me realistic examples.
+
+For example:
+
+- Can I ask a general question?
+- Can I have a real conversation?
+- Can it remember previous conversations?
+- Can it work offline?
+- Can it run a local model?
+- Can it generate working code?
+- Can it create an application?
+- Can it edit files?
+- Can it execute commands?
+- Can it debug?
+- Can it build a website?
+- Can it generate images?
+- Can it create music?
+- Can it generate video?
+- Can it assist with electrical engineering?
+- Can it work with PLCs?
+- Can it assist with robotics?
+- Can it speak?
+- Can it recognize speech?
+- Can it understand images?
+- Can it use tools autonomously?
+- Can it securely manage projects?
+- Can it perform tasks without my supervision?
+
+Answer every question based on verified evidence.
+
+---
+
+# 21. DEVELOPMENT READINESS
+
+Assess the project's readiness for continued development.
+
+Use a 0–100 score for each category, but justify each score with evidence.
+
+| Category | Score | Evidence | Major Weakness |
+|---|---|---|---|
+| Architecture | | | |
+| AI intelligence | | | |
+| Model integration | | | |
+| Offline capability | | | |
+| Zero-cost compliance | | | |
+| Security | | | |
+| Authentication | | | |
+| Authorization | | | |
+| Memory | | | |
+| Database | | | |
+| Software engineering | | | |
+| Creative capability | | | |
+| Engineering capability | | | |
+| Robotics | | | |
+| Voice | | | |
+| Vision | | | |
+| UI/UX | | | |
+| Reliability | | | |
+| Testing | | | |
+| Documentation | | | |
+| Maintainability | | | |
+| Performance | | | |
+| Scalability | | | |
+| Overall development readiness | | | |
+
+Do not inflate scores.
+
+An unfinished feature cannot receive a high score simply because its architecture is ambitious.
+
+---
+
+# 22. MAJOR PROBLEMS AND DEVELOPMENT PRIORITIES
+
+Identify the most important problems in the application.
+
+Rank them:
+
+### P0 — Critical
+
+Issues that must be addressed immediately before further development.
+
+### P1 — High
+
+Major security, architecture, reliability, or functionality issues.
+
+### P2 — Medium
+
+Important improvements.
+
+### P3 — Low
+
+Minor improvements and polish.
+
+For each problem provide:
+
+- Problem.
+- Evidence.
+- Impact.
+- Why it matters.
+- Recommended solution.
+- Dependencies.
+- Estimated complexity.
+- Whether it blocks future development.
+
+Then create a prioritized roadmap.
+
+The roadmap must be based on actual problems, not simply feature expansion.
+
+---
+
+# 23. RECOMMENDED FUTURE DEVELOPMENT PLAN
+
+Create a realistic development plan for this specific version of ANNY.
+
+Organize it into phases.
+
+Each phase must include:
+
+- Objective.
+- Exact scope.
+- Files/subsystems likely involved.
+- Dependencies.
+- Security considerations.
+- Required tests.
+- Acceptance criteria.
+- Definition of done.
+- Risks.
+- Estimated complexity.
+
+Prioritize:
+
+1. Critical security.
+2. Architecture integrity.
+3. Reliability.
+4. Offline functionality.
+5. Zero-cost compliance.
+6. Core AI capability.
+7. Memory.
+8. Software engineering.
+9. Agent systems.
+10. Creative capability.
+11. Engineering and robotics.
+12. Personal assistant.
+13. AIOS integration.
+14. UX.
+15. Performance.
+16. Advanced capabilities.
+
+Do not begin implementation.
+
+---
+
+# 24. EVIDENCE REQUIREMENTS
+
+Your report must be evidence-based.
+
+For important claims, provide:
+
+- Exact file path.
+- Function, class, component, or route name.
+- Relevant line numbers if available.
+- Description of actual implementation.
+- Verification method.
+- Confidence level.
+
+Use evidence categories:
+
+**SOURCE VERIFIED:** Confirmed by inspecting actual code.
+
+**EXECUTION VERIFIED:** Confirmed by safe execution.
+
+**TEST VERIFIED:** Confirmed by a relevant test.
+
+**DOCUMENTATION ONLY:** Mentioned in documentation without source verification.
+
+**INFERRED:** Reasonably inferred but not directly verified.
+
+**UNVERIFIED:** Cannot be confirmed.
+
+Never invent:
+
+- File paths.
+- Classes.
+- Functions.
+- Test results.
+- Capabilities.
+- Performance.
+- Security.
+- Architecture.
+- Providers.
+- Completion status.
+
+If the workspace or source code is inaccessible, report that limitation immediately.
+
+---
+
+# 25. FINAL REPORT FORMAT
+
+Your final response must be a comprehensive technical report using the following structure.
+
+## PART 1 — PROJECT IDENTITY
+
+Application identity, repository, branch, commit, framework, technology stack, project size, and current phase.
+
+## PART 2 — EXECUTIVE SUMMARY
+
+Explain what this application really is.
+
+What has actually been built?
+
+What is its current state?
+
+What is its strongest capability?
+
+What is its biggest weakness?
+
+Is it worth continuing?
+
+## PART 3 — COMPLETE ARCHITECTURE
+
+Architecture overview.
+
+Actual component structure.
+
+Data flow.
+
+AI orchestration.
+
+Frontend/backend.
+
+Database.
+
+Memory.
+
+Tools.
+
+Agents.
+
+## PART 4 — COMPLETE FEATURE INVENTORY
+
+All implemented, partially implemented, placeholder, mocked, disconnected, broken, planned, and missing capabilities.
+
+## PART 5 — AI AND MODEL SYSTEM
+
+Models, providers, routing, inference, online/offline, fallback, API dependencies, and cost.
+
+## PART 6 — OFFLINE AUDIT
+
+Complete offline functionality and limitations.
+
+## PART 7 — ZERO-COST AUDIT
+
+All cost dependencies, paid risks, billing requirements, and replacements.
+
+## PART 8 — DATABASE AND MEMORY AUDIT
+
+All storage, persistence, memory, retrieval, ownership, and database functionality.
+
+## PART 9 — SECURITY AUDIT
+
+Critical through informational findings.
+
+Include exact evidence and remediation recommendations.
+
+## PART 10 — DEVELOPMENT HISTORY
+
+Completed phases, current phase, previous audits, unresolved defects, and regressions.
+
+## PART 11 — TEST AND QUALITY AUDIT
+
+Tests, build, lint, TypeScript, coverage, runtime behavior, and limitations.
+
+## PART 12 — USER INTERFACE AUDIT
+
+UI, UX, navigation, usability, responsiveness, and incomplete components.
+
+## PART 13 — HARDWARE AND PERFORMANCE
+
+Hardware requirements, local model feasibility, performance, and bottlenecks.
+
+## PART 14 — ULTIMATE ANNY VISION GAP ANALYSIS
+
+Compare current functionality with the ultimate ANNY vision.
+
+## PART 15 — STRENGTHS
+
+List the strongest aspects of this specific application.
+
+## PART 16 — WEAKNESSES
+
+List the largest architectural, security, functional, and development weaknesses.
+
+## PART 17 — PRIORITIZED DEFECTS
+
+Rank P0, P1, P2, and P3 defects.
+
+## PART 18 — DEVELOPMENT ROADMAP
+
+Produce a realistic, phased roadmap.
+
+## PART 19 — SCORES
+
+Produce the detailed 0–100 evaluation table.
+
+## PART 20 — FINAL PROJECT VERDICT
+
+Provide a direct, honest conclusion:
+
+- Is this version worth continuing?
+- Is its foundation strong?
+- Is it ready for production?
+- Is it safe?
+- Is it genuinely offline?
+- Is it permanently zero-cost?
+- What should be fixed first?
+- What should never be rewritten?
+- What are its unique advantages?
+- What is its biggest risk?
+
+## PART 21 — COMPARISON-READY SUMMARY
+
+This section is especially important.
+
+Produce a concise, standardized summary that I can compare directly with another ANNY application's report.
+
+Include:
+
+### Project Identity
+- Name:
+- Repository:
+- Commit:
+- Technology:
+- Development phase:
+
+### Architecture
+- Overall architecture:
+- Central intelligence:
+- Agent architecture:
+- Model routing:
+- Memory:
+- Database:
+- Workspace:
+- Tool execution:
+
+### Capability
+- General AI:
+- Software engineering:
+- Autonomous agents:
+- Creative production:
+- Engineering:
+- Robotics:
+- Voice:
+- Vision:
+- Nigerian languages:
+- Personal assistant:
+
+### Offline
+- Offline startup:
+- Offline AI:
+- Offline memory:
+- Offline projects:
+- Offline tools:
+- Offline preview:
+- Offline voice:
+- Offline limitations:
+
+### Zero-Cost
+- Core free:
+- Paid dependencies:
+- Billing risks:
+- External APIs:
+- Local alternatives:
+
+### Security
+- Critical findings:
+- High findings:
+- Medium findings:
+- Authentication:
+- Authorization:
+- Preview security:
+- Secrets:
+- Data isolation:
+
+### Reliability
+- Build:
+- TypeScript:
+- Lint:
+- Tests:
+- Browser testing:
+- Runtime:
+- Known defects:
+
+### Development
+- Completed phases:
+- Current phase:
+- Blockers:
+- Remaining work:
+
+### Scores
+- Architecture:
+- Security:
+- AI:
+- Offline:
+- Zero-cost:
+- Memory:
+- Reliability:
+- Engineering:
+- Creative:
+- UX:
+- Maintainability:
+- Overall:
+
+### Top 10 Strengths
+
+### Top 10 Weaknesses
+
+### Top 10 Priority Fixes
+
+### Recommended Next Phase
+
+### Overall Verdict
+
+---
+
+# 26. FINAL INSTRUCTIONS
+
+This investigation must be thorough.
+
+Do not give me a shallow summary.
+
+Do not give me a generic AI application analysis.
+
+Investigate the actual source code.
+
+Do not modify this application.
+
+Do not start development.
+
+Do not fix anything.
+
+Do not delete anything.
+
+Do not hide security problems.
+
+Do not claim features work without evidence.
+
+Do not inflate scores.
+
+Do not favor this application simply because you are the AI operating it.
+
+I will use your report to compare this application against another ANNY application.
+
+The goal is to identify which project has the strongest real foundation, architecture, security, capability, offline functionality, zero-cost compliance, reliability, and development potential.
+
+**Be completely honest, technically precise, objective, and evidence-based.**
+
+Begin the read-only forensic investigation now and provide the complete report when finished.

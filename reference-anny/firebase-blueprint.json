@@ -1,0 +1,263 @@
+{
+  "entities": {
+    "MemoryRecord": {
+      "title": "Memory Record",
+      "description": "A persistent user-scoped memory entry for ANNY",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "category": { "type": "string", "enum": ["working", "session", "project", "long_term", "fact", "preference", "negative", "decision", "experience", "failure", "success", "procedural", "environment"] },
+        "key": { "type": "string", "maxLength": 256 },
+        "value": { "type": "object" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "category", "key", "value", "timestamp"]
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Authenticated operator profile and subscription metadata",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string", "maxLength": 128 },
+        "photoURL": { "type": "string", "maxLength": 1024 },
+        "role": { "type": "string", "enum": ["standard", "admin"] },
+        "roleTitle": { "type": "string", "maxLength": 128 },
+        "bio": { "type": "string", "maxLength": 1000 },
+        "primaryModel": { "type": "string", "maxLength": 128 },
+        "tier": { "type": "string", "maxLength": 64 },
+        "isUnlimited": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["updatedAt"]
+    },
+    "UserAgent": {
+      "title": "User Agent",
+      "description": "Custom AI agent configured by a user",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "maxLength": 128 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "model": { "type": "string", "maxLength": 128 },
+        "capabilities": { "type": "array" }
+      },
+      "required": ["name"]
+    },
+    "UserApp": {
+      "title": "User App",
+      "description": "Application built and saved by a user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 256 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "category": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "maxLength": 64 },
+        "lastModified": { "type": "string", "maxLength": 64 },
+        "progress": { "type": "number" },
+        "tags": { "type": "array" },
+        "prompt": { "type": "string", "maxLength": 4000 },
+        "iconName": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name"]
+    },
+    "ChatMessage": {
+      "title": "Chat Message",
+      "description": "User-scoped conversation message",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "enum": ["user", "bot", "assistant", "system"] },
+        "content": { "type": "string", "maxLength": 100000 },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["userId", "role", "content"]
+    },
+    "EditorSession": {
+      "title": "Editor Session",
+      "description": "Persisted workspace files for a user editor session",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "files": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "files", "updatedAt"]
+    },
+    "EngineeringProject": {
+      "title": "Engineering Project",
+      "description": "Persistent Engineering Memory project state",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string", "maxLength": 128 },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "projectName": { "type": "string", "maxLength": 256 },
+        "version": { "type": "string", "maxLength": 64 },
+        "requirementsSummary": { "type": "array" },
+        "learnedPreferences": { "type": "object" },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "ownerId", "projectName"]
+    },
+    "SupportChat": {
+      "title": "Support Chat",
+      "description": "Direct user-to-admin support conversation thread",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "userEmail": { "type": "string", "maxLength": 256 },
+        "userName": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "maxLength": 64 },
+        "type": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["userId", "status"]
+    },
+    "AuditLog": {
+      "title": "Audit Log",
+      "description": "Security and operational audit record",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "maxLength": 128 },
+        "severity": { "type": "string", "enum": ["info", "warning", "critical"] },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userEmail": { "type": "string", "maxLength": 256 },
+        "details": { "type": "string", "maxLength": 4000 }
+      },
+      "required": ["action", "userId"]
+    },
+    "UiRuntimeError": {
+      "title": "UI Runtime Error",
+      "description": "Captured frontend runtime exception report",
+      "type": "object",
+      "properties": {
+        "errorMessage": { "type": "string", "maxLength": 2000 },
+        "errorStack": { "type": "string", "maxLength": 8000 },
+        "componentStack": { "type": "string", "maxLength": 8000 },
+        "userUid": { "type": "string", "maxLength": 128 },
+        "userEmail": { "type": "string", "maxLength": 256 }
+      },
+      "required": ["errorMessage"]
+    },
+    "GlobalConfig": {
+      "title": "Global Config",
+      "description": "Public branding and platform configuration",
+      "type": "object",
+      "properties": {
+        "brandName": { "type": "string", "maxLength": 128 },
+        "teamName": { "type": "string", "maxLength": 128 },
+        "maintenanceMode": { "type": "boolean" },
+        "subscriptionPrice": { "type": "number" },
+        "enterprisePrice": { "type": "string", "maxLength": 64 },
+        "dailyLimit": { "type": "number" }
+      }
+    },
+    "PricingPlan": {
+      "title": "Pricing Plan",
+      "description": "Subscription tier metadata",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "maxLength": 128 },
+        "price": { "type": "string" },
+        "tier": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "WhitelistEntry": {
+      "title": "Whitelist Entry",
+      "description": "Authorized user or admin email allowlist entry",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 256 },
+        "addedAt": { "type": "string" }
+      },
+      "required": ["email"]
+    },
+    "DeepOrganizationProfile": {
+      "title": "Deep Organization Profile",
+      "description": "Canonical identity and configuration for a sovereign organization",
+      "type": "object",
+      "properties": {
+        "orgId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 256 },
+        "mission": { "type": "string", "maxLength": 2000 },
+        "vision": { "type": "string", "maxLength": 2000 },
+        "values": { "type": "array" },
+        "branding": { "type": "object" },
+        "operationalResponsibilities": { "type": "array" },
+        "productionStackActive": { "type": "boolean" },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orgId", "name"]
+    }
+  },
+  "firestore": {
+    "/memory/{memoryId}": {
+      "schema": "MemoryRecord",
+      "description": "User-scoped persistent memory for ANNY"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile and entitlement records"
+    },
+    "/users/{userId}/agents/{agentId}": {
+      "schema": "UserAgent",
+      "description": "User-owned custom AI agents"
+    },
+    "/users/{userId}/apps/{appId}": {
+      "schema": "UserApp",
+      "description": "User-owned generated applications"
+    },
+    "/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "User-scoped chat messages"
+    },
+    "/sessions/{sessionId}": {
+      "schema": "EditorSession",
+      "description": "User-scoped editor session VFS snapshots"
+    },
+    "/projects/{projectId}": {
+      "schema": "EngineeringProject",
+      "description": "User-owned Persistent Engineering Memory project states"
+    },
+    "/support_chats/{chatId}": {
+      "schema": "SupportChat",
+      "description": "Support conversations between operators and admins"
+    },
+    "/audit_logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Security and activity audit logs"
+    },
+    "/ui_runtime_errors/{errorId}": {
+      "schema": "UiRuntimeError",
+      "description": "Client runtime error telemetry"
+    },
+    "/config/global": {
+      "schema": "GlobalConfig",
+      "description": "Global platform configuration"
+    },
+    "/pricing/{planId}": {
+      "schema": "PricingPlan",
+      "description": "Subscription pricing tiers"
+    },
+    "/pricing_plans/{planId}": {
+      "schema": "PricingPlan",
+      "description": "External pricing plan sync documents"
+    },
+    "/whitelist/{email}": {
+      "schema": "WhitelistEntry",
+      "description": "Unlimited access email whitelist"
+    },
+    "/admin_whitelist/{email}": {
+      "schema": "WhitelistEntry",
+      "description": "Pre-authorized admin email whitelist"
+    },
+    "/organizations/{orgId}": {
+      "schema": "DeepOrganizationProfile",
+      "description": "Sovereign organization profiles"
+    }
+  }
+}

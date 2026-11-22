@@ -1,0 +1,284 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny everything by default unless explicitly permitted below
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidEmailId(id) {
+      return id is string && id.size() > 0 && id.size() <= 256 && id.matches('^[^/]+@[^/]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmail(email) {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() == email.lower();
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        isEmail('akinwumikehinde9640@gmail.com') ||
+        isEmail('annykehinde9640@gmail.com') ||
+        isEmail('kingkenstudio@gmail.com') ||
+        isEmail('giventakeafrica@gmail.com') ||
+        isEmail('africantwinsmusic@gmail.com') ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin') ||
+        (request.auth.token.email != null &&
+         request.auth.token.email_verified == true &&
+         exists(/databases/$(database)/documents/admin_whitelist/$(request.auth.token.email.lower())))
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidMemoryRecord(data) {
+      return data.keys().hasAll(['id', 'userId', 'category', 'key', 'value', 'timestamp'])
+        && data.keys().hasOnly(['id', 'userId', 'category', 'key', 'value', 'timestamp', 'serverTime'])
+        && data.id is string && data.id.size() > 0 && data.id.size() <= 128
+        && data.userId is string && data.userId == request.auth.uid
+        && data.category is string && data.category.size() > 0 && data.category.size() <= 64
+        && data.key is string && data.key.size() > 0 && data.key.size() <= 256
+        && data.timestamp is string && data.timestamp.size() <= 64;
+    }
+
+    function isValidUserProfile(data) {
+      return (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128))
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024))
+        && (!('roleTitle' in data) || (data.roleTitle is string && data.roleTitle.size() <= 128))
+        && (!('bio' in data) || (data.bio is string && data.bio.size() <= 1000))
+        && (!('primaryModel' in data) || (data.primaryModel is string && data.primaryModel.size() <= 128))
+        && (!('role' in data) || (data.role is string && data.role in ['standard', 'admin']))
+        && (!('tier' in data) || (data.tier is string && data.tier.size() <= 64))
+        && (!('isUnlimited' in data) || (data.isUnlimited is bool))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll(['projectId', 'ownerId', 'projectName'])
+        && data.projectId is string && data.projectId.size() > 0 && data.projectId.size() <= 128
+        && data.ownerId is string && data.ownerId.size() > 0 && data.ownerId.size() <= 128
+        && data.projectName is string && data.projectName.size() > 0 && data.projectName.size() <= 256;
+    }
+
+    function isValidSession(data) {
+      return data.keys().hasAll(['userId', 'files', 'updatedAt'])
+        && data.userId is string && data.userId.size() > 0 && data.userId.size() <= 128
+        && data.files is list
+        && data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidUiRuntimeError(data) {
+      return data.keys().hasAll(['errorMessage'])
+        && data.errorMessage is string && data.errorMessage.size() <= 2000
+        && (!('errorStack' in data) || (data.errorStack is string && data.errorStack.size() <= 8000))
+        && (!('componentStack' in data) || (data.componentStack is string && data.componentStack.size() <= 8000))
+        && (!('userUid' in data) || (data.userUid is string && data.userUid.size() <= 128))
+        && (!('userEmail' in data) || (data.userEmail is string && data.userEmail.size() <= 256));
+    }
+
+    // Boot-time connectivity check document (single fixed path, read-only)
+    match /test/connection {
+      allow get: if true;
+      allow list, write: if false;
+    }
+
+    // User-scoped persistent memory
+    match /memory/{memoryId} {
+      allow get: if isValidId(memoryId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(memoryId) && isSignedIn() && isValidMemoryRecord(incoming());
+      allow update: if isValidId(memoryId) && isSignedIn() && isValidMemoryRecord(incoming())
+        && existing().userId == request.auth.uid
+        && incoming().userId == existing().userId;
+      allow delete: if isValidId(memoryId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // Organizations (read for signed-in users, write for admins)
+    match /organizations/{orgId} {
+      allow get: if isValidId(orgId) && isSignedIn();
+      allow list: if isSignedIn();
+      allow create, update, delete: if isValidId(orgId) && isAdmin();
+    }
+
+    // Audit logs (append-only for authenticated users under their own UID, readable by owner or admin)
+    match /audit_logs/{logId} {
+      allow get: if isValidId(logId) && isSignedIn() && (isAdmin() || existing().userId == request.auth.uid);
+      allow list: if isSignedIn() && (isAdmin() || existing().userId == request.auth.uid);
+      allow create: if isValidId(logId) && isSignedIn()
+        && incoming().keys().hasAll(['action', 'userId'])
+        && incoming().action is string && incoming().action.size() <= 128
+        && incoming().userId is string && incoming().userId == request.auth.uid;
+      allow update, delete: if isValidId(logId) && isAdmin();
+    }
+
+    // Client UI error telemetry (write-only for clients, read/manage for admins)
+    match /ui_runtime_errors/{errorId} {
+      allow create: if isValidId(errorId) && isValidUiRuntimeError(incoming());
+      allow get, list, update, delete: if isAdmin();
+    }
+
+    // Chat messages (strictly user-scoped)
+    match /messages/{messageId} {
+      allow get: if isValidId(messageId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(messageId) && isSignedIn()
+        && incoming().keys().hasAll(['userId', 'role', 'content'])
+        && incoming().userId is string && incoming().userId == request.auth.uid
+        && incoming().role is string && incoming().role.size() <= 32
+        && incoming().content is string && incoming().content.size() <= 100000;
+      allow update: if isValidId(messageId) && isSignedIn()
+        && (existing().userId == request.auth.uid || isAdmin())
+        && incoming().userId == existing().userId;
+      allow delete: if isValidId(messageId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // User profiles and subcollections
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId) && (isOwner(userId) || isAdmin())
+        && isValidUserProfile(incoming())
+        && (isAdmin() || (!('role' in incoming()) || incoming().role == 'standard'))
+        && (isAdmin() || (!('isUnlimited' in incoming()) || incoming().isUnlimited == false));
+      allow update: if isValidId(userId) && isValidUserProfile(incoming()) && (
+        isAdmin() || (
+          isOwner(userId)
+          && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'roleTitle', 'bio', 'primaryModel', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(userId) && isAdmin();
+
+      match /agents/{agentId} {
+        allow get: if isValidId(userId) && isValidId(agentId) && (isOwner(userId) || isAdmin());
+        allow list: if isValidId(userId) && (isOwner(userId) || isAdmin());
+        allow create, update, delete: if isValidId(userId) && isValidId(agentId) && (isOwner(userId) || isAdmin());
+      }
+
+      match /apps/{appId} {
+        allow get: if isValidId(userId) && isValidId(appId) && (isOwner(userId) || isAdmin());
+        allow list: if isValidId(userId) && (isOwner(userId) || isAdmin());
+        allow create, update, delete: if isValidId(userId) && isValidId(appId) && (isOwner(userId) || isAdmin());
+      }
+    }
+
+    // Whitelists (users can check their own verified email doc; admins manage all)
+    match /whitelist/{email} {
+      allow get: if isValidEmailId(email) && (
+        isAdmin() ||
+        (isSignedIn() && request.auth.token.email != null && request.auth.token.email_verified == true && request.auth.token.email.lower() == email.lower())
+      );
+      allow list: if isAdmin();
+      allow create, update, delete: if isValidEmailId(email) && isAdmin();
+    }
+
+    match /admin_whitelist/{email} {
+      allow get: if isValidEmailId(email) && (
+        isAdmin() ||
+        (isSignedIn() && request.auth.token.email != null && request.auth.token.email_verified == true && request.auth.token.email.lower() == email.lower())
+      );
+      allow list: if isAdmin();
+      allow create, update, delete: if isValidEmailId(email) && isAdmin();
+    }
+
+    // Support chats (owner or admin)
+    match /support_chats/{chatId} {
+      allow get: if isValidId(chatId) && isSignedIn() && (chatId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(chatId) && isSignedIn() && (chatId == request.auth.uid || isAdmin())
+        && incoming().userId is string && incoming().userId == chatId;
+      allow update: if isValidId(chatId) && isSignedIn() && (chatId == request.auth.uid || isAdmin());
+      allow delete: if isValidId(chatId) && isAdmin();
+
+      match /messages/{messageId} {
+        allow get: if isValidId(chatId) && isValidId(messageId) && isSignedIn() && (chatId == request.auth.uid || isAdmin());
+        allow list: if isValidId(chatId) && isSignedIn() && (chatId == request.auth.uid || isAdmin());
+        allow create: if isValidId(chatId) && isValidId(messageId) && isSignedIn() && (chatId == request.auth.uid || isAdmin())
+          && incoming().keys().hasAll(['text', 'senderId', 'senderType'])
+          && incoming().text is string && incoming().text.size() <= 10000;
+        allow update, delete: if isValidId(chatId) && isValidId(messageId) && isAdmin();
+      }
+    }
+
+    // Global platform config (public read of global doc for branding/maintenance check; admin write)
+    match /config/global {
+      allow get: if true;
+      allow list: if false;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Pricing catalogs (public read; admin write)
+    match /pricing/{planId} {
+      allow get: if isValidId(planId);
+      allow list: if true;
+      allow create, update, delete: if isValidId(planId) && isAdmin();
+    }
+
+    match /pricing_plans/{planId} {
+      allow get: if isValidId(planId);
+      allow list: if true;
+      allow create, update, delete: if isValidId(planId) && isAdmin();
+    }
+
+    // Editor sessions (user-owned)
+    match /sessions/{sessionId} {
+      allow get: if isValidId(sessionId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(sessionId) && isSignedIn() && isValidSession(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if isValidId(sessionId) && isSignedIn() && isValidSession(incoming())
+        && (existing().userId == request.auth.uid || isAdmin())
+        && incoming().userId == existing().userId;
+      allow delete: if isValidId(sessionId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // Persistent Engineering Memory projects (owner-scoped)
+    match /projects/{projectId} {
+      allow get: if isValidId(projectId) && isSignedIn() && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || isAdmin());
+      allow create: if isValidId(projectId) && isSignedIn() && isValidProject(incoming()) && incoming().ownerId == request.auth.uid;
+      allow update: if isValidId(projectId) && isSignedIn() && isValidProject(incoming())
+        && (existing().ownerId == request.auth.uid || isAdmin())
+        && incoming().ownerId == existing().ownerId;
+      allow delete: if isValidId(projectId) && isSignedIn() && (existing().ownerId == request.auth.uid || isAdmin());
+
+      match /checkpoints/{checkpointId} {
+        allow get: if isValidId(projectId) && isValidId(checkpointId) && isSignedIn()
+          && (get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid || isAdmin());
+        allow list: if isValidId(projectId) && isSignedIn()
+          && (get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid || isAdmin());
+        allow create, update, delete: if isValidId(projectId) && isValidId(checkpointId) && isSignedIn()
+          && (get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid || isAdmin());
+      }
+
+      match /decisions/{decisionId} {
+        allow get: if isValidId(projectId) && isValidId(decisionId) && isSignedIn()
+          && (get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid || isAdmin());
+        allow list: if isValidId(projectId) && isSignedIn()
+          && (get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid || isAdmin());
+        allow create, update, delete: if isValidId(projectId) && isValidId(decisionId) && isSignedIn()
+          && (get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid || isAdmin());
+      }
+    }
+  }
+}

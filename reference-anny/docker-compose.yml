@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  anny:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ANNY_HARDWARE=true
+    devices:
+      - "/dev/video0:/dev/video0" # Camera access
+      - "/dev/snd:/dev/snd"       # Sound access
+    restart: always

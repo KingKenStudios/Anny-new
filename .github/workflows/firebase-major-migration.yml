@@ -1,0 +1,59 @@
+name: ANNY Firebase 13 Server Migration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/firebase-major-migration.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pin patched gRPC transport release
+        run: npm pkg set 'overrides.@grpc/grpc-js=^1.13.6' --prefix primary-anny/Anny
+      - name: Upgrade nested server Firebase SDK
+        run: npm install --prefix primary-anny/Anny firebase@13.4.0 --save --no-audit --no-fund
+      - name: Verify nested server lockfile install
+        run: npm ci --prefix primary-anny/Anny
+      - name: Install frontend dependencies
+        working-directory: primary-anny
+        run: bun install --frozen-lockfile
+      - name: Run service tests
+        working-directory: primary-anny
+        run: bun test Anny/src/services
+      - name: TypeScript validation
+        working-directory: primary-anny
+        run: bun run lint
+      - name: Production build
+        working-directory: primary-anny
+        run: bun run build
+      - name: Publish tested migration branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b security/firebase-13-nested-migration
+          git add primary-anny/Anny/package.json primary-anny/Anny/package-lock.json
+          if git diff --cached --quiet; then
+            echo "No dependency changes to publish."
+            exit 0
+          fi
+          git commit -m "chore(security): migrate nested server Firebase SDK to 13.4.0"
+          git push --force origin HEAD:refs/heads/security/firebase-13-nested-migration

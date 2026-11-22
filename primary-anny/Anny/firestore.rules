@@ -1,0 +1,127 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function owner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function admin() {
+      return signedIn() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+        (request.auth.token.email != null && exists(/databases/$(database)/documents/admin_whitelist/$(request.auth.token.email.lower())))
+      );
+    }
+
+    match /audit_logs/{logId} {
+      allow create: if signedIn() && (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid);
+      allow read, update, delete: if admin();
+    }
+
+    match /ui_runtime_errors/{errorId} {
+      allow create: if signedIn() && (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid);
+      allow read, update, delete: if admin();
+    }
+
+    match /messages/{messageId} {
+      allow read, write: if signedIn() && (
+        (resource == null || resource.data.userId == request.auth.uid) &&
+        (request.resource == null || request.resource.data.userId == request.auth.uid)
+      );
+    }
+
+    match /user_profiles/{profileId} {
+      allow read, write: if owner(profileId) || admin();
+    }
+
+    match /users/{userId} {
+      allow read: if owner(userId) || admin();
+      allow create: if owner(userId) && (!('role' in request.resource.data) || request.resource.data.role == 'user');
+      allow update: if admin() || (owner(userId) && (!('role' in request.resource.data) || request.resource.data.role == resource.data.role));
+      allow delete: if admin();
+      match /{subcollection=**} {
+        allow read, write: if owner(userId) || admin();
+      }
+    }
+
+    match /whitelist/{email} {
+      allow get: if admin() || (signedIn() && request.auth.token.email != null && request.auth.token.email.lower() == email.lower());
+      allow list: if admin();
+      allow write: if admin();
+    }
+
+    match /admin_whitelist/{email} {
+      allow get: if admin() || (signedIn() && request.auth.token.email != null && request.auth.token.email.lower() == email.lower());
+      allow list: if admin();
+      allow write: if admin();
+    }
+
+    match /support_chats/{chatId} {
+      allow read, write: if signedIn() && (chatId == request.auth.uid || admin());
+      match /messages/{msgId} {
+        allow read, write: if signedIn() && (chatId == request.auth.uid || admin());
+      }
+    }
+
+    match /config/{configId} {
+      allow read: if true;
+      allow write: if admin();
+    }
+
+    match /sessions/{sessionId} {
+      allow read, write: if signedIn() && (
+        (resource == null || resource.data.userId == request.auth.uid) &&
+        (request.resource == null || request.resource.data.userId == request.auth.uid)
+      );
+    }
+
+    match /editor_projects/{projectId} {
+      allow read, write: if signedIn() && (
+        (resource == null || resource.data.userId == request.auth.uid) &&
+        (request.resource == null || request.resource.data.userId == request.auth.uid)
+      );
+    }
+
+    match /memory/{docId} {
+      allow read, write: if signedIn() && (
+        (resource == null || resource.data.userId == request.auth.uid) &&
+        (request.resource == null || request.resource.data.userId == request.auth.uid)
+      );
+    }
+
+    match /projects/{projectId} {
+      allow read, write: if signedIn() && (
+        (resource == null || resource.data.userId == request.auth.uid) &&
+        (request.resource == null || request.resource.data.userId == request.auth.uid)
+      );
+      match /{subcollection=**} {
+        allow read, write: if signedIn() && (
+          (resource == null || resource.data.userId == request.auth.uid) &&
+          (request.resource == null || request.resource.data.userId == request.auth.uid)
+        );
+      }
+    }
+
+    match /pricing/{planId} {
+      allow read: if true;
+      allow write: if admin();
+    }
+
+    match /pricing_plans/{planId} {
+      allow read: if true;
+      allow write: if admin();
+    }
+
+    match /test/{testId} {
+      allow read, write: if admin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

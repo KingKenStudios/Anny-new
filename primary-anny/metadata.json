@@ -1,0 +1,8 @@
+{
+  "name": "the one Anny",
+  "description": "An application named Anny.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

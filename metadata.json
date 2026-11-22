@@ -1,0 +1,11 @@
+{
+  "name": "ANNY — Intelligence by Akinwumi Group",
+  "description": "One AI. One Brain. Unlimited Applications. Offline-first, provider-independent AI Operating System and Engineering Platform.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

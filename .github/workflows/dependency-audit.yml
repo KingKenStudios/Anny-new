@@ -1,0 +1,43 @@
+name: ANNY Dependency Security Audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/dependency-audit.yml"
+  push:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/dependency-audit.yml"
+  schedule:
+    - cron: "41 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Clean install root workspace dependencies
+        run: npm ci
+      - name: Capture production dependency audit
+        run: npm audit --omit=dev --json > npm-audit.json || true
+      - name: Upload dependency audit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: anny-dependency-audit-reports
+          path: npm-audit.json
+          if-no-files-found: warn
+          retention-days: 30

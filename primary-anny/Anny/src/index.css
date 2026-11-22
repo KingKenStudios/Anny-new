@@ -1,0 +1,296 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --animate-spin-slow: spin 8s linear infinite;
+  --shadow-3xl: 0 35px 60px -15px rgba(0, 0, 0, 0.3);
+  --scale-25: 0.25;
+  --scale-30: 0.30;
+}
+
+@layer base {
+  * {
+    @apply border-white/5;
+  }
+}
+
+@layer utilities {
+  .custom-scrollbar-fancy::-webkit-scrollbar,
+  .custom-scrollbar::-webkit-scrollbar,
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scrollbar-fancy::-webkit-scrollbar-track,
+  .custom-scrollbar::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar-fancy::-webkit-scrollbar-thumb,
+  .custom-scrollbar::-webkit-scrollbar-thumb,
+  ::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 10px;
+    transition: background-color 0.3s ease, box-shadow 0.3s ease;
+  }
+  *:hover::-webkit-scrollbar-thumb,
+  .custom-scrollbar-fancy:hover::-webkit-scrollbar-thumb,
+  .custom-scrollbar:hover::-webkit-scrollbar-thumb {
+    background: rgba(6, 182, 212, 0.4);
+  }
+  *:hover::-webkit-scrollbar-thumb:hover,
+  .custom-scrollbar-fancy::-webkit-scrollbar-thumb:hover,
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover,
+  ::-webkit-scrollbar-thumb:hover {
+    background: #00e5ff;
+    box-shadow: 0 0 10px #00e5ff, 0 0 15px #00e5ff;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* AlienTech Auth Styles */
+.alientech-auth-wrapper {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background: #1f293a !important;
+    width: 100vw;
+    height: 100vh;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    z-index: 99999 !important;
+    font-family: 'Poppins', sans-serif;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 1rem;
+}
+
+.alientech-container {
+    position: relative;
+    width: 200px;
+    height: 200px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 4vh auto;
+    flex-shrink: 0;
+}
+
+.alientech-container span {
+    position: absolute;
+    left: 0;
+    width: 32px;
+    height: 6px;
+    background: #2c4766;
+    border-radius: 8px;
+    transform-origin: 128px;
+    transform: scale(2.2) rotate(calc(var(--i) * (360deg / 50)));
+    animation: animateBlink 3s linear infinite;
+    animation-delay: calc(var(--i) * (3s / 50));
+}
+
+@keyframes animateBlink {
+    0% {
+        background: #0ef;
+    }
+
+    25% {
+        background: #2c4766;
+    }
+}
+
+.alientech-login-box {
+    position: absolute;
+    width: 420px;
+    max-width: 92vw;
+    z-index: 10;
+}
+
+.alientech-login-box form {
+    width: 100%;
+    padding: 0 30px;
+}
+
+.alientech-login-box h2 {
+    font-size: 2em;
+    color: #0ef;
+    text-align: center;
+    margin-bottom: 15px;
+}
+
+.alientech-input-box {
+    position: relative;
+    margin: 20px 0;
+}
+
+.alientech-input-box input {
+    width: 100%;
+    height: 50px;
+    background: transparent;
+    border: 2px solid #2c4766;
+    outline: none;
+    border-radius: 40px;
+    font-size: 1em;
+    color: #fff;
+    padding: 0 20px;
+    transition: .5s ease;
+}
+
+.alientech-input-box input:focus,
+.alientech-input-box input:valid,
+.alientech-input-box input:not(:placeholder-shown) {
+    border-color: #0ef;
+}
+
+.alientech-input-box label {
+    position: absolute;
+    top: 50%;
+    left: 20px;
+    transform: translateY(-50%);
+    font-size: 1em;
+    color: #fff;
+    pointer-events: none;
+    transition: .5s ease;
+}
+
+.alientech-input-box input:focus~label,
+.alientech-input-box input:valid~label,
+.alientech-input-box input:not(:placeholder-shown)~label {
+    top: 1px;
+    font-size: .8em;
+    background: #1f293a;
+    padding: 0 6px;
+    color: #0ef;
+}
+
+.alientech-forgot-pass {
+    margin: -10px 0 15px;
+    text-align: center;
+}
+
+.alientech-forgot-pass a {
+    font-size: .85em;
+    color: #fff;
+    text-decoration: none;
+}
+
+.alientech-forgot-pass a:hover {
+    text-decoration: underline;
+}
+
+.alientech-btn {
+    width: 100%;
+    height: 45px;
+    background: #0ef;
+    border: none;
+    outline: none;
+    border-radius: 40px;
+    cursor: pointer;
+    font-size: 1em;
+    color: #1f293a;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.alientech-btn:hover {
+    background: #00c8db;
+    box-shadow: 0 0 15px #0ef;
+}
+
+.alientech-signup-link {
+    margin: 15px 0 5px;
+    text-align: center;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+}
+
+.alientech-signup-link a, .alientech-signup-link button {
+    font-size: 1em;
+    color: #0ef;
+    text-decoration: none;
+    font-weight: 600;
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+.alientech-signup-link a:hover, .alientech-signup-link button:hover {
+    text-decoration: underline;
+}
+
+/* ANNY Frontend Animations & Utilities */
+@keyframes aiosColorShift {
+  0% { background-position: 0% center; }
+  100% { background-position: 200% center; }
+}
+
+@keyframes ringRotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes spinCounterClockwise {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+
+.animate-aios-shift {
+  background: linear-gradient(120deg, #00d2ff 0%, #00ff88 25%, #7b2ff7 50%, #f050d8 75%, #00d2ff 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: aiosColorShift 3.5s linear infinite;
+  filter: drop-shadow(0 0 10px rgba(0, 210, 255, 0.5));
+  display: inline-block;
+  padding-bottom: 0.15em;
+  line-height: 1.25;
+  overflow: visible;
+}
+
+.animate-ring-rotate {
+  animation: ringRotate 30s linear infinite;
+  filter: drop-shadow(0 0 8px rgba(0, 210, 255, 0.5));
+}
+
+.animate-spin-reverse-slow {
+  animation: spinCounterClockwise 90s linear infinite;
+}
+
+.perspective-1000 {
+  perspective: 1000px;
+  -webkit-perspective: 1000px;
+}
+
+.preserve-3d {
+  transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.backface-hidden {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.rotate-y-0 {
+  transform: rotateY(0deg);
+}
+
+.rotate-y-180 {
+  transform: rotateY(180deg);
+}
+

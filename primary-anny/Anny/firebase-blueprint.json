@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "MemoryRecord": {
+      "title": "Memory Record",
+      "description": "A persistent memory entry for ANNY",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "category": { "type": "string", "enum": ["working", "session", "project", "long_term", "fact", "preference", "negative", "decision", "experience", "failure", "success", "procedural", "environment"] },
+        "key": { "type": "string" },
+        "value": { "type": "object" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "category", "key", "value", "timestamp"]
+    },
+    "DeepOrganizationProfile": {
+      "title": "Deep Organization Profile",
+      "description": "Canonical identity and configuration for a sovereign organization",
+      "type": "object",
+      "properties": {
+        "orgId": { "type": "string" },
+        "name": { "type": "string" },
+        "mission": { "type": "string" },
+        "vision": { "type": "string" },
+        "values": { "type": "array" },
+        "branding": { "type": "object" },
+        "operationalResponsibilities": { "type": "array" },
+        "productionStackActive": { "type": "boolean" },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orgId", "name"]
+    }
+  },
+  "firestore": {
+    "/memory": {
+      "schema": "MemoryRecord",
+      "description": "Universal persistent memory for ANNY"
+    },
+    "/organizations": {
+      "schema": "DeepOrganizationProfile",
+      "description": "Sovereign organization profiles"
+    }
+  }
+}

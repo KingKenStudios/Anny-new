@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+primary-anny/node_modules/
+primary-anny/Anny/node_modules/
+
+# Build outputs
+dist/
+build/
+primary-anny/dist/
+primary-anny/Anny/dist/
+primary-anny/Anny/build/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# AI Studio / local workspace artifacts
+.aistudio/
+public/assets/aistudio/
+
+# Logs, backups & temporary files
+*.log
+*.bak
+npm-debug.log*
+.DS_Store
+Thumbs.db
+coverage/
+results/
+*.tsbuildinfo
+npm-audit*.json
+bun-audit*.json
+
+# Python / local runtime caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
