@@ -41,6 +41,27 @@ function extractAspectRatio(prompt: string, domain: 'IMAGE' | 'VIDEO' | 'APPLICA
   return '1:1';
 }
 
+export function extractRequestedImageCount(prompt: string): number {
+  const lower = prompt.toLowerCase();
+  const numericMatch = lower.match(
+    /\b([1-6])\s+(?:different\s+|distinct\s+|unique\s+|high[- ]resolution\s+|hd\s+|modern\s+|realistic\s+|creative\s+)?(?:images?|pictures?|photos?|photographs?|variations?|options?|concepts?|versions?|logos?|designs?|renders?|artworks?|illustrations?|posters?|wallpapers?)\b/
+  );
+  if (numericMatch?.[1]) {
+    return Math.min(4, Math.max(1, Number(numericMatch[1])));
+  }
+  const wordMap: Record<string, number> = { two: 2, three: 3, four: 4 };
+  const wordMatch = lower.match(
+    /\b(two|three|four)\s+(?:different\s+|distinct\s+|unique\s+|modern\s+|realistic\s+)?(?:images?|pictures?|photos?|photographs?|variations?|options?|concepts?|versions?|logos?|designs?|renders?|artworks?|illustrations?)\b/
+  );
+  if (wordMatch?.[1] && wordMap[wordMatch[1]]) {
+    return wordMap[wordMatch[1]];
+  }
+  if (/\b(multiple|several|a few|gallery of|set of|batch of)\s+(?:images?|pictures?|photos?|variations?|options?|concepts?)\b/.test(lower)) {
+    return 4;
+  }
+  return 1;
+}
+
 /**
  * Extracts clean brand / company / artist name from logo & branding prompts
  * without destroying the user's intent.
@@ -146,7 +167,27 @@ function detectConversationalRevision(
   prompt: string,
   activeContext?: ActiveArtifactContext
 ): { isRevision: boolean; domain?: CreativeIntentClassification['domain']; category?: CreativeIntentClassification['category']; reason?: string } {
-  if (!activeContext?.domain) return { isRevision: false };
+  const ctxAny = activeContext as (ActiveArtifactContext & { artifactType?: string }) | undefined;
+  const effectiveDomain: CreativeIntentClassification['domain'] | undefined =
+    ctxAny?.domain ||
+    (ctxAny?.selectedImageUrl ||
+    ctxAny?.logoPlan ||
+    (ctxAny?.artifactType && /(image|logo|brand|photo)/i.test(ctxAny.artifactType))
+      ? 'IMAGE'
+      : ctxAny?.videoInteractionId
+        ? 'VIDEO'
+        : ctxAny?.hasVfsProject
+          ? 'APPLICATION'
+          : undefined);
+  const effectiveCategory =
+    ctxAny?.category ||
+    (ctxAny?.logoPlan || (ctxAny?.artifactType && /logo/i.test(ctxAny.artifactType))
+      ? 'LOGO_DESIGN'
+      : effectiveDomain === 'IMAGE'
+        ? 'IMAGE_EDIT'
+        : undefined);
+
+  if (!effectiveDomain) return { isRevision: false };
 
   const lower = prompt.toLowerCase().trim();
 
@@ -157,19 +198,43 @@ function detectConversationalRevision(
 
   // Logo / Image iterative edits
   const logoRefinementPattern =
-    /\b(make (?:the |this )?(?:logo|icon|mark|emblem|it)|change (?:the |this )?(?:logo|it|colors?|palette|font|background)|more minimal|simpler|cleaner|bolder|gold and black|dark background|light background|add a crown|remove the crown|use a monogram|circular emblem|wordmark)\b/i;
+    /\b(make (?:the |this )?(?:logo|icon|mark|emblem|it)|change (?:the |this )?(?:logo|it|colors?|palette|font|background)|more minimal|simpler|cleaner|bolder|gold and black|dark background|light background|add a crown|remove the crown|use a monogram|circular emblem|wordmark|emerald|silver|minimalist geometric)\b/i;
 
   if (
-    activeContext.domain === 'IMAGE' &&
-    (activeContext.category === 'LOGO_DESIGN' || activeContext.category === 'BRAND_IDENTITY' || activeContext.category === 'ICON') &&
+    effectiveDomain === 'IMAGE' &&
+    (effectiveCategory === 'LOGO_DESIGN' || effectiveCategory === 'BRAND_IDENTITY' || effectiveCategory === 'ICON') &&
     logoRefinementPattern.test(lower) &&
     !/\b(video|animate|website|web app|store|dashboard|song|music)\b/i.test(lower)
   ) {
     return {
       isRevision: true,
       domain: 'IMAGE',
-      category: activeContext.category,
+      category: effectiveCategory,
       reason: 'Iterative conversational revision on active logo/brand artifact.',
+    };
+  }
+
+  // General raster image follow-up edits ("Make this image more realistic", "Change the background...", "Make the colors warmer")
+  const imageEditRefinementPattern =
+    /\b(make (?:this|the) (?:image|picture|photo|it)|change (?:the )?(?:background|lighting|colors?|palette|style|mood|sky|outfit|setting|angle|composition)|remove (?:this|the) (?:object|background|person|text|watermark)|replace (?:the )?|more realistic|photorealistic|warmer|cooler|brighter|darker|landscape|portrait|vertical|widescreen|another variation|create a variation|keep (?:the )?(?:composition|subject|person|face|layout)|improve (?:the )?(?:lighting|details|quality|sharpness)|upscale|enhance)\b/i;
+
+  if (
+    effectiveDomain === 'IMAGE' &&
+    imageEditRefinementPattern.test(lower) &&
+    !/\b(video|animate|website|web app|store|dashboard|song|music)\b/i.test(lower)
+  ) {
+    const editCategory: ImageIntentCategory = /\b(remove (?:the )?background|transparent background)\b/i.test(lower)
+      ? 'BACKGROUND_REMOVAL'
+      : /\b(variation|another variation|alternate version)\b/i.test(lower)
+        ? 'IMAGE_VARIATION'
+        : /\b(upscale|enhance resolution|sharpen)\b/i.test(lower)
+          ? 'UPSCALING_ENHANCEMENT'
+          : 'IMAGE_EDIT';
+    return {
+      isRevision: true,
+      domain: 'IMAGE',
+      category: editCategory,
+      reason: 'Conversational non-destructive edit on active/selected image.',
     };
   }
 
@@ -177,7 +242,7 @@ function detectConversationalRevision(
   const videoRefinementPattern =
     /\b(scene\s+(?:\d+|one|two|three|four|five)|shot\s+\d+|extend (?:the |this )?video|make (?:the |this )?(?:video|intro|clip|motion|camera|pacing)|change (?:scene|lighting|camera|shot|it to nighttime|the ending)|add (?:narration|voiceover|captions|transitions))\b/i;
 
-  if (activeContext.domain === 'VIDEO' && videoRefinementPattern.test(lower)) {
+  if (effectiveDomain === 'VIDEO' && videoRefinementPattern.test(lower)) {
     return {
       isRevision: true,
       domain: 'VIDEO',
@@ -190,11 +255,11 @@ function detectConversationalRevision(
   const appRefinementPattern =
     /\b(homepage|navigation menu|navbar|sidebar|footer|checkout|cart|hero section|dark mode|light mode|mobile menu|responsive|database|api route|login page|dashboard tab|add a page|make the (?:site|website|app|homepage|ui|layout))\b/i;
 
-  if ((activeContext.domain === 'APPLICATION' || activeContext.hasVfsProject) && appRefinementPattern.test(lower)) {
+  if ((effectiveDomain === 'APPLICATION' || ctxAny?.hasVfsProject) && appRefinementPattern.test(lower)) {
     return {
       isRevision: true,
       domain: 'APPLICATION',
-      category: (activeContext.category as ApplicationIntentCategory) || 'WEBSITE_GENERATION',
+      category: (effectiveCategory as ApplicationIntentCategory) || 'WEBSITE_GENERATION',
       reason: 'Iterative conversational revision on active generated application/website.',
     };
   }
@@ -388,10 +453,10 @@ function classifyImageCategory(lower: string, imageAttached: boolean): ImageInte
     return 'PHOTOREALISTIC_SCENE';
   }
 
-  // Explicit general visual creation command
+  // Explicit general visual creation command (supports singular & plural: "generate 4 images of...")
   if (
-    /\b(generate|draw|create|make|render|produce|design|paint|sketch|visualize)\b/i.test(lower) &&
-    /\b(image|picture|photo|graphic|art|visual|scene|throne|castle|car|landscape)\b/i.test(lower)
+    /\b(generate|draw|create|make|render|produce|design|paint|sketch|visualize|show me)\b/i.test(lower) &&
+    /\b(images?|pictures?|photos?|photographs?|graphics?|artworks?|art|visuals?|scenes?|wallpapers?|illustrations?|renders?|concepts?|throne|castle|car|landscape)\b/i.test(lower)
   ) {
     return 'PHOTOREALISTIC_SCENE';
   }
@@ -441,8 +506,15 @@ export function classifyCreativeIntent(
       revisionInstruction: preservedOriginalPrompt,
       extractedBrandName: brandName,
       extractedMonogram: brandName ? deriveMonogram(brandName) : activeContext?.logoPlan?.monogram,
+      requestedImageCount: revision.domain === 'IMAGE' ? extractRequestedImageCount(preservedOriginalPrompt) : undefined,
       aspectRatio: extractAspectRatio(preservedOriginalPrompt, revision.domain === 'VIDEO' ? 'VIDEO' : revision.domain === 'APPLICATION' ? 'APPLICATION' : 'IMAGE'),
-      requiresReferenceImage: revision.category === 'IMAGE_EDIT' || revision.category === 'IMAGE_TO_VIDEO',
+      requiresReferenceImage:
+        (revision.category === 'IMAGE_EDIT' ||
+          revision.category === 'IMAGE_VARIATION' ||
+          revision.category === 'BACKGROUND_REMOVAL' ||
+          revision.category === 'UPSCALING_ENHANCEMENT' ||
+          revision.category === 'IMAGE_TO_VIDEO') &&
+        !activeContext?.selectedImageUrl,
       requiresReferenceVideo: revision.category === 'VIDEO_EDITING' && !activeContext?.videoInteractionId,
       reasoning: revision.reason || 'Conversational refinement on active artifact.',
       preservedOriginalPrompt,
@@ -517,6 +589,7 @@ export function classifyCreativeIntent(
       isRevision: false,
       extractedBrandName: brandName,
       extractedMonogram: brandName ? deriveMonogram(brandName) : undefined,
+      requestedImageCount: extractRequestedImageCount(preservedOriginalPrompt),
       aspectRatio: extractAspectRatio(preservedOriginalPrompt, 'IMAGE'),
       requiresReferenceImage:
         imageCategory === 'IMAGE_EDIT' ||

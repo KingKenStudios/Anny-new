@@ -51,6 +51,7 @@ export interface ChatOptions {
   functions?: FunctionDefinition[];
   taskCategory?: string;
   preserveStructured?: boolean;
+  responseMimeType?: string;
   offlineOnly?: boolean;
   disableCloudFallback?: boolean;
   webSearch?: boolean;
@@ -285,8 +286,16 @@ export class AIProviderPlatform {
   public async chat(messages: ChatMessage[], options: ChatOptions = {}, preferredProvider?: AIProviderId): Promise<ChatResponse> {
     const overallStartTime = Date.now();
     const config = envConfigService.getConfig();
-    const baseSystemPrompt = options.systemPrompt || 'You are ANNY, the Enterprise AI Operating System.';
-    const sysPrompt = `${baseSystemPrompt}\n\n${UNIVERSAL_ANNY_CONVERSATION_POLICY}`;
+    const inlineSystemPrompts = messages
+      .filter(m => m.role === 'system')
+      .map(m => (typeof m.content === 'string' ? m.content : m.content.map(p => p.text || '').join('\n')))
+      .filter(s => s.trim().length > 0);
+    const nonSystemMessages = messages.filter(m => m.role !== 'system');
+    const baseSystemPrompt = [options.systemPrompt, ...inlineSystemPrompts].filter(Boolean).join('\n\n') || 'You are ANNY, the Enterprise AI Operating System.';
+    const sysPrompt = options.preserveStructured
+      ? baseSystemPrompt
+      : `${baseSystemPrompt}\n\n${UNIVERSAL_ANNY_CONVERSATION_POLICY}`;
+    const effectiveMessages = nonSystemMessages.length > 0 ? nonSystemMessages : messages;
     const strictOffline = Boolean(options.offlineOnly);
     const blockCloudFallback = Boolean(options.offlineOnly || options.disableCloudFallback);
 
@@ -319,8 +328,8 @@ export class AIProviderPlatform {
             const primaryModelName = normalizeGeminiModel(options.model);
             const orderedCandidates = orderGeminiCandidates([primaryModelName, 'gemini-4-hydrogen', 'gemini-3.1-flash-lite']);
             
-            // Convert to Gemini format
-            const contents = messages.map(m => {
+            // Convert non-system messages to Gemini format
+            const contents = effectiveMessages.map(m => {
               const role = m.role === 'assistant' || m.role === 'model' ? 'model' : 'user';
               if (Array.isArray(m.content)) {
                 return { role, parts: m.content.map(p => {
@@ -352,6 +361,8 @@ export class AIProviderPlatform {
                   const genConfig: Record<string, any> = { systemInstruction: sysPrompt };
                   if (options.webSearch && !strictOffline && !blockCloudFallback) {
                     genConfig.tools = [{ googleSearch: {} }];
+                  } else if (options.responseMimeType) {
+                    genConfig.responseMimeType = options.responseMimeType;
                   }
                   const res = await genAI.models.generateContent({
                     model: modelName,
@@ -360,13 +371,24 @@ export class AIProviderPlatform {
                   });
 
                   geminiModelCooldownMap.delete(modelName);
-                  const content = res.text || 'Response generated successfully.';
-                  const rawChunks = res.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+                  const firstCandidate = res.candidates?.[0];
+                  const candidateParts = firstCandidate?.content?.parts || [];
+                  const extractedFunctionCall = candidateParts.find((p: any) => p?.functionCall)?.functionCall;
+                  let rawText = typeof res.text === 'string' ? res.text : '';
+                  if (!rawText && candidateParts.length > 0) {
+                    rawText = candidateParts.map((p: any) => (typeof p?.text === 'string' ? p.text : '')).filter(Boolean).join('\n');
+                  }
+                  if (!rawText.trim() && !extractedFunctionCall) {
+                    const finishReason = firstCandidate?.finishReason || 'EMPTY';
+                    throw new Error(`PROVIDER_EMPTY_RESPONSE: Gemini model ${modelName} returned no content (finishReason=${finishReason}).`);
+                  }
+                  const content = rawText;
+                  const rawChunks = firstCandidate?.groundingMetadata?.groundingChunks || [];
                   const groundingSources = rawChunks
                     .map((chunk: any) => chunk?.web ? { title: String(chunk.web.title || chunk.web.uri || 'Web Source'), url: String(chunk.web.uri || '') } : null)
                     .filter((s: any): s is { title: string; url: string } => Boolean(s && s.url));
                   const latencyMs = Date.now() - startTime;
-                  const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(messages), content, modelName);
+                  const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(effectiveMessages), content, modelName);
 
                   return {
                     content: options.preserveStructured ? content : formatNaturalConversation(content),
@@ -375,6 +397,14 @@ export class AIProviderPlatform {
                     tokensUsed: tokens,
                     estimatedCostUsd: costUsd,
                     latencyMs,
+                    ...(extractedFunctionCall?.name ? {
+                      functionCall: {
+                        name: String(extractedFunctionCall.name),
+                        arguments: (extractedFunctionCall.args && typeof extractedFunctionCall.args === 'object')
+                          ? extractedFunctionCall.args as Record<string, any>
+                          : {}
+                      }
+                    } : {}),
                     ...(groundingSources.length > 0 ? { groundingSources } : {})
                   };
                 } catch (gErr: any) {
@@ -443,7 +473,7 @@ export class AIProviderPlatform {
 
           const apiMessages = [
             { role: 'system', content: sysPrompt },
-            ...messages.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }))
+            ...effectiveMessages.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }))
           ];
 
           const response = await axios.post(
@@ -451,7 +481,8 @@ export class AIProviderPlatform {
             {
               model: modelName,
               messages: apiMessages,
-              temperature: options.temperature ?? 0.7
+              temperature: options.temperature ?? 0.7,
+              ...(options.responseMimeType === 'application/json' ? { response_format: { type: 'json_object' } } : {})
             },
             {
               headers: { Authorization: `Bearer ${config.groqApiKey}` },
@@ -461,10 +492,10 @@ export class AIProviderPlatform {
 
           const content = response.data.choices[0]?.message?.content || '';
           const latencyMs = Date.now() - startTime;
-          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(messages), content, modelName);
+          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(effectiveMessages), content, modelName);
 
           return {
-            content: formatNaturalConversation(content),
+            content: options.preserveStructured ? content : formatNaturalConversation(content),
             provider: 'groq',
             model: modelName,
             tokensUsed: tokens,
@@ -479,8 +510,12 @@ export class AIProviderPlatform {
             'https://api.deepseek.com/v1/chat/completions',
             {
               model: modelName,
-              messages: messages.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content })),
-              temperature: options.temperature ?? 0.7
+              messages: [
+                { role: 'system', content: sysPrompt },
+                ...effectiveMessages.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }))
+              ],
+              temperature: options.temperature ?? 0.7,
+              ...(options.responseMimeType === 'application/json' ? { response_format: { type: 'json_object' } } : {})
             },
             {
               headers: { Authorization: `Bearer ${config.deepseekApiKey}` },
@@ -490,10 +525,10 @@ export class AIProviderPlatform {
 
           const content = response.data.choices[0]?.message?.content || '';
           const latencyMs = Date.now() - startTime;
-          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(messages), content, modelName);
+          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(effectiveMessages), content, modelName);
 
           return {
-            content: formatNaturalConversation(content),
+            content: options.preserveStructured ? content : formatNaturalConversation(content),
             provider: 'deepseek',
             model: modelName,
             tokensUsed: tokens,
@@ -504,15 +539,14 @@ export class AIProviderPlatform {
 
         if (provider === 'anthropic' && config.anthropicApiKey) {
           const modelName = options.model || 'claude-sonnet-5';
-          const anthropicMessages = messages
-            .filter(m => m.role !== 'system')
+          const anthropicMessages = effectiveMessages
             .map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }));
 
           const response = await axios.post(
             'https://api.anthropic.com/v1/messages',
             {
               model: modelName,
-              max_tokens: options.maxTokens || 4096,
+              max_tokens: options.maxTokens || 8192,
               system: sysPrompt,
               messages: anthropicMessages,
               temperature: options.temperature ?? 0.7
@@ -529,13 +563,13 @@ export class AIProviderPlatform {
 
           const content = response.data.content?.map((b: any) => b.text || '').join('') || '';
           const latencyMs = Date.now() - startTime;
-          const anthropicPromptTokens = response.data.usage?.input_tokens ?? Math.ceil(JSON.stringify(messages).length / 4);
+          const anthropicPromptTokens = response.data.usage?.input_tokens ?? Math.ceil(JSON.stringify(effectiveMessages).length / 4);
           const anthropicCompletionTokens = response.data.usage?.output_tokens ?? Math.ceil(content.length / 4);
           const rates = PROVIDER_COSTS[modelName] || [0.20, 0.50];
           const anthropicCostUsd = Number((((anthropicPromptTokens * rates[0]) + (anthropicCompletionTokens * rates[1])) / 1000000).toFixed(6));
 
           return {
-            content: formatNaturalConversation(content),
+            content: options.preserveStructured ? content : formatNaturalConversation(content),
             provider: 'anthropic',
             model: modelName,
             tokensUsed: { prompt: anthropicPromptTokens, completion: anthropicCompletionTokens, total: anthropicPromptTokens + anthropicCompletionTokens },
@@ -548,7 +582,7 @@ export class AIProviderPlatform {
           const modelName = options.model || 'anthropic/claude-3.5-sonnet';
           const apiMessages = [
             { role: 'system', content: sysPrompt },
-            ...messages.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }))
+            ...effectiveMessages.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }))
           ];
 
           const response = await axios.post(
@@ -559,9 +593,9 @@ export class AIProviderPlatform {
 
           const content = response.data.choices[0]?.message?.content || '';
           const latencyMs = Date.now() - startTime;
-          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(messages), content, modelName);
+          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(effectiveMessages), content, modelName);
 
-          return { content: formatNaturalConversation(content), provider: 'openrouter', model: modelName, tokensUsed: tokens, estimatedCostUsd: costUsd, latencyMs };
+          return { content: options.preserveStructured ? content : formatNaturalConversation(content), provider: 'openrouter', model: modelName, tokensUsed: tokens, estimatedCostUsd: costUsd, latencyMs };
         }
 
         if (provider === 'xai' && config.xaiApiKey) {
@@ -572,7 +606,7 @@ export class AIProviderPlatform {
               model: modelName,
               messages: [
                 { role: 'system', content: sysPrompt },
-                ...messages.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }))
+                ...effectiveMessages.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }))
               ],
               temperature: options.temperature ?? 0.7
             },
@@ -580,8 +614,8 @@ export class AIProviderPlatform {
           );
           const content = response.data.choices[0]?.message?.content || '';
           const latencyMs = Date.now() - startTime;
-          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(messages), content, modelName);
-          return { content: formatNaturalConversation(content), provider: 'xai', model: modelName, tokensUsed: tokens, estimatedCostUsd: costUsd, latencyMs };
+          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(effectiveMessages), content, modelName);
+          return { content: options.preserveStructured ? content : formatNaturalConversation(content), provider: 'xai', model: modelName, tokensUsed: tokens, estimatedCostUsd: costUsd, latencyMs };
         }
 
         if (provider === 'mistral' && config.mistralApiKey) {
@@ -592,7 +626,7 @@ export class AIProviderPlatform {
               model: modelName,
               messages: [
                 { role: 'system', content: sysPrompt },
-                ...messages.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }))
+                ...effectiveMessages.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }))
               ],
               temperature: options.temperature ?? 0.7
             },
@@ -600,8 +634,8 @@ export class AIProviderPlatform {
           );
           const content = response.data.choices[0]?.message?.content || '';
           const latencyMs = Date.now() - startTime;
-          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(messages), content, modelName);
-          return { content: formatNaturalConversation(content), provider: 'mistral', model: modelName, tokensUsed: tokens, estimatedCostUsd: costUsd, latencyMs };
+          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(effectiveMessages), content, modelName);
+          return { content: options.preserveStructured ? content : formatNaturalConversation(content), provider: 'mistral', model: modelName, tokensUsed: tokens, estimatedCostUsd: costUsd, latencyMs };
         }
 
         if (provider === 'together' && config.togetherApiKey) {
@@ -612,7 +646,7 @@ export class AIProviderPlatform {
               model: modelName,
               messages: [
                 { role: 'system', content: sysPrompt },
-                ...messages.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }))
+                ...effectiveMessages.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }))
               ],
               temperature: options.temperature ?? 0.7
             },
@@ -620,8 +654,8 @@ export class AIProviderPlatform {
           );
           const content = response.data.choices[0]?.message?.content || '';
           const latencyMs = Date.now() - startTime;
-          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(messages), content, modelName);
-          return { content: formatNaturalConversation(content), provider: 'together', model: modelName, tokensUsed: tokens, estimatedCostUsd: costUsd, latencyMs };
+          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(effectiveMessages), content, modelName);
+          return { content: options.preserveStructured ? content : formatNaturalConversation(content), provider: 'together', model: modelName, tokensUsed: tokens, estimatedCostUsd: costUsd, latencyMs };
         }
 
         if (provider === 'fireworks' && config.fireworksApiKey) {
@@ -632,7 +666,7 @@ export class AIProviderPlatform {
               model: modelName,
               messages: [
                 { role: 'system', content: sysPrompt },
-                ...messages.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }))
+                ...effectiveMessages.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }))
               ],
               temperature: options.temperature ?? 0.7
             },
@@ -640,15 +674,15 @@ export class AIProviderPlatform {
           );
           const content = response.data.choices[0]?.message?.content || '';
           const latencyMs = Date.now() - startTime;
-          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(messages), content, modelName);
-          return { content: formatNaturalConversation(content), provider: 'fireworks', model: modelName, tokensUsed: tokens, estimatedCostUsd: costUsd, latencyMs };
+          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(effectiveMessages), content, modelName);
+          return { content: options.preserveStructured ? content : formatNaturalConversation(content), provider: 'fireworks', model: modelName, tokensUsed: tokens, estimatedCostUsd: costUsd, latencyMs };
         }
 
         if (provider === 'openai' && config.openaiApiKey) {
           const modelName = options.model || 'gpt-4o-mini';
           const apiMessages = [
             { role: 'system', content: sysPrompt },
-            ...messages.map(m => {
+            ...effectiveMessages.map(m => {
               const role = m.role === 'model' ? 'assistant' : m.role;
               if (Array.isArray(m.content)) {
                 // OpenAI multimodal format
@@ -671,7 +705,8 @@ export class AIProviderPlatform {
             {
               model: modelName,
               messages: apiMessages,
-              temperature: options.temperature ?? 0.7
+              temperature: options.temperature ?? 0.7,
+              ...(options.responseMimeType === 'application/json' ? { response_format: { type: 'json_object' } } : {})
             },
             {
               headers: { Authorization: `Bearer ${config.openaiApiKey}` },
@@ -681,10 +716,10 @@ export class AIProviderPlatform {
 
           const content = response.data.choices[0]?.message?.content || '';
           const latencyMs = Date.now() - startTime;
-          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(messages), content, modelName);
+          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(effectiveMessages), content, modelName);
 
           return {
-            content: formatNaturalConversation(content),
+            content: options.preserveStructured ? content : formatNaturalConversation(content),
             provider: 'openai',
             model: modelName,
             tokensUsed: tokens,

@@ -148,6 +148,8 @@ export class MinioStorageService {
         endpoint: config.endpointUrl,
         region: config.region,
         forcePathStyle: true,
+        requestChecksumCalculation: 'WHEN_REQUIRED',
+        responseChecksumValidation: 'WHEN_REQUIRED',
         credentials: {
           accessKeyId: config.accessKey,
           secretAccessKey: config.secretKey,

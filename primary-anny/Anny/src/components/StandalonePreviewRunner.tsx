@@ -570,7 +570,7 @@ export function resolveSafeVfsImportPath(
     return { resolved: null, traversalBlocked: false };
   }
 
-  const exts = ['', '.tsx', '.jsx', '.ts', '.js', '.css', '.scss', '/index.tsx', '/index.jsx', '/index.ts', '/index.js'];
+  const exts = ['', '.tsx', '.jsx', '.ts', '.js', '.json', '.css', '.scss', '/index.tsx', '/index.jsx', '/index.ts', '/index.js'];
   for (const ext of exts) {
     const cand = targetPath + ext;
     if (
@@ -830,7 +830,7 @@ ${cdnScripts}
         } else {
           targetPath = importPath.indexOf('/') === 0 ? importPath : '/' + importPath;
         }
-        var exts = ['', '.tsx', '.jsx', '.ts', '.js', '.css', '.scss', '/index.tsx', '/index.jsx', '/index.ts', '/index.js'];
+        var exts = ['', '.tsx', '.jsx', '.ts', '.js', '.json', '.css', '.scss', '/index.tsx', '/index.jsx', '/index.ts', '/index.js'];
         for (var j = 0; j < exts.length; j++) {
           var cand = targetPath + exts[j];
           if (Object.prototype.hasOwnProperty.call(modules, cand) || Object.prototype.hasOwnProperty.call(cssMap, cand)) return cand;
@@ -1066,6 +1066,18 @@ export function bundleVFSForIsolatedPreview(
 
     if (/\.(css|scss)$/i.test(normalizedPath)) {
       cssMap[normalizedPath] = rawContent;
+      continue;
+    }
+    if (/\.json$/i.test(normalizedPath)) {
+      if (normalizedPath !== '/package.json' && normalizedPath !== '/tsconfig.json') {
+        try {
+          const parsedJson = JSON.parse(rawContent);
+          transpiledModules[normalizedPath] = `var __jsonData = ${JSON.stringify(parsedJson)};\nexports.__esModule = true;\nexports.default = __jsonData;\nmodule.exports = __jsonData;\n`;
+        } catch (jsonErr: any) {
+          transpileErrors[normalizedPath] =
+            jsonErr instanceof Error ? jsonErr : new Error(`Invalid JSON in ${normalizedPath}`);
+        }
+      }
       continue;
     }
     if (!/\.(tsx|jsx|ts|js)$/i.test(normalizedPath)) {

@@ -310,7 +310,7 @@ describe('S3 / MinIO AWS SDK v3 operations', () => {
     }
   });
 
-  test('executes against live external MinIO container when MINIO_ENDPOINT is configured', async (t) => {
+  test('executes against live external MinIO/SeaweedFS container when MINIO_ENDPOINT is configured', async (t) => {
     const liveConfig = resolveMinioConnectionConfig(process.env);
     if (!liveConfig) {
       t.skip('MINIO_ENDPOINT not set in environment; skipping live container test.');
@@ -318,8 +318,12 @@ describe('S3 / MinIO AWS SDK v3 operations', () => {
     }
 
     const liveService = new MinioStorageService(process.env);
-    const key = `ci-integration/${Date.now()}-${crypto.randomBytes(4).toString('hex')}.txt`;
-    const body = `ANNY live MinIO test ${new Date().toISOString()}`;
+    const verifierService = new MinioStorageService(process.env);
+    const runId = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    const key = `ci-integration/${runId}.txt`;
+    const putKey = `ci-integration/${runId}-presigned.txt`;
+    const body = `ANNY live S3 test ${new Date().toISOString()}`;
+    const putBody = `ANNY presigned PUT test ${runId}`;
 
     try {
       assert.equal(await liveService.ensureBucketExists(), true);
@@ -329,7 +333,8 @@ describe('S3 / MinIO AWS SDK v3 operations', () => {
       const uploaded = await liveService.uploadArtifact(key, body, 'text/plain');
       assert.equal(uploaded.size, Buffer.byteLength(body));
 
-      const downloaded = await liveService.downloadArtifact(key);
+      // Verify persistence through a separate fresh client instance
+      const downloaded = await verifierService.downloadArtifact(key);
       assert.equal(downloaded.buffer.toString('utf8'), body);
 
       const getUrl = await liveService.getPresignedUrl(key, 120);
@@ -337,12 +342,31 @@ describe('S3 / MinIO AWS SDK v3 operations', () => {
       assert.equal(res.status, 200);
       assert.equal(await res.text(), body);
 
+      // Verify presigned PUT direct upload and read-back
+      const putUrl = await liveService.getPresignedPutUrl(putKey, 120);
+      const putRes = await fetch(putUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/plain' },
+        body: putBody,
+      });
+      assert.ok(putRes.status >= 200 && putRes.status < 300, `Unexpected presigned PUT status: ${putRes.status}`);
+      const downloadedPut = await verifierService.downloadArtifact(putKey);
+      assert.equal(downloadedPut.buffer.toString('utf8'), putBody);
+
       const listed = await liveService.listArtifacts('ci-integration/');
       assert.ok(listed.some((o) => o.objectName === key));
+      assert.ok(listed.some((o) => o.objectName === putKey));
 
+      // Verify deletion and confirm objects are no longer retrievable
       assert.equal(await liveService.deleteArtifact(key), true);
+      assert.equal(await liveService.deleteArtifact(putKey), true);
+      await assert.rejects(() => verifierService.downloadArtifact(key), /MINIO_DOWNLOAD_FAILED/);
+      await assert.rejects(() => verifierService.downloadArtifact(putKey), /MINIO_DOWNLOAD_FAILED/);
     } finally {
+      await liveService.deleteArtifact(key).catch(() => {});
+      await liveService.deleteArtifact(putKey).catch(() => {});
       liveService.destroy();
+      verifierService.destroy();
     }
   });
 });

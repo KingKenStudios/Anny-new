@@ -108,6 +108,10 @@ export interface ActiveArtifactContext {
   videoInteractionId?: string;
   videoJobId?: string;
   hasVfsProject?: boolean;
+  selectedImageId?: string;
+  selectedImageUrl?: string;
+  selectedImageMimeType?: string;
+  revisionNumber?: number;
 }
 
 export interface CreativeIntentClassification {
@@ -118,6 +122,7 @@ export interface CreativeIntentClassification {
   revisionInstruction?: string;
   extractedBrandName?: string;
   extractedMonogram?: string;
+  requestedImageCount?: number;
   aspectRatio: '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3';
   requiresReferenceImage: boolean;
   requiresReferenceVideo: boolean;
@@ -206,6 +211,29 @@ export interface ImageQualityReport {
   warnings: string[];
 }
 
+export interface GeneratedImageOption {
+  id: string;
+  index: number;
+  label: string;
+  url: string;
+  downloadUrl?: string;
+  mimeType: string;
+  format: 'svg' | 'png' | 'jpeg' | 'webp';
+  width: number;
+  height: number;
+  byteLength: number;
+  sha256: string;
+  provider: string;
+  model: string;
+  prompt: string;
+  category: CreativeCategory;
+  createdAt: string;
+  revisionNumber: number;
+  parentArtifactId?: string;
+  originalImageUrl?: string;
+  variantType?: LogoVariant['variantType'];
+}
+
 export interface CreativeImageResult {
   success: boolean;
   artifactId: string;
@@ -217,6 +245,9 @@ export interface CreativeImageResult {
   provider: string;
   model: string;
   quality: ImageQualityReport;
+  images?: GeneratedImageOption[];
+  requestedCount?: number;
+  originalImageUrl?: string;
   logoBundle?: LogoAssetBundle;
   generatedAt: string;
   revisionNumber: number;

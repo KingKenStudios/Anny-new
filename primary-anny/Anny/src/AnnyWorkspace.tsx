@@ -10,6 +10,9 @@ import { executionStreamManager } from "./core/executionStreamManager";
 import { universalExecutionController } from "./core/universalExecutionController";
 import { DynamicVFSAppRunner } from "./components/StandalonePreviewRunner";
 import { WorkspacePreviewContainer } from "./components/workspace/WorkspacePreviewContainer";
+import { GeneratedImageGallery } from "./components/GeneratedImageGallery";
+import type { LightboxImageItem } from "./components/ImageLightboxViewer";
+import type { BuildStageItem } from "./components/AnnyBuildPreviewOverlay";
 import { MobileLogoMenu } from './MobileLogoMenu';
 import { ExecutionStreamView } from './components/chat/ExecutionStreamView';
 import {
@@ -545,11 +548,15 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     }
   }, [isVisualEditor, onEditorStateChange]);
 
-  const [previewTab, setPreviewTab] = useState<'preview' | 'code' | 'intelligence'>('preview');
+  const [previewTab, setPreviewTab] = useState<'preview' | 'code' | 'logs' | 'intelligence'>('preview');
   const [deviceViewport, setDeviceViewport] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
   const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const [lightboxImage, setLightboxImage] = useState<{ url: string; prompt: string } | null>(null);
+  const [selectedImageForEdit, setSelectedImageForEdit] = useState<LightboxImageItem | null>(null);
+  const [lastBuildPrompt, setLastBuildPrompt] = useState<string>('');
+  const [buildFailureInfo, setBuildFailureInfo] = useState<{ error: string; diagnostics: string[] } | null>(null);
+  const [buildStages, setBuildStages] = useState<BuildStageItem[]>([]);
+  const [buildVerification, setBuildVerification] = useState<any>(null);
   const [currentlySpeakingId, setCurrentlySpeakingId] = useState<string | null>(null);
   const isSubmittingRef = useRef(false);
   const visionRef = useRef<any>(null);
@@ -680,19 +687,13 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       imagePrompt?: string;
       imageProgress?: number;
       imageStage?: string;
-      generatedImages?: Array<{
-        url: string;
-        prompt: string;
-        seed?: number;
-        timestamp?: string;
-        format?: string;
-        mimeType?: string;
-        width?: number;
-        height?: number;
-        provider?: string;
-        category?: string;
-        logoBundle?: CreativeImageResult['logoBundle'];
-      }>;
+      generatedImages?: Array<
+        LightboxImageItem & {
+          seed?: number;
+          timestamp?: string;
+          logoBundle?: CreativeImageResult['logoBundle'];
+        }
+      >;
       generatedVideo?: VideoJobRecord;
     }>
   >([]);
@@ -1179,6 +1180,15 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     const activeArtifactCtx = {
       ...(creativeArtifactStore.getActiveContext() || {}),
       hasVfsProject: vfsHasCode,
+      ...(selectedImageForEdit
+        ? {
+            domain: 'IMAGE' as const,
+            selectedImageId: selectedImageForEdit.id,
+            selectedImageUrl: selectedImageForEdit.url,
+            selectedImageMimeType: selectedImageForEdit.mimeType,
+            revisionNumber: selectedImageForEdit.revisionNumber || 1,
+          }
+        : {}),
     };
     const attachmentMeta = currentAttached.map((f: any) => ({
       name: f.name,
@@ -1204,12 +1214,15 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     if (isImageRequest) {
       const botMsgId = (Date.now() + 1).toString();
       const isLogoIntent = creativeIntent.category === 'LOGO_DESIGN' || creativeIntent.category === 'BRAND_IDENTITY' || creativeIntent.category === 'ICON' || creativeIntent.category === 'APP_ICON';
+      const requestedImageCount = creativeIntent.requestedImageCount || 1;
       const initialBotMsg = {
         id: botMsgId,
         role: 'assistant' as const,
         content: isLogoIntent
           ? `Designing your ${creativeIntent.extractedBrandName || 'brand'} logo identity kit...`
-          : `Generating ${creativeIntent.category.toLowerCase().replace(/_/g, ' ')}...`,
+          : requestedImageCount > 1
+            ? `Generating ${requestedImageCount} distinct image options...`
+            : `Generating ${creativeIntent.category.toLowerCase().replace(/_/g, ' ')}...`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         isGeneratingImage: true,
         imagePrompt: query,
@@ -1228,6 +1241,18 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           .slice(0, 6)
           .map((f: any) => ({ name: f.name, mimeType: f.type || 'image/png', data: f.data }));
 
+        if (
+          referenceImages.length === 0 &&
+          selectedImageForEdit?.url?.startsWith('data:image/') &&
+          selectedImageForEdit.mimeType !== 'image/svg+xml'
+        ) {
+          referenceImages.push({
+            name: selectedImageForEdit.label || 'selected-image',
+            mimeType: selectedImageForEdit.mimeType || 'image/png',
+            data: selectedImageForEdit.url,
+          });
+        }
+
         setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? { ...msg, imageProgress: 60, imageStage: 'Generating & running output quality validation...' } : msg));
         const imageResponse = await fetchWithAuth('/api/creative/image', {
           method: 'POST',
@@ -1235,8 +1260,9 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           body: JSON.stringify({
             prompt: query, // NEVER strip "logo" or category intent!
             aspectRatio: creativeIntent.aspectRatio,
+            count: requestedImageCount,
             referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
-            activeContext: creativeIntent.isRevision ? activeArtifactCtx : undefined,
+            activeContext: creativeIntent.isRevision || selectedImageForEdit ? activeArtifactCtx : undefined,
             previousLogoPlan: creativeIntent.isRevision ? activeArtifactCtx.logoPlan : undefined,
             parentArtifactId: creativeIntent.isRevision ? activeArtifactCtx.artifactId : undefined,
           })
@@ -1272,12 +1298,58 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
             brandName: generated.logoBundle?.plan.brandName,
             logoPlan: generated.logoBundle?.plan,
             dimensions: `${generated.quality.width}x${generated.quality.height}`,
+            optionCount: generated.images?.length || 1,
           },
         });
 
+        const galleryItems: Array<LightboxImageItem & { timestamp?: string; logoBundle?: CreativeImageResult['logoBundle'] }> =
+          generated.images && generated.images.length > 0
+            ? generated.images.map((opt, i) => ({
+                id: opt.id,
+                label: opt.label,
+                url: opt.url,
+                downloadUrl: opt.downloadUrl,
+                mimeType: opt.mimeType,
+                format: opt.format,
+                width: opt.width,
+                height: opt.height,
+                provider: opt.provider,
+                model: opt.model,
+                prompt: opt.prompt || query,
+                category: opt.category,
+                createdAt: opt.createdAt,
+                revisionNumber: opt.revisionNumber,
+                originalImageUrl: opt.originalImageUrl || generated.originalImageUrl,
+                timestamp: new Date().toLocaleTimeString(),
+                ...(i === 0 && generated.logoBundle ? { logoBundle: generated.logoBundle } : {}),
+              }))
+            : [{
+                id: generated.artifactId,
+                label: generated.logoBundle?.plan.brandName || 'Generated Image',
+                url: generated.primaryImageUrl,
+                prompt: query,
+                timestamp: new Date().toLocaleTimeString(),
+                format: generated.primaryFormat,
+                mimeType: generated.primaryMimeType,
+                width: generated.quality.width,
+                height: generated.quality.height,
+                provider: generated.provider,
+                model: generated.model,
+                category: generated.classification.category,
+                revisionNumber: generated.revisionNumber,
+                originalImageUrl: generated.originalImageUrl,
+                logoBundle: generated.logoBundle,
+              }];
+
         const summaryText = generated.logoBundle
-          ? `Your verified ${generated.logoBundle.plan.brandName} brand logo kit is ready (Rev ${generated.revisionNumber}, ${generated.logoBundle.variants.length} scalable SVG variants: dark lockup, light background, transparent icon mark, and emblem seal). You can ask me to refine colors, style, or typography anytime.`
-          : `Your verified ${generated.classification.category.toLowerCase().replace(/_/g, ' ')} (${generated.primaryFormat.toUpperCase()}, ${generated.quality.width}×${generated.quality.height}) is ready via ${generated.provider}.`;
+          ? `Your verified ${generated.logoBundle.plan.brandName} brand logo kit is ready (Rev ${generated.revisionNumber}, ${galleryItems.length} scalable variants). Click any option to inspect full-size, zoom, compare, or download.`
+          : galleryItems.length > 1
+            ? `Generated ${galleryItems.length} verified image options (${generated.primaryFormat.toUpperCase()}, ${generated.quality.width}×${generated.quality.height}) via ${generated.provider}. Click any image to open the full viewer, navigate with arrows, or download.`
+            : `Your verified ${generated.classification.category.toLowerCase().replace(/_/g, ' ')} (${generated.primaryFormat.toUpperCase()}, ${generated.quality.width}×${generated.quality.height}${generated.revisionNumber > 1 ? `, Rev ${generated.revisionNumber}` : ''}) is ready via ${generated.provider}.`;
+
+        if (selectedImageForEdit) {
+          setSelectedImageForEdit(null);
+        }
 
         const finalMsg = {
           id: botMsgId,
@@ -1285,18 +1357,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           content: formatNaturalConversation(summaryText, { preserveStructured: false }),
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           isGeneratingImage: false,
-          generatedImages: [{
-            url: generated.primaryImageUrl,
-            prompt: query,
-            timestamp: new Date().toLocaleTimeString(),
-            format: generated.primaryFormat,
-            mimeType: generated.primaryMimeType,
-            width: generated.quality.width,
-            height: generated.quality.height,
-            provider: generated.provider,
-            category: generated.classification.category,
-            logoBundle: generated.logoBundle,
-          }]
+          generatedImages: galleryItems,
         };
         setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? finalMsg : msg));
         if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => prevMsgs.map(m => m.id === botMsgId ? finalMsg : m));
@@ -1442,8 +1503,20 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         safeStorage.setItem('anny_current_project_id', projectId);
       }
       if (isBuildRequest) {
+        setLastBuildPrompt(query);
+        setBuildFailureInfo(null);
+        setBuildStages([
+          { stage: 'understanding', label: '1. Understanding request', status: 'completed' },
+          { stage: 'planning', label: '2. Planning', status: 'in_progress' },
+          { stage: 'generating', label: '3. Generating files', status: 'pending' },
+          { stage: 'validating', label: '4. Validating', status: 'pending' },
+          { stage: 'installing', label: '5. Installing dependencies', status: 'pending' },
+          { stage: 'starting_preview', label: '6. Starting preview', status: 'pending' },
+          { stage: 'testing', label: '7. Testing', status: 'pending' },
+          { stage: 'completed', label: '8. Completed', status: 'pending' },
+        ]);
         executionStreamManager.startExecution('Executing application generation pipeline...', execId);
-        executionStreamManager.setStage('analyzing', 'Synthesizing application architecture plan...');
+        executionStreamManager.setStage('analyzing', 'Planning project architecture and file manifest...');
       }
 
       const textAttachments = currentAttached
@@ -1512,12 +1585,25 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
 
       const orchRes = await res.json().catch(() => ({}));
       if (!res.ok || orchRes?.success === false) {
+        const diagList: string[] = Array.isArray(orchRes?.diagnostics) ? orchRes.diagnostics : [];
+        if (isBuildRequest) {
+          setBuildFailureInfo({
+            error: orchRes?.error || `ANNY pipeline failed with HTTP ${res.status}`,
+            diagnostics: diagList,
+          });
+          if (Array.isArray(orchRes?.stages) && orchRes.stages.length > 0) {
+            setBuildStages(orchRes.stages);
+          }
+        }
         throw new Error(orchRes?.error || `ANNY pipeline failed with HTTP ${res.status}`);
       }
 
       if (isBuildRequest) {
         const fileCount = orchRes.files && typeof orchRes.files === 'object' ? Object.keys(orchRes.files).length : 0;
         const isSuccess = orchRes.success !== false && fileCount > 0 && orchRes.verificationStatus !== 'FAILED';
+        if (orchRes.verification) {
+          setBuildVerification(orchRes.verification);
+        }
 
         if (isSuccess) {
           executionStreamManager.setStage('editing', 'Writing synthesized codebase files to workspace...');
@@ -1525,7 +1611,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           for (const [path, content] of Object.entries(orchRes.files)) {
             vfs._unsafe_writeFile(path, content as string);
           }
-          
+
           // Ensure preview re-renders
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('anny_project_generated', {
@@ -1534,10 +1620,26 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
             window.dispatchEvent(new CustomEvent('anny_vfs_changed'));
           }
 
+          setBuildFailureInfo(null);
+          setBuildStages([
+            { stage: 'understanding', label: '1. Understanding request', status: 'completed' },
+            { stage: 'planning', label: '2. Planning', status: 'completed' },
+            { stage: 'generating', label: '3. Generating files', status: 'completed' },
+            { stage: 'validating', label: '4. Validating', status: 'completed' },
+            { stage: 'installing', label: '5. Installing dependencies', status: 'completed' },
+            { stage: 'starting_preview', label: '6. Starting preview', status: 'completed' },
+            { stage: 'testing', label: '7. Testing', status: 'completed' },
+            { stage: 'completed', label: '8. Completed', status: 'completed' },
+          ]);
+          setReloadKey((k) => k + 1);
           executionStreamManager.setStage('runtime', 'Opening verified application in preview...');
           executionStreamManager.completeExecution('Application generation completed successfully. Application is ready and running in preview.');
         } else {
           const failureDetail = orchRes.error || orchRes.summary || 'Build failed: Pipeline returned no valid files.';
+          setBuildFailureInfo({
+            error: failureDetail,
+            diagnostics: Array.isArray(orchRes.diagnostics) ? orchRes.diagnostics : [],
+          });
           executionStreamManager.failExecution(`BUILD_FAILED: ${failureDetail}`);
         }
       }
@@ -1569,6 +1671,11 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       setIsGenerating(false);
     } catch (err: any) {
       console.error('ANNY Stream Error:', err);
+      if (isBuildRequest) {
+        setBuildFailureInfo((prev) =>
+          prev || { error: err?.message || 'Project generation failed.', diagnostics: [] }
+        );
+      }
       executionStreamManager.failExecution(err.message || 'Pipeline failed');
       const errBotMsg = {
         id: (Date.now() + 1).toString(),
@@ -2085,6 +2192,17 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                   </div>
                 )}
 
+                {/* Selected Image for Non-Destructive Edit Badge */}
+                {selectedImageForEdit && (
+                  <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 mb-1.5 rounded-xl bg-indigo-950/70 border border-indigo-400/40 text-xs text-indigo-100">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <img src={selectedImageForEdit.url} alt="Selected for edit" className="w-6 h-6 rounded object-cover border border-white/20 shrink-0" />
+                      <span className="truncate">Editing: <strong>{selectedImageForEdit.label || 'Selected image'}</strong> (original preserved)</span>
+                    </div>
+                    <button type="button" onClick={() => setSelectedImageForEdit(null)} className="text-indigo-300 hover:text-white px-1 font-bold cursor-pointer">×</button>
+                  </div>
+                )}
+
                 {/* Attached Files & Vision Snapshot Preview */}
                 {(attachedFiles.length > 0 || visionSnapshot) && (
                   <div className="flex flex-wrap items-center gap-1.5 p-2 bg-[#0d1130] rounded-xl border border-white/10 text-xs">
@@ -2316,7 +2434,18 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                     }`}
                   >
                     <Code2 className="w-3.5 h-3.5" />
-                    <span>Code</span>
+                    <span>Code &amp; Files</span>
+                  </button>
+                  <button
+                    onClick={() => setPreviewTab('logs')}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                      previewTab === 'logs'
+                        ? 'bg-indigo-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <Terminal className="w-3.5 h-3.5" />
+                    <span>Logs &amp; Tests</span>
                   </button>
                   <button
                     onClick={() => setPreviewTab('intelligence')}
@@ -2389,19 +2518,81 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                     isPreviewFullScreen={isFullscreenPreview}
                     setIsPreviewFullScreen={setIsFullscreenPreview}
                     setReloadKey={setReloadKey}
-                    buildState={isGenerating ? 'in_progress' : 'completed'}
-                    hasExistingProject={!!activeProj}
+                    buildState={
+                      isGenerating
+                        ? 'in_progress'
+                        : buildFailureInfo || activeProj?.status === 'failed'
+                          ? 'failed'
+                          : 'completed'
+                    }
+                    hasExistingProject={hasBuiltApp}
                     deviceMode={deviceViewport}
                     setDeviceMode={setDeviceViewport}
-                    currentBuildPrompt={prompt || 'Synthesizing application...'}
-                    liveBuildAction={isGenerating ? 'Executing build sequence...' : 'Build Ready'}
-                    buildProgressPct={isGenerating ? 75 : 100}
+                    currentBuildPrompt={lastBuildPrompt || prompt || 'Synthesizing application...'}
+                    liveBuildAction={
+                      activeProj?.currentStage ||
+                      (isGenerating ? 'Generating project files...' : buildFailureInfo ? 'Build failed' : 'Build Ready')
+                    }
+                    buildProgressPct={
+                      typeof activeProj?.progressPct === 'number'
+                        ? activeProj.progressPct
+                        : isGenerating
+                          ? 45
+                          : buildFailureInfo
+                            ? 0
+                            : 100
+                    }
+                    buildStages={buildStages}
+                    buildError={buildFailureInfo?.error || activeProj?.errors?.[0]}
+                    buildDiagnostics={buildFailureInfo?.diagnostics}
+                    onRetryBuild={lastBuildPrompt ? () => handleSend(lastBuildPrompt) : undefined}
                     setRightTab={setPreviewTab}
                     activeProjectId={WorkspaceManager.getInstance().getActiveProjectId() || activeProj?.id || 'anny-project'}
                     reloadKey={reloadKey}
-                    previewRuntimeReady={hasBuiltApp && !isGenerating}
+                    previewRuntimeReady={hasBuiltApp && !isGenerating && !buildFailureInfo}
                     onOpenVisualEdit={() => setIsVisualEditor(true)}
                   />
+                ) : previewTab === 'logs' ? (
+                  <div className="p-4 flex-1 overflow-y-auto space-y-4 font-mono text-xs text-slate-200">
+                    <div className="rounded-2xl border border-white/10 bg-[#080c20] p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <h3 className="font-bold text-cyan-300 uppercase tracking-wider text-[11px]">
+                          Build Verification &amp; Test Checks
+                        </h3>
+                        {buildVerification && (
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${buildVerification.passed ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'}`}>
+                            {buildVerification.passed ? `PASSED (${buildVerification.score}/100)` : 'FAILED'}
+                          </span>
+                        )}
+                      </div>
+                      {buildVerification?.checks && buildVerification.checks.length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                          {buildVerification.checks.map((chk: any, idx: number) => (
+                            <div key={idx} className={`p-2.5 rounded-xl border ${chk.passed ? 'border-emerald-500/25 bg-emerald-500/5 text-emerald-200' : 'border-rose-500/30 bg-rose-500/10 text-rose-200'}`}>
+                              <div className="font-bold">{chk.passed ? '✓' : '✗'} {chk.name}</div>
+                              <div className="text-[11px] opacity-80 mt-0.5">{chk.detail}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-slate-400">Run a website or application build to inspect validation checks and tests.</p>
+                      )}
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-[#080c20] p-4 space-y-2">
+                      <h3 className="font-bold text-slate-300 uppercase tracking-wider text-[11px]">
+                        Pipeline Execution Logs ({activeProj?.logs?.length || 0})
+                      </h3>
+                      {activeProj?.logs && activeProj.logs.length > 0 ? (
+                        <div className="space-y-1 max-h-64 overflow-y-auto text-[11px] text-slate-300">
+                          {activeProj.logs.map((line: string, i: number) => (
+                            <div key={i} className="py-0.5 border-b border-white/5">{line}</div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-slate-500">No execution logs yet.</p>
+                      )}
+                    </div>
+                  </div>
                 ) : previewTab === 'intelligence' ? (
                   <div className="p-4 flex-1 overflow-y-auto">
                     <AnnyIntelligenceWorkspacePanel />
@@ -2849,108 +3040,55 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                           </div>
                         )}
 
-                        {/* Verified Generated Image & Logo Kit Rendering */}
+                        {/* Verified Generated Image Gallery & Logo Brand Kit Rendering */}
                         {msg.generatedImages && msg.generatedImages.length > 0 && (
                           <div className="w-full mt-3 space-y-3">
-                            {msg.generatedImages.map((img: any, idx: number) => {
-                              const ext = img.format || (img.mimeType === 'image/svg+xml' ? 'svg' : 'png');
-                              const dimLabel = img.width && img.height ? `${img.width} × ${img.height}` : 'Verified';
-                              return (
-                                <div key={idx} className="space-y-3">
-                                  <div className="relative group rounded-2xl overflow-hidden border border-cyan-500/30 bg-[#06091e] shadow-[0_10px_30px_rgba(0,0,0,0.6)] transition-all hover:border-cyan-400/60">
-                                    <img
-                                      src={img.url}
-                                      alt={img.prompt}
-                                      loading="lazy"
-                                      className="w-full h-auto max-h-[480px] object-contain bg-[#040610] transition-transform duration-500 group-hover:scale-[1.01]"
-                                    />
+                            <GeneratedImageGallery
+                              images={msg.generatedImages.map((img: any, idx: number) => ({
+                                id: img.id || `${msg.id}_img_${idx}`,
+                                label: img.label || (msg.generatedImages!.length > 1 ? `Option ${idx + 1}` : undefined),
+                                url: img.url,
+                                downloadUrl: img.downloadUrl,
+                                mimeType: img.mimeType,
+                                format: img.format,
+                                width: img.width,
+                                height: img.height,
+                                provider: img.provider,
+                                model: img.model,
+                                prompt: img.prompt || msg.content,
+                                category: img.category,
+                                createdAt: img.createdAt,
+                                revisionNumber: img.revisionNumber,
+                                originalImageUrl: img.originalImageUrl,
+                              }))}
+                              selectedImageId={selectedImageForEdit?.id}
+                              onSelectForEdit={(img) => {
+                                setSelectedImageForEdit(img);
+                              }}
+                              onRegenerate={(p) => handleSend(p)}
+                            />
 
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-between p-4 pointer-events-none group-hover:pointer-events-auto">
-                                      <div className="flex items-center justify-between gap-2">
-                                        <span className="px-2.5 py-1 rounded-full bg-black/75 border border-cyan-400/50 text-cyan-300 font-mono text-[10px] font-bold backdrop-blur-md">
-                                          {dimLabel} • {ext.toUpperCase()} • {img.provider || 'Verified'}
-                                        </span>
-                                        <div className="flex items-center gap-2">
-                                          <button
-                                            onClick={() => setLightboxImage(img)}
-                                            className="p-2 rounded-xl bg-black/80 hover:bg-cyan-500 border border-white/20 text-white transition-all cursor-pointer shadow-lg"
-                                            title="Fullscreen Lightbox"
-                                          >
-                                            <Maximize2 className="w-4 h-4" />
-                                          </button>
-                                          <a
-                                            href={img.url}
-                                            download={`anny-${(img.category || 'asset').toLowerCase()}-${Date.now()}.${ext}`}
-                                            className="p-2 rounded-xl bg-black/80 hover:bg-emerald-500 border border-white/20 text-white transition-all cursor-pointer shadow-lg"
-                                            title={`Download ${ext.toUpperCase()}`}
-                                          >
-                                            <Download className="w-4 h-4" />
-                                          </a>
-                                        </div>
-                                      </div>
-
-                                      <div className="space-y-2">
-                                        <p className="text-xs text-slate-200 font-medium line-clamp-2 bg-black/60 p-2.5 rounded-xl border border-white/10 backdrop-blur-md">
-                                          "{img.prompt}"
-                                        </p>
-                                        <div className="flex items-center justify-between pt-1">
-                                          <button
-                                            onClick={() => navigator.clipboard.writeText(img.prompt)}
-                                            className="text-[11px] font-semibold text-cyan-300 hover:text-white flex items-center gap-1 cursor-pointer"
-                                          >
-                                            <Copy className="w-3.5 h-3.5" />
-                                            <span>Copy Prompt</span>
-                                          </button>
-                                          <button
-                                            onClick={() => handleSend(img.prompt)}
-                                            className="px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-lg"
-                                          >
-                                            <RotateCw className="w-3.5 h-3.5" />
-                                            <span>Regenerate</span>
-                                          </button>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  {/* Logo Brand Kit Variants & Palette Swatches */}
-                                  {img.logoBundle?.variants && img.logoBundle.variants.length > 1 && (
-                                    <div className="rounded-2xl border border-amber-400/25 bg-[#06091b] p-3.5 space-y-3">
-                                      <div className="flex items-center justify-between text-[11px]">
-                                        <span className="font-bold text-amber-300 uppercase tracking-wider">
-                                          {img.logoBundle.plan.brandName} — Scalable SVG Brand Kit ({img.logoBundle.plan.monogram})
-                                        </span>
-                                        <span className="text-slate-400 font-mono">{img.logoBundle.plan.logoType}</span>
-                                      </div>
-                                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                                        {img.logoBundle.variants.map((variant: any) => (
-                                          <a
-                                            key={variant.id}
-                                            href={variant.dataUrl}
-                                            download={`${img.logoBundle.plan.brandName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${variant.id}.svg`}
-                                            className="rounded-xl border border-white/10 hover:border-amber-400/60 bg-black/40 p-2 flex flex-col gap-1.5 transition-colors"
-                                            title={`Download ${variant.label} (SVG)`}
-                                          >
-                                            <div className="h-16 flex items-center justify-center rounded-lg bg-[#040610] p-1">
-                                              <img src={variant.dataUrl} alt={variant.label} className="max-h-full max-w-full object-contain" />
-                                            </div>
-                                            <span className="text-[10px] font-medium text-slate-200 truncate">{variant.label}</span>
-                                          </a>
-                                        ))}
-                                      </div>
-                                      <div className="flex flex-wrap gap-1.5 pt-1">
-                                        {img.logoBundle.plan.palette.slice(0, 5).map((sw: any) => (
-                                          <span key={sw.name} className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-black/50 border border-white/10 text-[10px] text-slate-300">
-                                            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: sw.hex }} />
-                                            {sw.name} ({sw.hex})
-                                          </span>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
+                            {/* Brand Color Palette Strip when a Logo Kit was generated */}
+                            {msg.generatedImages[0]?.logoBundle?.plan?.palette && (
+                              <div className="rounded-2xl border border-amber-400/25 bg-[#06091b] p-3 space-y-2">
+                                <div className="flex items-center justify-between text-[11px]">
+                                  <span className="font-bold text-amber-300 uppercase tracking-wider">
+                                    {msg.generatedImages[0].logoBundle.plan.brandName} — Brand Palette ({msg.generatedImages[0].logoBundle.plan.monogram})
+                                  </span>
+                                  <span className="text-slate-400 font-mono">
+                                    {msg.generatedImages[0].logoBundle.plan.logoType}
+                                  </span>
                                 </div>
-                              );
-                            })}
+                                <div className="flex flex-wrap gap-1.5">
+                                  {msg.generatedImages[0].logoBundle.plan.palette.slice(0, 5).map((sw: any) => (
+                                    <span key={sw.name} className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-black/50 border border-white/10 text-[10px] text-slate-300">
+                                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: sw.hex }} />
+                                      {sw.name} ({sw.hex})
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -3266,6 +3404,17 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
             )}
 
             <div className="bg-[#0b0f2d]/90 border border-white/15 rounded-2xl p-2.5 sm:p-3 shadow-[0_10px_30px_rgba(0,0,0,0.5)] focus-within:border-indigo-500/80 focus-within:ring-2 focus-within:ring-indigo-500/30 transition-all backdrop-blur-md">
+              {/* Selected Image for Non-Destructive Edit Badge (Main View) */}
+              {selectedImageForEdit && (
+                <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 mb-2 rounded-xl bg-indigo-950/70 border border-indigo-400/40 text-xs text-indigo-100">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <img src={selectedImageForEdit.url} alt="Selected for edit" className="w-6 h-6 rounded object-cover border border-white/20 shrink-0" />
+                    <span className="truncate">Editing: <strong>{selectedImageForEdit.label || 'Selected image'}</strong> (original preserved)</span>
+                  </div>
+                  <button type="button" onClick={() => setSelectedImageForEdit(null)} className="text-indigo-300 hover:text-white px-1 font-bold cursor-pointer">×</button>
+                </div>
+              )}
+
               {/* Attached Files & Vision Snapshot Preview Strip (Main View) */}
               {(attachedFiles.length > 0 || visionSnapshot) && (
                 <div className="flex flex-wrap items-center gap-1.5 mb-2 p-2 bg-[#06091e] rounded-xl border border-white/10 text-xs">
@@ -3629,49 +3778,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           </div>
         </div>
       )}
-      {/* Fullscreen AI Image Lightbox Modal */}
-      {lightboxImage && (
-        <div
-          className="fixed inset-0 bg-black/90 backdrop-blur-md z-[250] flex items-center justify-center p-4 sm:p-8"
-          onClick={() => setLightboxImage(null)}
-        >
-          <div
-            className="relative max-w-5xl w-full max-h-[90vh] bg-[#070a21] border border-cyan-500/40 rounded-3xl overflow-hidden shadow-2xl flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between p-4 border-b border-white/10 bg-[#040618]">
-              <span className="text-xs font-bold text-cyan-300 font-mono truncate max-w-md">
-                "{lightboxImage.prompt}"
-              </span>
-              <div className="flex items-center gap-2">
-                <a
-                  href={lightboxImage.url}
-                  download={`anny-ai-image-${Date.now()}.jpg`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-lg"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Download HD</span>
-                </a>
-                <button
-                  onClick={() => setLightboxImage(null)}
-                  className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 overflow-auto flex items-center justify-center p-4 bg-black">
-              <img
-                src={lightboxImage.url}
-                alt={lightboxImage.prompt}
-                className="max-w-full max-h-[80vh] object-contain rounded-2xl shadow-2xl"
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Image Lightbox is managed directly by GeneratedImageGallery with full zoom/nav/verified download */}
 
       {/* Shared Hidden File Input (Accessible in both Main & Split Views) */}
       <input

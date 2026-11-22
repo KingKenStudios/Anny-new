@@ -36,6 +36,7 @@ import type {
   AttachmentMetadata,
   CreativeImageResult,
   CreativeProviderCapability,
+  GeneratedImageOption,
   ImageQualityReport,
   LogoDesignPlan,
   VideoIntentCategory,
@@ -52,6 +53,7 @@ export interface ReferenceMediaInput {
 export interface CreativeImageRequest {
   prompt: string;
   aspectRatio?: string;
+  count?: number;
   highResolution?: boolean;
   providerPreference?: 'auto' | 'local-vector-svg' | 'gemini' | 'openai' | 'local-sd';
   referenceImages?: ReferenceMediaInput[];
@@ -60,7 +62,29 @@ export interface CreativeImageRequest {
   parentArtifactId?: string;
   previousHashes?: string[];
   enableVisionQa?: boolean;
+  ownerUserId?: string;
+  ownerOrgId?: string;
 }
+
+export interface StoredImageAsset {
+  assetKey: string;
+  artifactId: string;
+  bytes: Uint8Array;
+  mimeType: string;
+  filename: string;
+  ownerUserId?: string;
+  ownerOrgId?: string;
+  createdAt: string;
+}
+
+export type ImageProviderAdapter = (params: {
+  prompt: string;
+  aspectRatio: string;
+  optionIndex: number;
+  totalCount: number;
+  highResolution?: boolean;
+  referenceImages?: ReferenceMediaInput[];
+}) => Promise<{ bytes: Uint8Array; mimeType: string; model: string; provider: string }>;
 
 export interface CreativeVideoRequest {
   prompt: string;
@@ -146,13 +170,42 @@ function stripDataUrlPrefix(input: string): { base64: string; detectedMime?: str
 class CreativeGenerationService {
   private videoJobs: Map<string, VideoJobRecord> = new Map();
   private videoBuffers: Map<string, { bytes: Uint8Array; mimeType: string }> = new Map();
+  private imageAssets: Map<string, StoredImageAsset> = new Map();
   private customVideoAdapter: VideoProviderAdapter | null = null;
+  private customImageAdapter: ImageProviderAdapter | null = null;
 
   /**
    * Test hook for injecting a deterministic provider adapter during automated verification.
    */
   public setCustomVideoAdapterForTests(adapter: VideoProviderAdapter | null): void {
     this.customVideoAdapter = adapter;
+  }
+
+  public setCustomImageAdapterForTests(adapter: ImageProviderAdapter | null): void {
+    this.customImageAdapter = adapter;
+  }
+
+  private storeImageAsset(asset: StoredImageAsset): string {
+    // Bounded FIFO cache to prevent unbounded memory growth
+    if (this.imageAssets.size >= 80) {
+      const oldestKey = this.imageAssets.keys().next().value;
+      if (oldestKey) this.imageAssets.delete(oldestKey);
+    }
+    this.imageAssets.set(asset.assetKey, asset);
+    return `/api/creative/image/asset/${encodeURIComponent(asset.assetKey)}`;
+  }
+
+  public getImageAsset(
+    assetKey: string,
+    requester?: { userId?: string; orgId?: string; isAdmin?: boolean }
+  ): StoredImageAsset | null {
+    const asset = this.imageAssets.get(assetKey);
+    if (!asset) return null;
+    if (requester?.isAdmin) return asset;
+    if (asset.ownerUserId && requester?.userId && asset.ownerUserId !== requester.userId) {
+      return null;
+    }
+    return asset;
   }
 
   /**
@@ -500,11 +553,37 @@ class CreativeGenerationService {
   }
 
   /**
-   * Main unified Image Generation & Logo Pipeline entry point.
+   * Main unified Image Generation, Multi-Option Gallery, Non-Destructive Editing & Logo Pipeline entry point.
    */
   public async generateCreativeImage(req: CreativeImageRequest): Promise<CreativeImageResult> {
     const artifactId = `art_img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-    const attachments: AttachmentMetadata[] = (req.referenceImages || []).map((r) => ({
+    const nowIso = new Date().toISOString();
+
+    // Hydrate selected image reference for conversational non-destructive edits if caller passed activeContext.selectedImageUrl
+    const hydratedRefs: ReferenceMediaInput[] = [...(req.referenceImages || [])];
+    if (hydratedRefs.length === 0 && req.activeContext?.selectedImageUrl) {
+      const selUrl = req.activeContext.selectedImageUrl;
+      if (selUrl.startsWith('data:image/')) {
+        const parsed = stripDataUrlPrefix(selUrl);
+        hydratedRefs.push({
+          name: 'selected-image',
+          mimeType: req.activeContext.selectedImageMimeType || parsed.detectedMime || 'image/png',
+          data: selUrl,
+        });
+      } else if (selUrl.startsWith('/api/creative/image/asset/')) {
+        const assetKey = decodeURIComponent(selUrl.split('/').pop() || '').split('?')[0];
+        const cached = this.imageAssets.get(assetKey);
+        if (cached && cached.mimeType !== 'image/svg+xml') {
+          hydratedRefs.push({
+            name: cached.filename,
+            mimeType: cached.mimeType,
+            data: `data:${cached.mimeType};base64,${bytesToBase64(cached.bytes)}`,
+          });
+        }
+      }
+    }
+
+    const attachments: AttachmentMetadata[] = hydratedRefs.map((r) => ({
       name: r.name,
       mimeType: r.mimeType,
       hasData: Boolean(r.data),
@@ -513,6 +592,13 @@ class CreativeGenerationService {
     const classification = classifyCreativeIntent(req.prompt, attachments, req.activeContext);
     const effectiveAspect = (req.aspectRatio || classification.aspectRatio || '1:1') as CreativeImageRequest['aspectRatio'];
     const previousHashes = new Set(req.previousHashes || []);
+    const requestedCount = Math.min(4, Math.max(1, Number(req.count) || classification.requestedImageCount || 1));
+    const originalImageUrl =
+      hydratedRefs[0]?.data || req.activeContext?.selectedImageUrl || undefined;
+    const nextRevisionNumber =
+      classification.isRevision || req.parentArtifactId
+        ? Math.max(2, (req.activeContext?.revisionNumber || 1) + 1)
+        : 1;
 
     const isLogoWorkflow =
       classification.category === 'LOGO_DESIGN' ||
@@ -523,11 +609,21 @@ class CreativeGenerationService {
     // 1. DEDICATED LOGO & BRAND IDENTITY PIPELINE
     if (isLogoWorkflow) {
       const previousPlan = req.previousLogoPlan || req.activeContext?.logoPlan;
+      const isLogoRevision = Boolean(classification.isRevision || req.parentArtifactId || req.activeContext?.artifactId);
+      const effectiveBrandName =
+        classification.extractedBrandName || req.activeContext?.brandName || previousPlan?.brandName;
       const logoBundle = generateVectorLogoBundle(
         req.prompt,
-        classification.extractedBrandName,
-        classification.isRevision ? previousPlan : undefined
+        effectiveBrandName,
+        isLogoRevision ? previousPlan : undefined
       );
+      if (isLogoRevision) {
+        logoBundle.plan.revisionNumber = Math.max(
+          nextRevisionNumber,
+          logoBundle.plan.revisionNumber,
+          (req.activeContext?.revisionNumber || 1) + 1
+        );
+      }
       const enhanced = buildEnhancedPrompt(classification, logoBundle.plan);
       const primaryVariant = logoBundle.variants[0];
       const svgBytes = new TextEncoder().encode(primaryVariant.svgMarkup);
@@ -538,12 +634,58 @@ class CreativeGenerationService {
         requireUnique: Boolean(req.parentArtifactId),
       });
 
+      const galleryOptions: GeneratedImageOption[] = logoBundle.variants.map((variant, idx) => {
+        const variantBytes = new TextEncoder().encode(variant.svgMarkup);
+        const assetKey = `${artifactId}_v${idx + 1}`;
+        const safeBrand = logoBundle.plan.brandName.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'ANNY_Logo';
+        const downloadUrl = this.storeImageAsset({
+          assetKey,
+          artifactId,
+          bytes: variantBytes,
+          mimeType: 'image/svg+xml',
+          filename: `${safeBrand}_${variant.id}_${String(idx + 1).padStart(2, '0')}.svg`,
+          ownerUserId: req.ownerUserId,
+          ownerOrgId: req.ownerOrgId,
+          createdAt: nowIso,
+        });
+        return {
+          id: `${artifactId}_${variant.id}`,
+          index: idx + 1,
+          label: variant.label,
+          url: variant.dataUrl,
+          downloadUrl,
+          mimeType: 'image/svg+xml',
+          format: 'svg',
+          width: variant.width,
+          height: variant.height,
+          byteLength: variantBytes.byteLength,
+          sha256: variant.sha256,
+          provider: 'local-vector-svg',
+          model: 'anny-vector-svg-v1',
+          prompt: req.prompt,
+          category: classification.category,
+          createdAt: nowIso,
+          revisionNumber: logoBundle.plan.revisionNumber,
+          parentArtifactId: req.parentArtifactId || req.activeContext?.artifactId,
+          originalImageUrl,
+          variantType: variant.variantType,
+        };
+      });
+
       // Optionally also synthesize a raster master when a cloud/local raster provider is configured
       // and the caller did not explicitly request vector-only.
       if (req.providerPreference !== 'local-vector-svg') {
         try {
           let rasterResult: { bytes: Uint8Array; mimeType: string; model: string; provider: string } | null = null;
-          if (getGeminiApiKey() && (req.providerPreference === 'auto' || !req.providerPreference || req.providerPreference === 'gemini')) {
+          if (this.customImageAdapter) {
+            rasterResult = await this.customImageAdapter({
+              prompt: enhanced.enhancedPrompt,
+              aspectRatio: '1:1',
+              optionIndex: 0,
+              totalCount: 1,
+              highResolution: req.highResolution,
+            });
+          } else if (getGeminiApiKey() && (req.providerPreference === 'auto' || !req.providerPreference || req.providerPreference === 'gemini')) {
             const g = await this.callGeminiImageProvider({
               prompt: enhanced.enhancedPrompt,
               aspectRatio: '1:1',
@@ -571,7 +713,7 @@ class CreativeGenerationService {
               declaredMimeType: rasterResult.mimeType,
             });
             if (rasterQuality.valid) {
-              if (req.enableVisionQa !== false) {
+              if (req.enableVisionQa !== false && !this.customImageAdapter) {
                 const semantic = await this.runSemanticLogoVisionCheck(
                   rasterResult.bytes,
                   rasterQuality.mimeType,
@@ -581,10 +723,10 @@ class CreativeGenerationService {
                 rasterQuality.semanticReviewStatus = semantic.status;
                 rasterQuality.semanticNotes = semantic.notes;
               }
-              // Only attach raster master if semantic check did NOT flag a human portrait mismatch!
               if (rasterQuality.semanticReviewStatus !== 'mismatch') {
+                const rasterUrl = `data:${rasterQuality.mimeType};base64,${bytesToBase64(rasterResult.bytes)}`;
                 logoBundle.rasterMaster = {
-                  url: `data:${rasterQuality.mimeType};base64,${bytesToBase64(rasterResult.bytes)}`,
+                  url: rasterUrl,
                   mimeType: rasterQuality.mimeType,
                   width: rasterQuality.width,
                   height: rasterQuality.height,
@@ -592,6 +734,39 @@ class CreativeGenerationService {
                   model: rasterResult.model,
                   quality: rasterQuality,
                 };
+                const ext = rasterQuality.format === 'jpeg' ? 'jpg' : rasterQuality.format === 'webp' ? 'webp' : 'png';
+                const rasterKey = `${artifactId}_raster`;
+                const rasterDownloadUrl = this.storeImageAsset({
+                  assetKey: rasterKey,
+                  artifactId,
+                  bytes: rasterResult.bytes,
+                  mimeType: rasterQuality.mimeType,
+                  filename: `${logoBundle.plan.brandName.replace(/[^a-zA-Z0-9]+/g, '_') || 'ANNY_Logo'}_Master.${ext}`,
+                  ownerUserId: req.ownerUserId,
+                  ownerOrgId: req.ownerOrgId,
+                  createdAt: nowIso,
+                });
+                galleryOptions.push({
+                  id: `${artifactId}_raster_master`,
+                  index: galleryOptions.length + 1,
+                  label: 'Raster Master',
+                  url: rasterUrl,
+                  downloadUrl: rasterDownloadUrl,
+                  mimeType: rasterQuality.mimeType,
+                  format: rasterQuality.format === 'unknown' ? 'png' : rasterQuality.format,
+                  width: rasterQuality.width,
+                  height: rasterQuality.height,
+                  byteLength: rasterQuality.byteLength,
+                  sha256: rasterQuality.sha256,
+                  provider: rasterResult.provider,
+                  model: rasterResult.model,
+                  prompt: req.prompt,
+                  category: classification.category,
+                  createdAt: nowIso,
+                  revisionNumber: logoBundle.plan.revisionNumber,
+                  parentArtifactId: req.parentArtifactId || req.activeContext?.artifactId,
+                  originalImageUrl,
+                });
               }
             }
           }
@@ -611,17 +786,20 @@ class CreativeGenerationService {
         provider: 'local-vector-svg',
         model: 'anny-vector-svg-v1',
         quality,
+        images: galleryOptions,
+        requestedCount: galleryOptions.length,
+        originalImageUrl,
         logoBundle,
-        generatedAt: new Date().toISOString(),
+        generatedAt: nowIso,
         revisionNumber: logoBundle.plan.revisionNumber,
         parentArtifactId: req.parentArtifactId || req.activeContext?.artifactId,
       };
     }
 
-    // 2. RASTER IMAGE GENERATION & REFERENCE IMAGE EDITING PIPELINE
+    // 2. RASTER IMAGE GENERATION, MULTI-OPTION GALLERY & REFERENCE-PRESERVING IMAGE EDITING PIPELINE
     const enhanced = buildEnhancedPrompt(classification);
 
-    if (classification.requiresReferenceImage && (!req.referenceImages || req.referenceImages.length === 0)) {
+    if (classification.requiresReferenceImage && hydratedRefs.length === 0) {
       return {
         success: false,
         artifactId,
@@ -647,68 +825,193 @@ class CreativeGenerationService {
           errors: ['Reference image is required for image editing or transformation.'],
           warnings: [],
         },
-        generatedAt: new Date().toISOString(),
-        revisionNumber: 1,
-        error: 'Please attach a reference image so ANNY can preserve the original subject and composition while applying your edit.',
-        recoveryGuidance: 'Upload or drag-and-drop the source image into the composer, then submit your edit instruction.',
+        generatedAt: nowIso,
+        revisionNumber: nextRevisionNumber,
+        error: 'Please select a generated image or upload a reference image so ANNY can preserve the original subject and composition while applying your edit.',
+        recoveryGuidance: 'Click "Edit" on any generated image or upload a source image into the composer, then submit your edit instruction.',
       };
     }
 
-    const attempts: string[] = [];
-    let generated: { bytes: Uint8Array; mimeType: string; model: string; provider: string } | null = null;
+    const variationAngles = [
+      '',
+      'Variation 2: Distinct camera framing and balanced architectural lighting while staying completely faithful to the prompt.',
+      'Variation 3: Alternative composition perspective with crisp material detail and atmospheric depth.',
+      'Variation 4: Distinct editorial framing and lighting contrast, unique visual execution.',
+    ];
 
     const tryGemini = req.providerPreference === 'auto' || !req.providerPreference || req.providerPreference === 'gemini';
     const tryOpenAi =
-      (!req.referenceImages || req.referenceImages.length === 0) &&
+      hydratedRefs.length === 0 &&
       (req.providerPreference === 'auto' || !req.providerPreference || req.providerPreference === 'openai');
     const tryLocalSd =
-      (!req.referenceImages || req.referenceImages.length === 0) &&
+      hydratedRefs.length === 0 &&
       (req.providerPreference === 'auto' || !req.providerPreference || req.providerPreference === 'local-sd');
 
-    if (tryGemini && getGeminiApiKey()) {
-      try {
-        const res = await this.callGeminiImageProvider({
-          prompt: enhanced.enhancedPrompt,
-          aspectRatio: effectiveAspect || '1:1',
-          highResolution: req.highResolution,
-          referenceImages: req.referenceImages,
-        });
-        generated = { ...res, provider: 'gemini-image' };
-      } catch (e: any) {
-        attempts.push(`Gemini Image: ${e?.message || 'failed'}`);
+    const attempts: string[] = [];
+
+    const generateSingleOption = async (optionIdx: number): Promise<{
+      bytes: Uint8Array;
+      mimeType: string;
+      model: string;
+      provider: string;
+    } | null> => {
+      const directive = requestedCount > 1 ? variationAngles[optionIdx % variationAngles.length] : '';
+      const optionPrompt = directive
+        ? `${enhanced.enhancedPrompt}\n\n${directive}`
+        : enhanced.enhancedPrompt;
+
+      if (this.customImageAdapter) {
+        try {
+          return await this.customImageAdapter({
+            prompt: optionPrompt,
+            aspectRatio: effectiveAspect || '1:1',
+            optionIndex: optionIdx,
+            totalCount: requestedCount,
+            highResolution: req.highResolution,
+            referenceImages: hydratedRefs.length > 0 ? hydratedRefs : undefined,
+          });
+        } catch (e: any) {
+          attempts.push(`Custom Image Adapter (option ${optionIdx + 1}): ${e?.message || 'failed'}`);
+          return null;
+        }
       }
+
+      if (tryGemini && getGeminiApiKey()) {
+        try {
+          const res = await this.callGeminiImageProvider({
+            prompt: optionPrompt,
+            aspectRatio: effectiveAspect || '1:1',
+            highResolution: req.highResolution,
+            referenceImages: hydratedRefs.length > 0 ? hydratedRefs : undefined,
+          });
+          return { ...res, provider: 'gemini-image' };
+        } catch (e: any) {
+          attempts.push(`Gemini Image: ${e?.message || 'failed'}`);
+        }
+      }
+
+      if (tryOpenAi && getOpenAiApiKey()) {
+        try {
+          const res = await this.callOpenAiImageProvider({
+            prompt: optionPrompt,
+            aspectRatio: effectiveAspect || '1:1',
+          });
+          return { ...res, provider: 'openai-image' };
+        } catch (e: any) {
+          attempts.push(`OpenAI Image: ${e?.message || 'failed'}`);
+        }
+      }
+
+      if (tryLocalSd && getValidatedLocalSdUrl()) {
+        try {
+          const res = await this.callLocalSdProvider({
+            prompt: optionPrompt,
+            negativePrompt: enhanced.negativeConstraints.join(', '),
+            aspectRatio: effectiveAspect || '1:1',
+          });
+          return { ...res, provider: 'local-sd-webui' };
+        } catch (e: any) {
+          attempts.push(`Local Stable Diffusion: ${e?.message || 'failed'}`);
+        }
+      }
+
+      return null;
+    };
+
+    const collectedOptions: GeneratedImageOption[] = [];
+    let primaryQuality: ImageQualityReport | null = null;
+    let primaryProvider = '';
+    let primaryModel = '';
+    const seenHashes = new Set<string>(previousHashes);
+
+    // Run bounded generation for requestedCount options (probe option 0 first so auth/quota errors fail fast instead of burning 4 doomed calls)
+    const firstRaw = await generateSingleOption(0);
+    const rawResults: Array<{ idx: number; res: { bytes: Uint8Array; mimeType: string; model: string; provider: string } | null }> = [
+      { idx: 0, res: firstRaw },
+    ];
+
+    if (firstRaw && requestedCount > 1) {
+      const remainingIndices = Array.from({ length: requestedCount - 1 }, (_, i) => i + 1);
+      const parallelBatch = await Promise.all(
+        remainingIndices.map(async (idx) => ({
+          idx,
+          res: await generateSingleOption(idx),
+        }))
+      );
+      rawResults.push(...parallelBatch);
     }
 
-    if (!generated && tryOpenAi && getOpenAiApiKey()) {
-      try {
-        const res = await this.callOpenAiImageProvider({
-          prompt: enhanced.enhancedPrompt,
-          aspectRatio: effectiveAspect || '1:1',
-        });
-        generated = { ...res, provider: 'openai-image' };
-      } catch (e: any) {
-        attempts.push(`OpenAI Image: ${e?.message || 'failed'}`);
+    for (const item of rawResults) {
+      if (!item.res) continue;
+      const optionQuality = validateImageAsset({
+        bytes: item.res.bytes,
+        declaredMimeType: item.res.mimeType,
+        previousHashes: seenHashes,
+        requireUnique: Boolean(req.parentArtifactId) && collectedOptions.length === 0,
+      });
+      if (!optionQuality.valid) {
+        attempts.push(`Option ${item.idx + 1} failed validation: ${optionQuality.errors.join('; ')}`);
+        continue;
       }
+      seenHashes.add(optionQuality.sha256);
+
+      const optionFormat = optionQuality.format === 'unknown' ? 'png' : optionQuality.format;
+      const ext = optionFormat === 'jpeg' ? 'jpg' : optionFormat;
+      const optionIndex = collectedOptions.length + 1;
+      const assetKey = `${artifactId}_opt${optionIndex}`;
+      const stem = req.prompt
+        .replace(/[^a-zA-Z0-9\s]/g, ' ')
+        .trim()
+        .split(/\s+/)
+        .slice(0, 4)
+        .join('_') || 'ANNY_Image';
+      const downloadUrl = this.storeImageAsset({
+        assetKey,
+        artifactId,
+        bytes: item.res.bytes,
+        mimeType: optionQuality.mimeType,
+        filename: `${stem}_${String(optionIndex).padStart(2, '0')}.${ext}`,
+        ownerUserId: req.ownerUserId,
+        ownerOrgId: req.ownerOrgId,
+        createdAt: nowIso,
+      });
+
+      const dataUrl = `data:${optionQuality.mimeType};base64,${bytesToBase64(item.res.bytes)}`;
+      if (!primaryQuality) {
+        primaryQuality = optionQuality;
+        primaryProvider = item.res.provider;
+        primaryModel = item.res.model;
+      }
+
+      collectedOptions.push({
+        id: `${artifactId}_option_${optionIndex}`,
+        index: optionIndex,
+        label: requestedCount > 1 ? `Option ${optionIndex}` : classification.isRevision ? `Revision ${nextRevisionNumber}` : 'Generated Image',
+        url: dataUrl,
+        downloadUrl,
+        mimeType: optionQuality.mimeType,
+        format: optionFormat,
+        width: optionQuality.width,
+        height: optionQuality.height,
+        byteLength: optionQuality.byteLength,
+        sha256: optionQuality.sha256,
+        provider: item.res.provider,
+        model: item.res.model,
+        prompt: req.prompt,
+        category: classification.category,
+        createdAt: nowIso,
+        revisionNumber: nextRevisionNumber,
+        parentArtifactId: req.parentArtifactId || req.activeContext?.artifactId,
+        originalImageUrl,
+      });
     }
 
-    if (!generated && tryLocalSd && getValidatedLocalSdUrl()) {
-      try {
-        const res = await this.callLocalSdProvider({
-          prompt: enhanced.enhancedPrompt,
-          negativePrompt: enhanced.negativeConstraints.join(', '),
-          aspectRatio: effectiveAspect || '1:1',
-        });
-        generated = { ...res, provider: 'local-sd-webui' };
-      } catch (e: any) {
-        attempts.push(`Local Stable Diffusion: ${e?.message || 'failed'}`);
-      }
-    }
-
-    if (!generated) {
-      const noProviderConfigured = !getGeminiApiKey() && !getOpenAiApiKey() && !getValidatedLocalSdUrl();
+    if (collectedOptions.length === 0 || !primaryQuality) {
+      const noProviderConfigured = !this.customImageAdapter && !getGeminiApiKey() && !getOpenAiApiKey() && !getValidatedLocalSdUrl();
+      const uniqueAttempts = Array.from(new Set(attempts));
       const errorMsg = noProviderConfigured
         ? `No raster image generation provider is currently configured for ${classification.category.replace(/_/g, ' ').toLowerCase()} generation.`
-        : `All configured image providers failed: ${attempts.join(' | ')}`;
+        : `All configured image providers failed: ${uniqueAttempts.join(' | ')}`;
       return {
         success: false,
         artifactId,
@@ -734,54 +1037,33 @@ class CreativeGenerationService {
           errors: [errorMsg],
           warnings: [],
         },
-        generatedAt: new Date().toISOString(),
-        revisionNumber: 1,
+        requestedCount,
+        generatedAt: nowIso,
+        revisionNumber: nextRevisionNumber,
         error: errorMsg,
         recoveryGuidance:
           'Configure GEMINI_API_KEY, OPENAI_API_KEY, or a free local Stable Diffusion endpoint (SD_WEBUI_URL) on the server. Note: Vector brand logos and icons work 100% locally offline without any external API key.',
       };
     }
 
-    const quality = validateImageAsset({
-      bytes: generated.bytes,
-      declaredMimeType: generated.mimeType,
-      previousHashes,
-      requireUnique: Boolean(req.parentArtifactId),
-    });
-
-    if (!quality.valid) {
-      return {
-        success: false,
-        artifactId,
-        classification,
-        enhancedPrompt: enhanced,
-        primaryImageUrl: '',
-        primaryMimeType: quality.mimeType,
-        primaryFormat: 'png',
-        provider: generated.provider,
-        model: generated.model,
-        quality,
-        generatedAt: new Date().toISOString(),
-        revisionNumber: 1,
-        error: `Image failed quality validation: ${quality.errors.join('; ')}`,
-        recoveryGuidance: 'Retry generation or refine the prompt.',
-      };
-    }
-
+    const primary = collectedOptions[0];
     return {
       success: true,
       artifactId,
       classification,
       enhancedPrompt: enhanced,
-      primaryImageUrl: `data:${quality.mimeType};base64,${bytesToBase64(generated.bytes)}`,
-      primaryMimeType: quality.mimeType,
-      primaryFormat: quality.format === 'unknown' ? 'png' : quality.format,
-      provider: generated.provider,
-      model: generated.model,
-      quality,
-      generatedAt: new Date().toISOString(),
-      revisionNumber: 1,
-      parentArtifactId: req.parentArtifactId,
+      primaryImageUrl: primary.url,
+      primaryMimeType: primary.mimeType,
+      primaryFormat: primary.format,
+      provider: primaryProvider,
+      model: primaryModel,
+      quality: primaryQuality,
+      images: collectedOptions,
+      requestedCount,
+      originalImageUrl,
+      generatedAt: nowIso,
+      revisionNumber: nextRevisionNumber,
+      parentArtifactId: req.parentArtifactId || req.activeContext?.artifactId,
     };
   }
 

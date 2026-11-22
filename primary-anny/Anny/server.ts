@@ -904,20 +904,36 @@ async function startServer() {
 
       const pipelineLog = kernelOutput.pipelineLog;
       let synthesizedFiles = pipelineLog?.coding?.filesSynthesized || {};
-      if (Object.keys(synthesizedFiles).length === 0 && kernelOutput.artifacts) {
+      let primaryAppArtifact: any = null;
+      if (kernelOutput.artifacts) {
         for (const art of kernelOutput.artifacts) {
           if (art.files && typeof art.files === 'object') {
-            synthesizedFiles = { ...synthesizedFiles, ...art.files };
+            if (!primaryAppArtifact) primaryAppArtifact = art;
+            if (Object.keys(synthesizedFiles).length === 0) {
+              synthesizedFiles = { ...synthesizedFiles, ...art.files };
+            }
           }
         }
       }
       const isBuildRequest = reqType === 'build';
       if (isBuildRequest && Object.keys(synthesizedFiles).length === 0) {
-        console.warn('[AnnyCorePipeline] Build produced no files. Returning a truthful failure instead of a fake project.');
+        const detailedReason =
+          (kernelOutput as any)?.error ||
+          (kernelOutput as any)?.failureReason ||
+          (typeof kernelOutput.response === 'string' && kernelOutput.response.includes('FAILURE')
+            ? kernelOutput.response.replace(/^ANNY EXECUTION FAILURE:\s*/i, '').trim()
+            : '') ||
+          'PROJECT_GENERATION_FAILED: no valid project files were produced.';
+        const formattedError = detailedReason.startsWith('PROJECT_GENERATION_FAILED:')
+          ? detailedReason
+          : `PROJECT_GENERATION_FAILED: ${detailedReason}`;
+        console.warn('[AnnyCorePipeline] Build produced no valid files:', formattedError);
         return res.status(422).json({
           success: false,
-          error: 'PROJECT_GENERATION_FAILED: no valid project files were produced.',
-          taskId: pipelineLog?.taskId || `task_${Date.now()}`,
+          error: formattedError,
+          diagnostics: (kernelOutput as any)?.diagnostics || formattedError,
+          stages: (kernelOutput as any)?.stages || [],
+          taskId: pipelineLog?.taskId || kernelOutput.executionId || `task_${Date.now()}`,
           pipelineLog,
           verificationStatus: 'FAILED'
         });
@@ -934,9 +950,9 @@ async function startServer() {
             project_id: cleanProjId,
             ownerUserId: verifiedUserId,
             userId: verifiedUserId,
-            name: String(req.body.projectName || cleanProjId).slice(0, 140),
-            description: String(pipelineLog?.coding?.summary || 'ANNY Build Project').slice(0, 500),
-            category: 'Website',
+            name: String(primaryAppArtifact?.manifest?.projectName || req.body.projectName || cleanProjId).slice(0, 140),
+            description: String(primaryAppArtifact?.manifest?.description || pipelineLog?.coding?.summary || 'ANNY Build Project').slice(0, 500),
+            category: primaryAppArtifact?.projectType || 'Website',
             model: 'Anny Core',
             status: 'Active',
             files_count: Object.keys(synthesizedFiles).length
@@ -959,9 +975,14 @@ async function startServer() {
         : [];
       return res.json({
         success: true,
-        taskId: pipelineLog?.taskId || `task_${Date.now()}`,
+        taskId: pipelineLog?.taskId || kernelOutput.executionId || `task_${Date.now()}`,
         files: synthesizedFiles,
-        summary: pipelineLog?.coding?.summary || 'ANNY Core Synthesis Complete',
+        summary: primaryAppArtifact?.manifest?.description || pipelineLog?.coding?.summary || 'ANNY Core Synthesis Complete',
+        manifest: primaryAppArtifact?.manifest,
+        projectType: primaryAppArtifact?.projectType,
+        verification: primaryAppArtifact?.verification,
+        repairAttempts: primaryAppArtifact?.repairAttempts ?? 0,
+        stages: primaryAppArtifact?.stages || [],
         pipelineLog,
         evaluation: pipelineLog?.evaluation,
         modelsExecuted: pipelineLog?.modelsExecuted,
@@ -1736,7 +1757,7 @@ async function startServer() {
     });
   });
 
-  app.post("/api/creative/image", requireAuth(), async (req, res) => {
+  app.post("/api/creative/image", requireAuth(), async (req: AuthenticatedRequest, res) => {
     const body = req.body || {};
     const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
     if (!prompt || prompt.length > 4000) {
@@ -1746,11 +1767,16 @@ async function startServer() {
     const execPolicy = providerRegistryService.getExecutionPolicy();
     const providerPreference =
       execPolicy.mode === 'OFFLINE_ONLY' ? 'local-vector-svg' : body.providerPreference || 'auto';
+    const requestedCount =
+      typeof body.count === 'number' && Number.isFinite(body.count)
+        ? Math.min(4, Math.max(1, Math.floor(body.count)))
+        : undefined;
 
     try {
       const result = await creativeGenerationService.generateCreativeImage({
         prompt,
         aspectRatio: typeof body.aspectRatio === 'string' ? body.aspectRatio : undefined,
+        count: requestedCount,
         highResolution: Boolean(body.highResolution),
         providerPreference,
         referenceImages: Array.isArray(body.referenceImages) ? body.referenceImages.slice(0, 6) : undefined,
@@ -1759,6 +1785,8 @@ async function startServer() {
         parentArtifactId: typeof body.parentArtifactId === 'string' ? body.parentArtifactId : undefined,
         previousHashes: Array.isArray(body.previousHashes) ? body.previousHashes.slice(0, 30) : undefined,
         enableVisionQa: body.enableVisionQa !== false,
+        ownerUserId: req.authUser?.uid || req.user?.userId || req.user?.id || 'anonymous',
+        ownerOrgId: req.authUser?.companyId || 'personal',
       });
 
       if (!result.success) {
@@ -1771,6 +1799,32 @@ async function startServer() {
         error: err?.message || 'Creative image generation failed.',
       });
     }
+  });
+
+  app.get("/api/creative/image/asset/:assetKey", requireAuth(), (req: AuthenticatedRequest, res) => {
+    const assetKey = String(req.params.assetKey || '').trim();
+    if (!/^[a-zA-Z0-9_-]{4,128}$/.test(assetKey)) {
+      return res.status(400).json({ success: false, error: 'Invalid image asset identifier.' });
+    }
+    const requester = {
+      userId: req.authUser?.uid || req.user?.userId || req.user?.id,
+      orgId: req.authUser?.companyId || 'personal',
+      isAdmin: req.authUser?.isAdmin === true || req.user?.isAdmin === true,
+    };
+    const asset = creativeGenerationService.getImageAsset(assetKey, requester);
+    if (!asset) {
+      return res.status(404).json({ success: false, error: 'Image asset not found or access denied.' });
+    }
+    res.setHeader('Content-Type', asset.mimeType);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    if (asset.mimeType === 'image/svg+xml') {
+      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    }
+    const safeFilename = asset.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const disposition = req.query.download === '1' ? 'attachment' : 'inline';
+    res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+    return res.status(200).send(Buffer.from(asset.bytes));
   });
 
   app.post("/api/creative/video/plan", requireAuth(), async (req, res) => {
@@ -3236,7 +3290,7 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
 
     console.log(`Serving static files from: ${distPath}`);
     app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
+    app.get('*', redisRateLimiter.middleware, (_req, res) => {
       const indexFile = path.join(distPath, 'index.html');
       if (fs.existsSync(indexFile)) {
         res.sendFile(indexFile);

@@ -31,13 +31,15 @@ import {
   Wand2,
 } from 'lucide-react';
 import { AnnyCodeExplorer } from '../components/AnnyCodeExplorer';
+import { GeneratedImageGallery } from '../components/GeneratedImageGallery';
+import type { LightboxImageItem } from '../components/ImageLightboxViewer';
 import { WorkspaceManager } from '../core/workspaceManager';
 import { creativeArtifactStore } from '../creative/CreativeArtifactStore';
+import { downloadVerifiedImage } from '../creative/imageDownloadService';
 import type {
   CreativeArtifactRecord,
   CreativeImageResult,
   CreativeProviderCapability,
-  LogoVariant,
   VideoJobRecord,
 } from '../creative/types';
 import { fetchWithAuth } from '../lib/apiUtils';
@@ -48,15 +50,6 @@ interface KingKenStudiosViewProps {
 }
 
 type StudioTab = 'graphics' | 'video' | 'music' | 'web' | 'artifacts';
-
-function triggerDownload(url: string, filename: string) {
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-}
 
 export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
   onToggleMobileMenu,
@@ -70,11 +63,13 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
   // Graphics & Logo Studio State
   const [graphicsPrompt, setGraphicsPrompt] = useState('Create a premium luxury logo for King Ken Studios');
   const [graphicsAspect, setGraphicsAspect] = useState<'1:1' | '16:9' | '9:16' | '4:3' | '3:4'>('1:1');
+  const [graphicsCount, setGraphicsCount] = useState<1 | 2 | 4>(4);
   const [graphicsRefImage, setGraphicsRefImage] = useState<{ name: string; mimeType: string; data: string } | null>(null);
   const [graphicsLoading, setGraphicsLoading] = useState(false);
   const [graphicsResult, setGraphicsResult] = useState<CreativeImageResult | null>(null);
+  const [graphicsRevisions, setGraphicsRevisions] = useState<CreativeImageResult[]>([]);
+  const [selectedEditImage, setSelectedEditImage] = useState<LightboxImageItem | null>(null);
   const [graphicsError, setGraphicsError] = useState<string | null>(null);
-  const [selectedLogoVariantIdx, setSelectedLogoVariantIdx] = useState(0);
   const [revisionNote, setRevisionNote] = useState('');
 
   // Video Studio State
@@ -211,13 +206,24 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
     setGraphicsError(null);
 
     try {
+      const effectiveRefImages = graphicsRefImage
+        ? [graphicsRefImage]
+        : isRevision && selectedEditImage?.url?.startsWith('data:image/') && selectedEditImage.mimeType !== 'image/svg+xml'
+          ? [{
+              name: selectedEditImage.label || 'selected-image',
+              mimeType: selectedEditImage.mimeType || 'image/png',
+              data: selectedEditImage.url,
+            }]
+          : undefined;
+
       const response = await fetchWithAuth('/api/creative/image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: effectivePrompt,
           aspectRatio: graphicsAspect,
-          referenceImages: graphicsRefImage ? [graphicsRefImage] : undefined,
+          count: isRevision ? 1 : graphicsCount,
+          referenceImages: effectiveRefImages,
           previousLogoPlan: isRevision ? graphicsResult?.logoBundle?.plan : undefined,
           parentArtifactId: isRevision ? graphicsResult?.artifactId : undefined,
           activeContext: isRevision && graphicsResult
@@ -227,6 +233,10 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
                 category: graphicsResult.classification.category,
                 brandName: graphicsResult.logoBundle?.plan.brandName,
                 logoPlan: graphicsResult.logoBundle?.plan,
+                selectedImageId: selectedEditImage?.id,
+                selectedImageUrl: selectedEditImage?.url || graphicsResult.primaryImageUrl,
+                selectedImageMimeType: selectedEditImage?.mimeType || graphicsResult.primaryMimeType,
+                revisionNumber: graphicsResult.revisionNumber,
               }
             : undefined,
         }),
@@ -238,7 +248,7 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
       }
 
       setGraphicsResult(data);
-      setSelectedLogoVariantIdx(0);
+      setGraphicsRevisions((prev) => (isRevision ? [...prev, data] : [data]));
       if (isRevision) setRevisionNote('');
 
       const project = creativeArtifactStore.ensureProject('King Ken Studios');
@@ -266,7 +276,7 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
           brandName: data.logoBundle?.plan.brandName,
           logoPlan: data.logoBundle?.plan,
           dimensions: `${data.quality.width}x${data.quality.height}`,
-          variantCount: data.logoBundle?.variants.length || 1,
+          variantCount: data.images?.length || data.logoBundle?.variants.length || 1,
         },
       });
     } catch (err: any) {
@@ -363,8 +373,6 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
       setMusicLoading(false);
     }
   };
-
-  const activeVariant: LogoVariant | undefined = graphicsResult?.logoBundle?.variants[selectedLogoVariantIdx];
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#030512] text-slate-100 overflow-hidden">
@@ -484,7 +492,7 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
                     className="w-full rounded-xl bg-black/40 border border-white/15 p-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-400/60"
                   />
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="block text-[11px] text-slate-400 mb-1">Aspect Ratio</label>
                       <select
@@ -500,7 +508,19 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
                       </select>
                     </div>
                     <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">Reference Image (Optional Edit)</label>
+                      <label className="block text-[11px] text-slate-400 mb-1">Options</label>
+                      <select
+                        value={graphicsCount}
+                        onChange={(e) => setGraphicsCount(Number(e.target.value) as 1 | 2 | 4)}
+                        className="w-full rounded-lg bg-black/40 border border-white/15 px-3 py-2 text-xs text-white"
+                      >
+                        <option value={1}>1 Image</option>
+                        <option value={2}>2 Options</option>
+                        <option value={4}>4 Options (Gallery)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-slate-400 mb-1">Upload Image to Edit</label>
                       <label className="flex items-center justify-center gap-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/15 px-3 py-2 text-xs text-slate-200 cursor-pointer">
                         <Upload className="w-3.5 h-3.5" />
                         <span className="truncate">{graphicsRefImage ? graphicsRefImage.name : 'Upload Image'}</span>
@@ -548,15 +568,22 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
                 {/* Iterative Refinement Box when a Logo / Image is active */}
                 {graphicsResult && (
                   <div className="rounded-2xl border border-white/10 bg-[#070b1e] p-5 space-y-3">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-amber-300">
-                      Iterative Revision (Rev {graphicsResult.revisionNumber})
-                    </h3>
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-amber-300">
+                        Non-Destructive Edit (Rev {graphicsResult.revisionNumber})
+                      </h3>
+                      {selectedEditImage && (
+                        <span className="text-[10px] font-mono text-cyan-300 truncate max-w-[180px]">
+                          Target: {selectedEditImage.label || 'Selected'}
+                        </span>
+                      )}
+                    </div>
                     <div className="flex gap-2">
                       <input
                         type="text"
                         value={revisionNote}
                         onChange={(e) => setRevisionNote(e.target.value)}
-                        placeholder='e.g., "Make the logo more minimal" or "Change it to emerald and white"'
+                        placeholder='e.g., "Make the colors warmer", "Change background to studio", or "More minimal"'
                         className="flex-1 rounded-lg bg-black/40 border border-white/15 px-3 py-2 text-xs text-white placeholder-slate-500"
                       />
                       <button
@@ -565,9 +592,28 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
                         onClick={() => handleGenerateGraphics(true)}
                         className="px-3.5 py-2 rounded-lg bg-cyan-500/20 border border-cyan-500/40 text-cyan-200 hover:bg-cyan-500/30 text-xs font-semibold cursor-pointer disabled:opacity-50"
                       >
-                        Refine
+                        Apply Edit
                       </button>
                     </div>
+                    {graphicsRevisions.length > 1 && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-white/10">
+                        <span className="text-[10px] uppercase tracking-wider text-slate-400 mr-1">Revisions:</span>
+                        {graphicsRevisions.map((rev, rIdx) => (
+                          <button
+                            key={rev.artifactId}
+                            type="button"
+                            onClick={() => setGraphicsResult(rev)}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-mono border cursor-pointer transition ${
+                              graphicsResult.artifactId === rev.artifactId
+                                ? 'bg-amber-500/20 border-amber-400/50 text-amber-200 font-bold'
+                                : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                            }`}
+                          >
+                            {rIdx === 0 ? 'Original (Rev 1)' : `Rev ${rev.revisionNumber}`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -584,90 +630,73 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
                         <h3 className="text-base font-bold text-white">
                           {graphicsResult.logoBundle
                             ? `${graphicsResult.logoBundle.plan.brandName} — Brand Logo Kit`
-                            : 'Verified Image Output'}
+                            : 'Verified Image Gallery'}
                         </h3>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-medium flex items-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          {graphicsResult.primaryFormat.toUpperCase()} · {graphicsResult.quality.width}×{graphicsResult.quality.height}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            triggerDownload(
-                              activeVariant?.dataUrl || graphicsResult.primaryImageUrl,
-                              `${(graphicsResult.logoBundle?.plan.brandName || 'anny-asset').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${activeVariant?.id || 'asset'}.${graphicsResult.primaryFormat}`
-                            )
-                          }
-                          className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          Download {graphicsResult.primaryFormat.toUpperCase()}
-                        </button>
-                      </div>
+                      <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-medium flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        {graphicsResult.primaryFormat.toUpperCase()} · {graphicsResult.quality.width}×{graphicsResult.quality.height}
+                      </span>
                     </div>
 
-                    {/* Main Preview Canvas */}
-                    <div className="rounded-2xl border border-white/10 bg-[#040610] p-6 flex items-center justify-center min-h-[340px]">
-                      <img
-                        src={activeVariant?.dataUrl || graphicsResult.primaryImageUrl}
-                        alt={graphicsResult.logoBundle?.plan.brandName || graphicsResult.classification.preservedOriginalPrompt}
-                        className="max-h-[340px] max-w-full object-contain rounded-xl shadow-2xl"
-                      />
-                    </div>
+                    {/* Multi-Option Gallery + Fullscreen Lightbox + Verified Downloads */}
+                    <GeneratedImageGallery
+                      images={
+                        graphicsResult.images && graphicsResult.images.length > 0
+                          ? graphicsResult.images
+                          : [
+                              {
+                                id: graphicsResult.artifactId,
+                                label: graphicsResult.logoBundle?.plan.brandName || 'Generated Image',
+                                url: graphicsResult.primaryImageUrl,
+                                mimeType: graphicsResult.primaryMimeType,
+                                format: graphicsResult.primaryFormat,
+                                width: graphicsResult.quality.width,
+                                height: graphicsResult.quality.height,
+                                provider: graphicsResult.provider,
+                                model: graphicsResult.model,
+                                prompt: graphicsResult.classification.preservedOriginalPrompt,
+                                category: graphicsResult.classification.category,
+                                revisionNumber: graphicsResult.revisionNumber,
+                                originalImageUrl: graphicsResult.originalImageUrl,
+                              },
+                            ]
+                      }
+                      selectedImageId={selectedEditImage?.id}
+                      onSelectForEdit={(img) => {
+                        setSelectedEditImage(img);
+                        setRevisionNote('');
+                      }}
+                    />
 
-                    {/* Logo Kit Variant Switcher & Brand Specs */}
+                    {/* Logo Kit Brand Specs */}
                     {graphicsResult.logoBundle && (
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                          {graphicsResult.logoBundle.variants.map((variant, idx) => (
-                            <button
-                              key={variant.id}
-                              type="button"
-                              onClick={() => setSelectedLogoVariantIdx(idx)}
-                              className={`rounded-xl border p-2 text-left transition-all cursor-pointer ${
-                                selectedLogoVariantIdx === idx
-                                  ? 'border-amber-400 bg-amber-400/10'
-                                  : 'border-white/10 bg-black/30 hover:border-white/25'
-                              }`}
-                            >
-                              <div className="h-20 flex items-center justify-center rounded-lg bg-[#050814] overflow-hidden mb-2">
-                                <img src={variant.dataUrl} alt={variant.label} className="max-h-full max-w-full object-contain" />
-                              </div>
-                              <div className="text-[11px] font-semibold text-slate-200 truncate">{variant.label}</div>
-                              <div className="text-[10px] text-slate-400">SVG · {variant.width}×{variant.height}</div>
-                            </button>
-                          ))}
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-white/10">
-                          <div>
-                            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">
-                              Brand Color Palette
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              {graphicsResult.logoBundle.plan.palette.slice(0, 5).map((swatch) => (
-                                <div key={swatch.name} className="flex items-center gap-1.5 rounded-lg bg-black/40 border border-white/10 px-2 py-1">
-                                  <span
-                                    className="w-3.5 h-3.5 rounded-full border border-white/20"
-                                    style={{ backgroundColor: swatch.hex }}
-                                  />
-                                  <span className="text-[11px] text-slate-200">{swatch.name}</span>
-                                  <span className="text-[10px] font-mono text-slate-400">{swatch.hex}</span>
-                                </div>
-                              ))}
-                            </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-white/10">
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                            Brand Color Palette
                           </div>
-                          <div>
-                            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">
-                              Identity Spec
-                            </div>
-                            <div className="text-xs text-slate-300 space-y-1">
-                              <div>Monogram: <span className="font-mono text-amber-300">{graphicsResult.logoBundle.plan.monogram}</span> · Type: {graphicsResult.logoBundle.plan.logoType}</div>
-                              <div>Display Font: <span className="text-white">{graphicsResult.logoBundle.plan.typography.displayFont}</span></div>
-                              <div>Provider: <span className="font-mono text-emerald-300">{graphicsResult.provider}</span></div>
-                            </div>
+                          <div className="flex flex-wrap gap-2">
+                            {graphicsResult.logoBundle.plan.palette.slice(0, 5).map((swatch) => (
+                              <div key={swatch.name} className="flex items-center gap-1.5 rounded-lg bg-black/40 border border-white/10 px-2 py-1">
+                                <span
+                                  className="w-3.5 h-3.5 rounded-full border border-white/20"
+                                  style={{ backgroundColor: swatch.hex }}
+                                />
+                                <span className="text-[11px] text-slate-200">{swatch.name}</span>
+                                <span className="text-[10px] font-mono text-slate-400">{swatch.hex}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                            Identity Spec
+                          </div>
+                          <div className="text-xs text-slate-300 space-y-1">
+                            <div>Monogram: <span className="font-mono text-amber-300">{graphicsResult.logoBundle.plan.monogram}</span> · Type: {graphicsResult.logoBundle.plan.logoType}</div>
+                            <div>Display Font: <span className="text-white">{graphicsResult.logoBundle.plan.typography.displayFont}</span></div>
+                            <div>Provider: <span className="font-mono text-emerald-300">{graphicsResult.provider}</span></div>
                           </div>
                         </div>
                       </div>
@@ -678,7 +707,7 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
                     <ImageIcon className="w-10 h-10 text-amber-400/70 mb-3" />
                     <h3 className="text-sm font-bold text-white">Graphics &amp; Brand Identity Canvas</h3>
                     <p className="text-xs text-slate-400 max-w-md mt-1">
-                      Generate verified vector SVG logo kits (working 100% offline with light, dark, icon, and emblem variants) or configured raster photography &amp; reference-preserving image edits.
+                      Generate verified vector SVG logo kits (working 100% offline with light, dark, icon, and emblem variants) or multi-option raster galleries with full lightbox inspection and non-destructive editing.
                     </p>
                   </div>
                 )}
@@ -1061,7 +1090,25 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
                       {art.url && (
                         <button
                           type="button"
-                          onClick={() => triggerDownload(art.url!, `${art.id}.${art.format}`)}
+                          onClick={() => {
+                            if (art.domain === 'IMAGE') {
+                              void downloadVerifiedImage(
+                                {
+                                  url: art.url!,
+                                  declaredMimeType: art.mimeType,
+                                  title: art.title || art.id,
+                                },
+                                { fetcher: (url, init) => fetchWithAuth(url, init) }
+                              );
+                            } else {
+                              const link = document.createElement('a');
+                              link.href = art.url!;
+                              link.download = `${art.id}.${art.format}`;
+                              document.body.appendChild(link);
+                              link.click();
+                              document.body.removeChild(link);
+                            }
+                          }}
                           className="mt-auto w-full py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-slate-200 flex items-center justify-center gap-1.5 cursor-pointer"
                         >
                           <Download className="w-3.5 h-3.5" />

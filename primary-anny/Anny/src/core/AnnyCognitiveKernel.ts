@@ -552,7 +552,16 @@ export class AnnyCognitiveKernel {
             model: preferredModel
           });
           finalOutput = synth.summary;
-          artifacts.push({ type: 'react_app', id: execId, files: synth.files });
+          artifacts.push({
+            type: 'react_app',
+            id: execId,
+            files: synth.files,
+            verification: synth.verification,
+            manifest: synth.manifest,
+            projectType: synth.projectType,
+            repairAttempts: synth.repairAttempts,
+            stages: synth.stages
+          });
         }
       } else {
         // Inject workspace code context into chat if requested via Pro Tools / Code Context
@@ -736,10 +745,14 @@ export class AnnyCognitiveKernel {
       annyTelemetry.logRequest(failureRecord);
 
       return {
-        response: `ANNY EXECUTION FAILURE: ${e.message}`,
+        response: `ANNY EXECUTION FAILURE: ${msg}`,
+        error: msg,
+        failureReason: msg,
         executionId: execId,
         status: 'FAILED',
-        diagnostics: `Trace: ${stages.join(' -> ')}`,
+        verificationStatus: 'FAILED',
+        stages,
+        diagnostics: `Trace: ${stages.join(' -> ')} | Error: ${msg}`,
         latencyMs: Date.now() - startTime
       } as any;
     }

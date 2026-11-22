@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ArrowLeft, ArrowRight, RotateCw, Loader2, AlertTriangle, Monitor, Tablet, Smartphone, Minimize2, Maximize2, Pencil } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
-import { AnnyBuildPreviewOverlay } from '../AnnyBuildPreviewOverlay';
+import { AnnyBuildPreviewOverlay, type BuildStageItem } from '../AnnyBuildPreviewOverlay';
 import { WorkspaceManager } from '../../core/workspaceManager';
 import {
   validatePreviewVfsSynMessage,
@@ -32,6 +32,10 @@ export interface WorkspacePreviewContainerProps {
   reloadKey: number;
   previewRuntimeReady: boolean;
   onOpenVisualEdit?: () => void;
+  buildStages?: BuildStageItem[];
+  buildError?: string;
+  buildDiagnostics?: string[];
+  onRetryBuild?: () => void;
 }
 
 export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps> = ({
@@ -49,7 +53,11 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
   activeProjectId,
   reloadKey,
   previewRuntimeReady,
-  onOpenVisualEdit
+  onOpenVisualEdit,
+  buildStages,
+  buildError,
+  buildDiagnostics,
+  onRetryBuild
 }) => {
   const [mobilePreset, setMobilePreset] = useState<'390x844' | '375x812' | '430x932'>('390x844');
   const stageRef = useRef<HTMLDivElement>(null);
@@ -342,13 +350,19 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
         className="flex-1 bg-[#03040c] flex items-center justify-center p-4 overflow-hidden relative isolate"
       >
         <AnimatePresence>
-          {buildState === 'in_progress' && (
+          {(buildState === 'in_progress' || buildState === 'failed') && (
             <AnnyBuildPreviewOverlay
-              isBuilding={true}
+              isBuilding={buildState === 'in_progress'}
+              buildState={buildState}
               userPrompt={currentBuildPrompt}
               currentStage={liveBuildAction}
               progressPct={buildProgressPct}
+              stages={buildStages}
+              errorMessage={buildError}
+              diagnostics={buildDiagnostics}
               onViewCode={() => setRightTab('code')}
+              onViewLogs={() => setRightTab('intelligence')}
+              onRetryBuild={onRetryBuild}
             />
           )}
         </AnimatePresence>
