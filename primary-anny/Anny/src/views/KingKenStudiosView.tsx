@@ -310,6 +310,21 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
     }
   };
 
+  const handleCancelVideo = async () => {
+    if (!activeVideoJob?.jobId) return;
+    try {
+      const response = await fetchWithAuth(`/api/creative/video/jobs/${encodeURIComponent(activeVideoJob.jobId)}/cancel`, {
+        method: 'POST',
+      });
+      if (response.ok) {
+        const updated: VideoJobRecord = await response.json();
+        setActiveVideoJob(updated);
+      }
+    } catch (err: any) {
+      setVideoError(err?.message || 'Unable to cancel video job.');
+    }
+  };
+
   const handleGenerateMusic = async () => {
     if (!musicPrompt.trim()) return;
     setMusicLoading(true);
@@ -709,7 +724,8 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
                       >
                         <option value={5}>5 sec</option>
                         <option value={8}>8 sec</option>
-                        <option value={12}>12 sec</option>
+                        <option value={10}>10 sec</option>
+                        <option value={15}>15 sec</option>
                       </select>
                     </div>
                     <div>
@@ -805,19 +821,37 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
                           {activeVideoJob.productionPlan?.title || 'Video Production Job'}
                         </h3>
                       </div>
-                      <span
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold border ${
-                          activeVideoJob.status === 'COMPLETED'
-                            ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                            : activeVideoJob.status === 'FAILED'
-                              ? 'bg-rose-500/15 border-rose-500/30 text-rose-300'
-                              : activeVideoJob.status === 'PROVIDER_UNCONFIGURED' || activeVideoJob.status === 'STORYBOARD_PLAN_ONLY'
-                                ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
-                                : 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300'
-                        }`}
-                      >
-                        {activeVideoJob.status}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {(activeVideoJob.status === 'QUEUED' ||
+                          activeVideoJob.status === 'GENERATING' ||
+                          activeVideoJob.status === 'PROCESSING' ||
+                          activeVideoJob.status === 'VALIDATING') && (
+                          <button
+                            type="button"
+                            onClick={handleCancelVideo}
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-medium border border-rose-500/40 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20 cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                        <span
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold border ${
+                            activeVideoJob.status === 'COMPLETED'
+                              ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                              : activeVideoJob.status === 'FAILED' || activeVideoJob.status === 'AUTHENTICATION_FAILED'
+                                ? 'bg-rose-500/15 border-rose-500/30 text-rose-300'
+                                : activeVideoJob.status === 'CANCELLED'
+                                  ? 'bg-slate-700/40 border-slate-500/30 text-slate-300'
+                                  : activeVideoJob.status === 'PROVIDER_UNCONFIGURED' ||
+                                      activeVideoJob.status === 'PROVIDER_UNAVAILABLE' ||
+                                      activeVideoJob.status === 'STORYBOARD_PLAN_ONLY'
+                                    ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                                    : 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300'
+                          }`}
+                        >
+                          {activeVideoJob.status}
+                        </span>
+                      </div>
                     </div>
 
                     <p className="text-xs text-slate-300">{activeVideoJob.stageMessage}</p>

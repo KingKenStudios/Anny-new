@@ -159,7 +159,7 @@ export default function SuperAppStudio() {
 
 
   // Model Router State
-  const [selectedModel, setSelectedModel] = useState('gemini-3.6-flash');
+  const [selectedModel, setSelectedModel] = useState('gemini-4-hydrogen');
   const [modelTier, setModelTier] = useState<'local' | 'cloud' | 'hybrid'>('hybrid');
 
   // Studio Inspector & Prompt Corrector State
@@ -995,7 +995,8 @@ export default function SuperAppStudio() {
                   onChange={(e) => setSelectedModel(e.target.value)}
                   className="w-full bg-black/60 border border-white/10 rounded-xl p-3 text-xs text-white outline-none"
                 >
-                  <option value="gemini-3.6-flash">Google Gemini 3.6 Flash (Server-Side Default)</option>
+                  <option value="gemini-4-hydrogen">Google Gemini 4 Hydrogen (Server-Side Default)</option>
+                  <option value="gemini-3.1-flash-lite">Google Gemini 3.1 Flash Lite (Low-Latency)</option>
                   <option value="llama3.3-local">Llama 3.3 (Local GGUF / Ollama)</option>
                   <option value="qwen2.5-coder">Qwen 2.5 Coder (Local ONNX)</option>
                   <option value="claude-3-haiku">Claude 3 Haiku (requires ANTHROPIC_API_KEY)</option>

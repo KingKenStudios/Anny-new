@@ -156,7 +156,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'king_ken_studios', 'keda', 'technology_company', 'university']
       },
       {
@@ -169,7 +169,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'king_ken_studios', 'keda', 'technology_company', 'university']
       },
       {
@@ -182,7 +182,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'technology_company', 'keda']
       },
       {
@@ -195,7 +195,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'technology_company', 'keda']
       },
       {
@@ -208,7 +208,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'keda', 'technology_company']
       },
       {
@@ -221,7 +221,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'keda', 'technology_company', 'university']
       },
       {
@@ -234,7 +234,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'keda', 'technology_company', 'university']
       },
       {
@@ -247,7 +247,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'keda', 'technology_company']
       },
       {
@@ -260,7 +260,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['llama3.2:3b', 'gemini-3.6-flash'],
+        requiredModels: ['llama3.2:3b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'keda', 'technology_company', 'university']
       },
       {
@@ -273,7 +273,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['llama3.2:3b', 'gemini-3.6-flash'],
+        requiredModels: ['llama3.2:3b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'keda', 'technology_company', 'university']
       },
       {
@@ -286,7 +286,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'keda', 'technology_company']
       },
       {
@@ -299,7 +299,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'keda', 'technology_company']
       },
       {
@@ -312,7 +312,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'keda', 'technology_company']
       },
       {
@@ -325,7 +325,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'king_ken_studios', 'keda', 'technology_company', 'university']
       },
       {
@@ -338,7 +338,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'king_ken_studios', 'keda', 'technology_company', 'university']
       },
       {
@@ -351,7 +351,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['llama3.2:3b', 'gemini-3.6-flash'],
+        requiredModels: ['llama3.2:3b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['keda', 'technology_company', 'king_ken_studios', 'university', 'global']
       },
       {
@@ -364,7 +364,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['keda', 'technology_company', 'global']
       },
       {
@@ -377,7 +377,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'keda', 'technology_company']
       },
       {
@@ -390,7 +390,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['llama3.3', 'gemini-3.6-flash'],
+        requiredModels: ['llama3.3', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'king_ken_studios', 'keda', 'technology_company', 'university']
       },
       {
@@ -403,7 +403,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['claude-3-haiku', 'gemini-3.6-flash'],
+        requiredModels: ['claude-3-haiku', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'keda', 'technology_company', 'university']
       },
 
@@ -420,7 +420,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'king_ken_studios', 'keda', 'technology_company', 'university']
       },
       {
@@ -433,7 +433,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'technology_company', 'keda']
       },
       {
@@ -446,7 +446,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'king_ken_studios', 'keda', 'technology_company']
       },
       {
@@ -459,7 +459,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['llama3.2:3b', 'gemini-3.6-flash'],
+        requiredModels: ['llama3.2:3b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'technology_company', 'keda']
       },
       {
@@ -472,7 +472,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'king_ken_studios', 'keda', 'university']
       },
       {
@@ -485,7 +485,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['king_ken_studios', 'global']
       },
       {
@@ -498,7 +498,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'technology_company', 'university', 'keda']
       },
       {
@@ -511,7 +511,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['technology_company', 'keda', 'global']
       },
       {
@@ -524,7 +524,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['llama3.2:3b', 'gemini-3.6-flash'],
+        requiredModels: ['llama3.2:3b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['keda', 'technology_company', 'global']
       },
       {
@@ -537,7 +537,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['keda', 'technology_company', 'global']
       },
       {
@@ -550,7 +550,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['keda', 'king_ken_studios', 'university', 'global']
       },
       {
@@ -563,7 +563,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['keda', 'technology_company', 'global'],
         financialControlLevel: 'STRICT_AUDIT'
       },
@@ -577,7 +577,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['technology_company', 'university', 'global']
       },
 
@@ -607,7 +607,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['claude-3-haiku', 'gemini-3.6-flash'],
+        requiredModels: ['claude-3-haiku', 'gemini-4-hydrogen'],
         supportedOrganizations: ['king_ken_studios', 'global']
       },
       {
@@ -646,7 +646,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['flux-schnell', 'stable-diffusion-xl', 'imagen-3'],
+        requiredModels: ['flux-schnell', 'stable-diffusion-xl', 'gemini-3.1-flash-lite-image'],
         supportedOrganizations: ['king_ken_studios', 'global', 'technology_company', 'keda']
       },
       {
@@ -659,7 +659,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['sd-inpainting', 'imagen-3'],
+        requiredModels: ['sd-inpainting', 'gemini-3.1-flash-lite-image'],
         supportedOrganizations: ['king_ken_studios', 'global']
       },
       {
@@ -672,7 +672,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['flux-schnell', 'gemini-3.6-flash'],
+        requiredModels: ['flux-schnell', 'gemini-4-hydrogen'],
         supportedOrganizations: ['king_ken_studios', 'global']
       },
       {
@@ -685,7 +685,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: false,
         cloudAvailable: true,
         gpuRequired: true,
-        requiredModels: ['stable-video-diffusion', 'sora-api'],
+        requiredModels: ['gemini-omni-1.2-flash', 'gemini-omni-1.2-flash'],
         supportedOrganizations: ['king_ken_studios', 'global']
       },
       {
@@ -698,7 +698,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['king_ken_studios', 'global']
       },
       {
@@ -711,7 +711,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['king_ken_studios', 'global']
       },
       {
@@ -724,7 +724,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['king_ken_studios', 'global']
       },
       {
@@ -737,7 +737,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['king_ken_studios', 'global']
       },
       {
@@ -750,7 +750,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['king_ken_studios', 'technology_company', 'global']
       },
       {
@@ -763,7 +763,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['qwen2.5-coder:7b', 'gemini-3.6-flash'],
+        requiredModels: ['qwen2.5-coder:7b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['king_ken_studios', 'technology_company', 'global']
       },
       {
@@ -776,7 +776,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['real-esrgan', 'gemini-3.6-flash'],
+        requiredModels: ['real-esrgan', 'gemini-4-hydrogen'],
         supportedOrganizations: ['king_ken_studios', 'global']
       },
       {
@@ -789,7 +789,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['claude-3-haiku', 'deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['claude-3-haiku', 'deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['king_ken_studios', 'global']
       },
 
@@ -806,7 +806,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'technology_company', 'keda']
       },
       {
@@ -819,7 +819,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['university', 'global']
       },
       {
@@ -832,7 +832,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['global', 'keda', 'technology_company'],
         financialControlLevel: 'STRICT_AUDIT'
       },
@@ -846,7 +846,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['deepseek-coder', 'gemini-3.6-flash'],
+        requiredModels: ['deepseek-coder', 'gemini-4-hydrogen'],
         supportedOrganizations: ['technology_company', 'keda', 'global']
       },
       {
@@ -859,7 +859,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['llama3.3', 'gemini-3.6-flash'],
+        requiredModels: ['llama3.3', 'gemini-4-hydrogen'],
         supportedOrganizations: ['university', 'global']
       },
       {
@@ -872,7 +872,7 @@ export class OrganizationCapabilityRegistry {
         localAvailable: true,
         cloudAvailable: true,
         gpuRequired: false,
-        requiredModels: ['llama3.2:3b', 'gemini-3.6-flash'],
+        requiredModels: ['llama3.2:3b', 'gemini-4-hydrogen'],
         supportedOrganizations: ['keda', 'technology_company', 'global']
       }
     ];

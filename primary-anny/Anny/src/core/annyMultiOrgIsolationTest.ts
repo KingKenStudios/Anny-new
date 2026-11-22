@@ -99,7 +99,7 @@ export class MultiOrgIsolationTestSuite {
     try {
       const benchRes = intelligenceBenchmarkLab.evaluateResponse(
         'bench_code_syntax',
-        'gemini-3.6-flash',
+        'gemini-4-hydrogen',
         'gemini',
         'function add(a: number, b: number): number { return a + b; }',
         150

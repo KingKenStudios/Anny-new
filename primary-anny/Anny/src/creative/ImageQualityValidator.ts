@@ -400,40 +400,119 @@ export function validateImageAsset(params: {
 }
 
 /**
- * Validates raw video bytes (MP4 / QuickTime 'ftyp' box or WebM/Matroska EBML header)
- * so empty or non-playable outputs are NEVER marked COMPLETED.
+ * Validates raw video bytes beyond just an opening header:
+ * - For MP4 / ISO BMFF: walks top-level boxes verifying `ftyp`, `moov` (movie metadata),
+ *   and `mdat` (actual media payload) exist and are non-truncated.
+ * - For WebM / Matroska: verifies EBML magic (1A 45 DF A3) and Segment header (18 53 80 67).
+ * Rejects header-only, truncated, empty, or text/HTML payloads so fake videos are NEVER marked COMPLETED.
  */
 export function validateVideoAsset(bytes: Uint8Array): {
   valid: boolean;
   mimeType: string;
   byteLength: number;
+  containerDetails: {
+    container: 'mp4' | 'webm' | 'unknown';
+    hasFtypBox?: boolean;
+    hasMoovBox?: boolean;
+    hasMdatBox?: boolean;
+  };
   error?: string;
 } {
-  if (!bytes || bytes.length < 16) {
+  if (!bytes || bytes.length < 24) {
     return {
       valid: false,
       mimeType: 'application/octet-stream',
       byteLength: bytes?.length || 0,
-      error: 'Video payload is empty or too small to be a playable stream.',
+      containerDetails: { container: 'unknown' },
+      error: 'Video payload is empty or too small to be a playable media container.',
     };
   }
 
-  // ISO BMFF / MP4: bytes 4..7 === 'ftyp'
-  const ftyp = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
-  if (ftyp === 'ftyp') {
+  // ISO BMFF / MP4 box walker
+  const firstBoxType = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
+  if (firstBoxType === 'ftyp') {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let offset = 0;
+    let hasFtypBox = false;
+    let hasMoovBox = false;
+    let hasMdatBox = false;
+    let boxesScanned = 0;
+
+    while (offset + 8 <= bytes.length && boxesScanned < 512) {
+      let boxSize = view.getUint32(offset, false);
+      const boxType = String.fromCharCode(
+        bytes[offset + 4],
+        bytes[offset + 5],
+        bytes[offset + 6],
+        bytes[offset + 7]
+      );
+      if (boxSize === 0) {
+        // Box extends to EOF
+        boxSize = bytes.length - offset;
+      } else if (boxSize === 1 && offset + 16 <= bytes.length) {
+        // 64-bit extended size (read lower 32 bits safely for buffers < 4GB)
+        const hi = view.getUint32(offset + 8, false);
+        const lo = view.getUint32(offset + 12, false);
+        boxSize = hi === 0 ? lo : bytes.length - offset;
+      }
+      if (boxSize < 8 || offset + boxSize > bytes.length) {
+        return {
+          valid: false,
+          mimeType: 'video/mp4',
+          byteLength: bytes.length,
+          containerDetails: { container: 'mp4', hasFtypBox, hasMoovBox, hasMdatBox },
+          error: `Truncated or malformed MP4 box '${boxType}' at byte offset ${offset}.`,
+        };
+      }
+      if (boxType === 'ftyp') hasFtypBox = true;
+      if (boxType === 'moov') hasMoovBox = true;
+      if (boxType === 'mdat' && boxSize > 8) hasMdatBox = true;
+      offset += boxSize;
+      boxesScanned++;
+    }
+
+    if (!hasMoovBox || !hasMdatBox) {
+      return {
+        valid: false,
+        mimeType: 'video/mp4',
+        byteLength: bytes.length,
+        containerDetails: { container: 'mp4', hasFtypBox, hasMoovBox, hasMdatBox },
+        error: `MP4 container is incomplete (hasFtyp=${hasFtypBox}, hasMoov=${hasMoovBox}, hasMdat=${hasMdatBox}); a header-only MP4 is not playable.`,
+      };
+    }
+
     return {
       valid: true,
       mimeType: 'video/mp4',
       byteLength: bytes.length,
+      containerDetails: { container: 'mp4', hasFtypBox, hasMoovBox, hasMdatBox },
     };
   }
 
-  // WebM / Matroska EBML magic: 1A 45 DF A3
+  // WebM / Matroska EBML magic: 1A 45 DF A3 + Segment (18 53 80 67)
   if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
+    let hasSegment = false;
+    const scanLimit = Math.min(bytes.length - 4, 4096);
+    for (let i = 4; i <= scanLimit; i++) {
+      if (bytes[i] === 0x18 && bytes[i + 1] === 0x53 && bytes[i + 2] === 0x80 && bytes[i + 3] === 0x67) {
+        hasSegment = true;
+        break;
+      }
+    }
+    if (!hasSegment) {
+      return {
+        valid: false,
+        mimeType: 'video/webm',
+        byteLength: bytes.length,
+        containerDetails: { container: 'webm' },
+        error: 'WebM container has EBML header but is missing a valid Segment payload.',
+      };
+    }
     return {
       valid: true,
       mimeType: 'video/webm',
       byteLength: bytes.length,
+      containerDetails: { container: 'webm' },
     };
   }
 
@@ -441,6 +520,7 @@ export function validateVideoAsset(bytes: Uint8Array): {
     valid: false,
     mimeType: 'application/octet-stream',
     byteLength: bytes.length,
-    error: 'Video binary failed MP4/WebM container header validation.',
+    containerDetails: { container: 'unknown' },
+    error: 'Video binary failed MP4/WebM container structure validation.',
   };
 }

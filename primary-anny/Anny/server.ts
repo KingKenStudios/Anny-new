@@ -14,6 +14,7 @@ import * as cheerio from "cheerio";
 import { GoogleGenAI } from "@google/genai";
 import { attachLiveVisionGateway } from './src/services/liveVisionGateway.ts';
 import { creativeGenerationService } from './src/services/creativeGenerationService.ts';
+import { discoverRegisteredModels } from './src/core/modelRegistry.ts';
 import { aiProviderPlatform } from './src/services/aiProviderPlatform.ts';
 import { providerRegistryService } from './src/services/providerRegistryService.ts';
 import { ollamaDiscoveryService } from './src/services/ollamaService.ts';
@@ -1645,8 +1646,18 @@ async function startServer() {
   app.get("/api/router/models", requireAuth(), async (_req, res) => {
     const listing = await aiProviderPlatform.modelListing();
     const ollamaProv = providerRegistryService.getProvider('ollama');
-    listing.ollama = ollamaProv ? [...ollamaProv.availableModels] : [];
-    res.json(listing);
+    const ollamaModels = ollamaProv ? [...ollamaProv.availableModels] : [];
+    listing.ollama = ollamaModels;
+    const execPolicy = providerRegistryService.getExecutionPolicy();
+    const registry = discoverRegisteredModels({
+      executionMode: execPolicy.mode,
+      ollamaModels,
+    });
+    res.json({
+      ...listing,
+      executionMode: execPolicy.mode,
+      registry,
+    });
   });
 
   app.post("/api/router/chat", requireAuth(), async (req, res) => {
@@ -1784,7 +1795,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/creative/video/jobs", requireAuth(), async (req, res) => {
+  app.post("/api/creative/video/jobs", requireAuth(), async (req: AuthenticatedRequest, res) => {
     const body = req.body || {};
     const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
     if (!prompt || prompt.length > 4000) {
@@ -1792,6 +1803,10 @@ async function startServer() {
     }
 
     const execPolicy = providerRegistryService.getExecutionPolicy();
+    const resolution =
+      body.resolution === '360p' || body.resolution === '1080p' || body.resolution === '4k'
+        ? body.resolution
+        : '720p';
     try {
       const job = await creativeGenerationService.startVideoJob({
         prompt,
@@ -1799,16 +1814,19 @@ async function startServer() {
         category: body.category,
         aspectRatio: body.aspectRatio === '9:16' ? '9:16' : '16:9',
         durationSeconds: Number(body.durationSeconds) || 8,
-        resolution: body.resolution === '1080p' ? '1080p' : '720p',
+        resolution,
         referenceImages: Array.isArray(body.referenceImages) ? body.referenceImages.slice(0, 6) : undefined,
         referenceVideo: body.referenceVideo,
         parentJobId: typeof body.parentJobId === 'string' ? body.parentJobId : undefined,
         previousInteractionId: typeof body.previousInteractionId === 'string' ? body.previousInteractionId : undefined,
         planOnly: Boolean(body.planOnly),
         providerOverride: execPolicy.mode === 'OFFLINE_ONLY' ? 'offline' : 'auto',
+        ownerUserId: req.authUser?.uid || req.user?.userId || req.user?.id || 'anonymous',
+        ownerOrgId: req.authUser?.companyId || 'personal',
       });
 
-      const statusCode = job.status === 'PROVIDER_UNCONFIGURED' ? 200 : 202;
+      const statusCode =
+        job.status === 'PROVIDER_UNCONFIGURED' || job.status === 'STORYBOARD_PLAN_ONLY' ? 200 : 202;
       return res.status(statusCode).json(job);
     } catch (err: any) {
       return res.status(503).json({
@@ -1819,22 +1837,52 @@ async function startServer() {
     }
   });
 
-  app.get("/api/creative/video/jobs", requireAuth(), (_req, res) => {
-    return res.json({ jobs: creativeGenerationService.listVideoJobs() });
+  app.get("/api/creative/video/jobs", requireAuth(), (req: AuthenticatedRequest, res) => {
+    const requester = {
+      userId: req.authUser?.uid || req.user?.userId || req.user?.id,
+      orgId: req.authUser?.companyId || 'personal',
+      isAdmin: req.authUser?.isAdmin === true || req.user?.isAdmin === true,
+    };
+    return res.json({ jobs: creativeGenerationService.listVideoJobs(requester) });
   });
 
-  app.get("/api/creative/video/jobs/:jobId", requireAuth(), (req, res) => {
-    const job = creativeGenerationService.getVideoJob(String(req.params.jobId || ''));
+  app.get("/api/creative/video/jobs/:jobId", requireAuth(), (req: AuthenticatedRequest, res) => {
+    const jobId = String(req.params.jobId || '');
+    const requester = {
+      userId: req.authUser?.uid || req.user?.userId || req.user?.id,
+      orgId: req.authUser?.companyId || 'personal',
+      isAdmin: req.authUser?.isAdmin === true || req.user?.isAdmin === true,
+    };
+    const job = creativeGenerationService.getVideoJob(jobId, requester);
     if (!job) {
-      return res.status(404).json({ error: 'Video job not found.' });
+      return res.status(404).json({ error: 'Video job not found or access denied.' });
     }
     return res.json(job);
   });
 
-  app.get("/api/creative/video/jobs/:jobId/media", requireAuth(), (req, res) => {
+  app.post("/api/creative/video/jobs/:jobId/cancel", requireAuth(), (req: AuthenticatedRequest, res) => {
     const jobId = String(req.params.jobId || '');
-    const job = creativeGenerationService.getVideoJob(jobId);
-    const media = creativeGenerationService.getVideoMediaBuffer(jobId);
+    const requester = {
+      userId: req.authUser?.uid || req.user?.userId || req.user?.id,
+      orgId: req.authUser?.companyId || 'personal',
+      isAdmin: req.authUser?.isAdmin === true || req.user?.isAdmin === true,
+    };
+    const cancelled = creativeGenerationService.cancelVideoJob(jobId, requester);
+    if (!cancelled) {
+      return res.status(404).json({ error: 'Video job not found or access denied.' });
+    }
+    return res.json(cancelled);
+  });
+
+  app.get("/api/creative/video/jobs/:jobId/media", requireAuth(), (req: AuthenticatedRequest, res) => {
+    const jobId = String(req.params.jobId || '');
+    const requester = {
+      userId: req.authUser?.uid || req.user?.userId || req.user?.id,
+      orgId: req.authUser?.companyId || 'personal',
+      isAdmin: req.authUser?.isAdmin === true || req.user?.isAdmin === true,
+    };
+    const job = creativeGenerationService.getVideoJob(jobId, requester);
+    const media = creativeGenerationService.getVideoMediaBuffer(jobId, requester);
     if (!job || !media || job.status !== 'COMPLETED' || !job.playableValidated) {
       return res.status(404).json({ error: 'Verified playable video media not available for this job.' });
     }

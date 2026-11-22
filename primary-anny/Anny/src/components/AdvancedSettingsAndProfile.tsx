@@ -48,7 +48,7 @@ export const AdvancedSettingsAndProfile: React.FC<AdvancedSettingsAndProfileProp
   const [passwordResetSent, setPasswordResetSent] = useState(false);
 
   // Model & AI State
-  const [primaryModel, setPrimaryModel] = useState('gemini-3.6-flash');
+  const [primaryModel, setPrimaryModel] = useState('gemini-4-hydrogen');
   const [temperature, setTemperature] = useState(0.7);
   const [autoVisionCapture, setAutoVisionCapture] = useState(true);
   const [visionIntervalSec, setVisionIntervalSec] = useState(15);
@@ -59,10 +59,8 @@ export const AdvancedSettingsAndProfile: React.FC<AdvancedSettingsAndProfileProp
   const [twoFactorSim, setTwoFactorSim] = useState(true);
   const [auditLogLevel, setAuditLogLevel] = useState('detailed');
 
-  // API Key state
-  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('GEMINI_API_KEY_LOCAL') || '');
-  const [showKey, setShowKey] = useState(false);
-  const [keySaved, setKeySaved] = useState(false);
+  // Inline feedback state
+  const [cacheCleared, setCacheCleared] = useState(false);
 
   // Appearance State
   const [themeMode, setThemeMode] = useState<'dark' | 'matrix' | 'cyber'>('dark');
@@ -137,19 +135,11 @@ export const AdvancedSettingsAndProfile: React.FC<AdvancedSettingsAndProfileProp
     }
   };
 
-  const handleSaveApiKey = () => {
-    if (geminiApiKey) {
-      localStorage.setItem('GEMINI_API_KEY_LOCAL', geminiApiKey);
-    } else {
-      localStorage.removeItem('GEMINI_API_KEY_LOCAL');
-    }
-    setKeySaved(true);
-    setTimeout(() => setKeySaved(false), 2500);
-  };
-
   const handleClearCache = () => {
     localStorage.removeItem('anny_prompts');
-    alert("Local application cache and prompt history cleared.");
+    localStorage.removeItem('GEMINI_API_KEY_LOCAL');
+    setCacheCleared(true);
+    setTimeout(() => setCacheCleared(false), 3000);
   };
 
   return (
@@ -414,9 +404,9 @@ export const AdvancedSettingsAndProfile: React.FC<AdvancedSettingsAndProfileProp
                   <label className="text-xs font-mono text-slate-400">Primary Inference Engine</label>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {[
-                      { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', provider: 'Google AI Studio', tier: 'Cloud Core' },
-                      { id: 'ollama-llama3', name: 'Ollama Llama 3.3', provider: 'Local GGUF', tier: 'Offline Core' },
-                      { id: 'deepseek-coder', name: 'DeepSeek Coder V2', provider: 'Nexus Core', tier: 'High Precision' },
+                      { id: 'gemini-4-hydrogen', name: 'Gemini 4 Hydrogen', provider: 'Server-Side Gemini API', tier: 'Cloud Core' },
+                      { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite', provider: 'Server-Side Gemini API', tier: 'Low Latency' },
+                      { id: 'ollama-llama3', name: 'Ollama Local Runtime', provider: 'Local GGUF', tier: 'Offline Core' },
                     ].map((m) => (
                       <div
                         key={m.id}
@@ -514,40 +504,31 @@ export const AdvancedSettingsAndProfile: React.FC<AdvancedSettingsAndProfileProp
             </div>
           )}
 
-          {/* TAB 4: API KEYS & VAULT */}
+          {/* TAB 4: SERVER-MANAGED PROVIDER CONFIGURATION */}
           {activeTab === 'api' && (
             <div className="max-w-3xl space-y-6">
               <div className="p-6 rounded-2xl bg-[#0b0d1b] border border-white/10 shadow-lg space-y-5">
                 <h2 className="text-base font-bold text-white flex items-center gap-2">
-                  <Key className="w-4 h-4 text-amber-400" /> Local Encrypted API Vault
+                  <Key className="w-4 h-4 text-emerald-400" /> Server-Managed Provider Credentials
                 </h2>
-                <p className="text-xs text-slate-400">API keys entered here are stored locally in secure browser storage and used for direct inference.</p>
-
-                <div className="space-y-2">
-                  <label className="text-xs font-mono text-slate-400">Gemini API Key (GEMINI_API_KEY)</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type={showKey ? 'text' : 'password'}
-                      value={geminiApiKey}
-                      onChange={(e) => setGeminiApiKey(e.target.value)}
-                      placeholder="AIzaSy..."
-                      className="flex-1 px-3.5 py-2.5 rounded-xl bg-black/50 border border-white/10 text-xs font-mono text-white outline-none focus:border-amber-500 transition-all"
-                    />
-                    <button
-                      onClick={() => setShowKey(!showKey)}
-                      className="px-3 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-mono"
-                    >
-                      {showKey ? 'Hide' : 'Show'}
-                    </button>
-                    <button
-                      onClick={handleSaveApiKey}
-                      className="px-4 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-mono font-bold"
-                    >
-                      Save Key
-                    </button>
-                  </div>
-                  {keySaved && <p className="text-[10px] text-emerald-400 font-mono">Key saved locally!</p>}
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  All AI provider credentials (<span className="font-mono text-emerald-300">GEMINI_API_KEY</span>, optional{' '}
+                  <span className="font-mono text-slate-200">OPENAI_API_KEY</span>,{' '}
+                  <span className="font-mono text-slate-200">SD_WEBUI_URL</span>, and local{' '}
+                  <span className="font-mono text-slate-200">OLLAMA_HOST</span>) are managed exclusively on the server via
+                  environment secrets and are never entered into or stored in browser storage.
+                </p>
+                <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-xs text-emerald-200 space-y-1.5">
+                  <p className="font-semibold">How to configure or update cloud keys:</p>
+                  <p className="text-emerald-200/80">
+                    Set environment secrets in your deployment environment or the Settings &gt; Secrets panel, then restart
+                    the server. Local vector logo synthesis, project editing, and local vision remain available offline
+                    without any external API key.
+                  </p>
                 </div>
+                {cacheCleared && (
+                  <p className="text-xs text-emerald-400 font-mono">Local browser cache cleared.</p>
+                )}
               </div>
             </div>
           )}

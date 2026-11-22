@@ -145,7 +145,7 @@ export class DeepOrganizationIntelligence {
       goals: ['Provide reliable cognitive execution for default user sessions'],
       constraints: ['Maintain isolation', 'Enforce security sentinel'],
       capabilities: ['cap_coding', 'cap_aios_app_generator', 'cap_chat'],
-      capabilityRequirements: { minimumVramGb: 0, preferredModels: ['gemini-3.6-flash'] },
+      capabilityRequirements: { minimumVramGb: 0, preferredModels: ['gemini-4-hydrogen'] },
       relatedOrganizations: ['technology_company', 'keda', 'king_ken_studios', 'university'],
       evidence: [{ id: 'ev_default_org', source: 'ANNY Kernel Bootstrapper', status: 'VERIFIED', verifiedAt: now }],
       conflictingInformation: [],
@@ -405,7 +405,7 @@ export class DeepOrganizationIntelligence {
       capabilities: ['cap_academic_search', 'cap_research_verification'],
       capabilityRequirements: {
         minimumVramGb: 8,
-        preferredModels: ['gemini-3.6-flash', 'claude-3-haiku']
+        preferredModels: ['gemini-4-hydrogen', 'claude-3-haiku']
       },
       relatedOrganizations: ['technology_company', 'keda'],
       evidence: [
@@ -476,7 +476,7 @@ export class DeepOrganizationIntelligence {
       capabilities: ['cap_coding', 'cap_cloud_deploy', 'cap_database_manage'],
       capabilityRequirements: {
         minimumVramGb: 0,
-        preferredModels: ['gemini-3.6-flash', 'qwen_coder']
+        preferredModels: ['gemini-4-hydrogen', 'qwen_coder']
       },
       relatedOrganizations: ['king_ken_studios', 'keda', 'university'],
       evidence: [
@@ -611,7 +611,7 @@ export class DeepOrganizationIntelligence {
       capabilities: ['cap_coding', 'cap_aios_app_generator'],
       capabilityRequirements: {
         minimumVramGb: 0,
-        preferredModels: ['gemini-3.6-flash']
+        preferredModels: ['gemini-4-hydrogen']
       },
       relatedOrganizations: ['technology_company'],
       evidence: [

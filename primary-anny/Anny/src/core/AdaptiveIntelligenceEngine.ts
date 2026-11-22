@@ -569,7 +569,7 @@ export class AdaptiveIntelligenceEngine {
       activeConstraints: data.activeConstraints || memoryEngine.getNegativeMemory(),
       retrievedExperiences: data.retrievedExperiences || [],
       selectedStrategy: data.selectedStrategy || 'Standard Pipeline',
-      selectedModel: data.selectedModel || 'gemini-3.6-flash',
+      selectedModel: data.selectedModel || 'gemini-4-hydrogen',
       toolsUsed: data.toolsUsed || [],
       executionStatus: data.executionStatus || 'SUCCESS',
       verificationStatus: data.verificationStatus || 'VERIFIED',

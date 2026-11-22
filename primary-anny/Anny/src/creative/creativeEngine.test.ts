@@ -13,6 +13,11 @@ import { creativeArtifactStore } from './CreativeArtifactStore.ts';
 import { creativeGenerationService } from '../services/creativeGenerationService.ts';
 import { verifyGeneratedProject } from '../core/generatedProjectValidator.ts';
 import { buildTreeFromVFS } from '../components/AnnyCodeExplorer.tsx';
+import {
+  discoverRegisteredModels,
+  PROHIBITED_OR_INVENTED_MODELS,
+  VERIFIED_MODEL_REGISTRY,
+} from '../core/modelRegistry.ts';
 
 // Minimal valid 1x1 PNG binary (signature + IHDR with width=64, height=64)
 function createValidPngHeaderBytes(width = 64, height = 64): Uint8Array {
@@ -27,11 +32,34 @@ function createValidPngHeaderBytes(width = 64, height = 64): Uint8Array {
   return bytes;
 }
 
-// Minimal valid ISO BMFF MP4 ftyp header
+// Minimal valid ISO BMFF MP4 container with complete ftyp + moov + mdat boxes
 function createValidMp4Bytes(): Uint8Array {
-  const bytes = new Uint8Array(48);
-  bytes.set([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d], 0);
-  return bytes;
+  // Box 1: ftyp (20 bytes)
+  const ftyp = new Uint8Array([
+    0x00, 0x00, 0x00, 0x14, // size = 20
+    0x66, 0x74, 0x79, 0x70, // 'ftyp'
+    0x69, 0x73, 0x6f, 0x6d, // 'isom'
+    0x00, 0x00, 0x02, 0x00, // minor version
+    0x69, 0x73, 0x6f, 0x6d, // compatible brand
+  ]);
+  // Box 2: moov (16 bytes)
+  const moov = new Uint8Array([
+    0x00, 0x00, 0x00, 0x10, // size = 16
+    0x6d, 0x6f, 0x6f, 0x76, // 'moov'
+    0x00, 0x00, 0x00, 0x08, 0x6d, 0x76, 0x68, 0x64, // inner mvhd stub
+  ]);
+  // Box 3: mdat (24 bytes with non-empty media payload)
+  const mdat = new Uint8Array([
+    0x00, 0x00, 0x00, 0x18, // size = 24
+    0x6d, 0x64, 0x61, 0x74, // 'mdat'
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+  ]);
+  const out = new Uint8Array(ftyp.length + moov.length + mdat.length);
+  out.set(ftyp, 0);
+  out.set(moov, ftyp.length);
+  out.set(mdat, ftyp.length + moov.length);
+  return out;
 }
 
 test('1. CreativeIntentRouter disambiguates King Ken logo vs portrait vs throne vs video vs website', () => {
@@ -375,3 +403,162 @@ test('9. Unified CreativeArtifactStore tracks revisions with zero hardcoded seed
   assert.ok(tree.some((n) => n.name === 'src' && n.type === 'folder'));
   assert.ok(tree.some((n) => n.name === 'package.json' && n.type === 'file'));
 });
+
+test('10. MP4 container validation rejects header-only or truncated payloads and verifies ftyp+moov+mdat', () => {
+  // Header-only ftyp box without moov/mdat MUST be rejected
+  const headerOnly = new Uint8Array(24);
+  headerOnly.set([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d], 0);
+  const badRes = validateVideoAsset(headerOnly);
+  assert.equal(badRes.valid, false);
+  assert.equal(badRes.containerDetails.hasFtypBox, true);
+  assert.equal(badRes.containerDetails.hasMoovBox, false);
+  assert.equal(badRes.containerDetails.hasMdatBox, false);
+
+  // Full container with ftyp + moov + mdat passes
+  const goodRes = validateVideoAsset(createValidMp4Bytes());
+  assert.equal(goodRes.valid, true);
+  assert.equal(goodRes.mimeType, 'video/mp4');
+  assert.equal(goodRes.containerDetails.hasFtypBox, true);
+  assert.equal(goodRes.containerDetails.hasMoovBox, true);
+  assert.equal(goodRes.containerDetails.hasMdatBox, true);
+});
+
+test('11. Video jobs enforce per-user ownership isolation, cancellation, and truthful auth/quota error states', async () => {
+  creativeGenerationService.setCustomVideoAdapterForTests(async () => ({
+    videoBytes: createValidMp4Bytes(),
+    mimeType: 'video/mp4',
+    interactionId: 'int_iso_test_01',
+    provider: 'gemini-omni-video',
+    model: 'gemini-omni-1.2-flash',
+  }));
+
+  try {
+    const aliceJob = await creativeGenerationService.startVideoJob({
+      prompt: 'Cinematic sports car driving through Lagos at night',
+      durationSeconds: 10,
+      ownerUserId: 'user_alice',
+      ownerOrgId: 'org_kingken',
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Alice can access her own completed job & video bytes
+    assert.equal(
+      creativeGenerationService.getVideoJob(aliceJob.jobId, { userId: 'user_alice', orgId: 'org_kingken' })?.status,
+      'COMPLETED'
+    );
+    assert.ok(
+      creativeGenerationService.getVideoMediaBuffer(aliceJob.jobId, { userId: 'user_alice', orgId: 'org_kingken' })
+    );
+
+    // Bob CANNOT read Alice's job, list it, or download her media
+    assert.equal(
+      creativeGenerationService.getVideoJob(aliceJob.jobId, { userId: 'user_bob', orgId: 'org_kingken' }),
+      undefined
+    );
+    assert.equal(
+      creativeGenerationService.getVideoMediaBuffer(aliceJob.jobId, { userId: 'user_bob', orgId: 'org_kingken' }),
+      undefined
+    );
+    assert.equal(
+      creativeGenerationService
+        .listVideoJobs({ userId: 'user_bob', orgId: 'org_kingken' })
+        .some((j) => j.jobId === aliceJob.jobId),
+      false
+    );
+
+    // Admin can inspect for moderation/audit
+    assert.equal(
+      creativeGenerationService.getVideoJob(aliceJob.jobId, { userId: 'admin_1', isAdmin: true })?.jobId,
+      aliceJob.jobId
+    );
+
+    // 403 PERMISSION_DENIED maps cleanly to AUTHENTICATION_FAILED
+    creativeGenerationService.setCustomVideoAdapterForTests(async () => {
+      const err: any = new Error('PERMISSION_DENIED: API key lacks entitlement');
+      err.status = 403;
+      throw err;
+    });
+    const authFailJob = await creativeGenerationService.startVideoJob({
+      prompt: 'Auth fail test',
+      ownerUserId: 'user_alice',
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(
+      creativeGenerationService.getVideoJob(authFailJob.jobId, { userId: 'user_alice' })?.status,
+      'AUTHENTICATION_FAILED'
+    );
+
+    // 429 RESOURCE_EXHAUSTED maps cleanly to PROVIDER_UNAVAILABLE
+    creativeGenerationService.setCustomVideoAdapterForTests(async () => {
+      const err: any = new Error('RESOURCE_EXHAUSTED: Paid quota required');
+      err.status = 429;
+      throw err;
+    });
+    const quotaFailJob = await creativeGenerationService.startVideoJob({
+      prompt: 'Quota fail test',
+      ownerUserId: 'user_alice',
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(
+      creativeGenerationService.getVideoJob(quotaFailJob.jobId, { userId: 'user_alice' })?.status,
+      'PROVIDER_UNAVAILABLE'
+    );
+
+    // Cancellation stops an in-flight job cleanly
+    creativeGenerationService.setCustomVideoAdapterForTests(async () => {
+      await new Promise((r) => setTimeout(r, 80));
+      return {
+        videoBytes: createValidMp4Bytes(),
+        mimeType: 'video/mp4',
+        provider: 'gemini-omni-video',
+        model: 'gemini-omni-1.2-flash',
+      };
+    });
+    const slowJob = await creativeGenerationService.startVideoJob({
+      prompt: 'Slow render to cancel',
+      ownerUserId: 'user_alice',
+    });
+    const cancelled = creativeGenerationService.cancelVideoJob(slowJob.jobId, { userId: 'user_alice' });
+    assert.equal(cancelled?.status, 'CANCELLED');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(
+      creativeGenerationService.getVideoJob(slowJob.jobId, { userId: 'user_alice' })?.status,
+      'CANCELLED'
+    );
+  } finally {
+    creativeGenerationService.setCustomVideoAdapterForTests(null);
+  }
+});
+
+test('12. Central Model Registry contains zero prohibited/invented models and accurately reports offline vs paid availability', () => {
+  const prohibitedSet = new Set<string>(PROHIBITED_OR_INVENTED_MODELS);
+  for (const spec of VERIFIED_MODEL_REGISTRY) {
+    assert.equal(prohibitedSet.has(spec.id), false, `Prohibited model found in registry: ${spec.id}`);
+  }
+
+  // Offline policy disables all cloud models while keeping local vector SVG available
+  const offlineModels = discoverRegisteredModels({
+    env: { GEMINI_API_KEY: 'test_fake_key_for_unit_discovery_only' },
+    executionMode: 'OFFLINE_ONLY',
+    ollamaModels: ['llama3.2:3b'],
+  });
+  const svgEngine = offlineModels.find((m) => m.id === 'anny-vector-svg-v1');
+  assert.equal(svgEngine?.availability, 'AVAILABLE_OFFLINE');
+  const omniVideo = offlineModels.find((m) => m.id === 'gemini-omni-1.2-flash');
+  assert.equal(omniVideo?.availability, 'DISABLED_BY_OFFLINE_POLICY');
+
+  // Discovered Ollama model is NEVER labeled as IMAGE_GENERATION or VIDEO_GENERATION
+  const ollamaEntry = offlineModels.find((m) => m.id === 'ollama:llama3.2:3b');
+  assert.ok(ollamaEntry);
+  assert.equal(ollamaEntry.capabilities.includes('IMAGE_GENERATION'), false);
+  assert.equal(ollamaEntry.capabilities.includes('VIDEO_GENERATION'), false);
+
+  // Paid models clearly report REQUIRES_PAID_KEY when key is configured online
+  const onlineModels = discoverRegisteredModels({
+    env: { GEMINI_API_KEY: 'test_fake_key_for_unit_discovery_only' },
+    executionMode: 'AUTO',
+  });
+  const onlineOmni = onlineModels.find((m) => m.id === 'gemini-omni-1.2-flash');
+  assert.equal(onlineOmni?.availability, 'REQUIRES_PAID_KEY');
+});
+

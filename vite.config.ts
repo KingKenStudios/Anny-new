@@ -35,6 +35,9 @@ export default defineConfig(({ mode }) => {
         '@anny': path.resolve(__dirname, 'primary-anny', 'Anny', 'src'),
       },
     },
+    optimizeDeps: {
+      entries: ['index.html'],
+    },
     build: {
       outDir: path.resolve(__dirname, 'dist'),
       emptyOutDir: false,

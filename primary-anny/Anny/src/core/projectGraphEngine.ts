@@ -177,7 +177,7 @@ export class ProjectGraphEngine {
         { path: '/api/health', method: 'GET', description: 'System health probe' }
       ],
       assets: [],
-      modelsUsed: ['gemini-3.6-flash'],
+      modelsUsed: ['gemini-4-hydrogen'],
       tests: [],
       verificationState: {
         astVerified: true,

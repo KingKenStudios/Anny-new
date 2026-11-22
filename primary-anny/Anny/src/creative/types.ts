@@ -252,14 +252,20 @@ export type VideoJobStatus =
   | 'QUEUED'
   | 'PLANNING'
   | 'GENERATING'
+  | 'PROCESSING'
   | 'VALIDATING'
   | 'COMPLETED'
-  | 'FAILED'
   | 'STORYBOARD_PLAN_ONLY'
-  | 'PROVIDER_UNCONFIGURED';
+  | 'PROVIDER_UNCONFIGURED'
+  | 'AUTHENTICATION_FAILED'
+  | 'PROVIDER_UNAVAILABLE'
+  | 'FAILED'
+  | 'CANCELLED';
 
 export interface VideoJobRecord {
   jobId: string;
+  ownerUserId?: string;
+  ownerOrgId?: string;
   status: VideoJobStatus;
   mode: 'text_to_video' | 'image_to_video' | 'storyboard_multi_ref' | 'video_edit' | 'video_extend' | 'storyboard_plan';
   category: VideoIntentCategory;
@@ -269,7 +275,7 @@ export interface VideoJobRecord {
   model: string;
   aspectRatio: '16:9' | '9:16';
   durationSeconds: number;
-  resolution: '720p' | '1080p';
+  resolution: '360p' | '720p' | '1080p' | '4k';
   progressPct: number;
   stageMessage: string;
   createdAt: string;
@@ -279,6 +285,12 @@ export interface VideoJobRecord {
   mimeType?: string;
   byteLength?: number;
   playableValidated?: boolean;
+  containerDetails?: {
+    container: 'mp4' | 'webm' | 'unknown';
+    hasFtypBox?: boolean;
+    hasMoovBox?: boolean;
+    hasMdatBox?: boolean;
+  };
   interactionId?: string;
   parentJobId?: string;
   productionPlan?: VideoProductionPlan;

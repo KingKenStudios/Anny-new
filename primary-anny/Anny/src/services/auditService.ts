@@ -24,6 +24,8 @@ export interface AuditLogMetadata {
 
 export class AuditService {
   private static instance: AuditService;
+  private localAuditBuffer: Array<Record<string, any>> = [];
+  private readonly maxLocalBufferSize = 200;
 
   private constructor() {}
 
@@ -34,42 +36,65 @@ export class AuditService {
     return AuditService.instance;
   }
 
+  public getRecentLocalLogs(limit: number = 50): Array<Record<string, any>> {
+    return this.localAuditBuffer.slice(-Math.max(1, limit));
+  }
+
+  private recordLocalAudit(payload: Record<string, any>): string {
+    const localId = `local_audit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    this.localAuditBuffer.push({ id: localId, ...payload });
+    if (this.localAuditBuffer.length > this.maxLocalBufferSize) {
+      this.localAuditBuffer.shift();
+    }
+    return localId;
+  }
+
   /**
-   * Captures and writes critical application audit logs to Firestore's 'audit_logs' collection.
+   * Captures and writes critical application audit logs to Firestore's 'audit_logs' collection
+   * when an authenticated Firebase user session is active, or records them cleanly in the
+   * local audit buffer on server/unauthenticated runtimes so Firestore rules are never violated.
    */
   public async logEvent(metadata: AuditLogMetadata): Promise<string | null> {
     try {
-      const currentUser = auth.currentUser;
+      const isBrowser = typeof window !== 'undefined';
+      const currentUser = isBrowser ? auth?.currentUser : null;
       const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'Server-Environment';
-      
-      const payload = {
+
+      const basePayload = {
         action: metadata.action,
         details: typeof metadata.details === 'object' ? JSON.stringify(metadata.details) : (metadata.details || 'N/A'),
         rawDetails: metadata.details || {},
         severity: metadata.severity || this.determineSeverity(metadata.action),
-        userId: metadata.userId || currentUser?.uid || 'system',
+        userId: currentUser?.uid || metadata.userId || 'system',
         userEmail: metadata.userEmail || currentUser?.email || 'system@anny.internal',
         userAgent: metadata.userAgent || userAgent,
         ipAddress: metadata.ipAddress || '127.0.0.1',
-        createdAt: serverTimestamp(),
         timestamp: new Date().toISOString()
       };
 
-      if (db) {
+      // Firestore rules require request.auth != null and payload.userId == request.auth.uid.
+      // Never issue unauthenticated client-SDK Firestore writes from Node.js or signed-out browsers.
+      if (isBrowser && db && currentUser?.uid) {
+        const firestorePayload = {
+          ...basePayload,
+          userId: currentUser.uid,
+          createdAt: serverTimestamp(),
+        };
         try {
-          const docRef = await addDoc(collection(db, 'audit_logs'), payload);
-          console.log(`[AuditService] Write succeeded: event='${metadata.action}' (Doc ID: ${docRef.id})`);
+          const docRef = await addDoc(collection(db, 'audit_logs'), firestorePayload);
           return docRef.id;
         } catch (writeErr) {
-          console.warn(`[AuditService] Firestore write fallback for '${metadata.action}':`, writeErr);
-          return 'local_audit_' + Date.now();
+          const code = (writeErr as any)?.code;
+          if (code !== 'permission-denied' && code !== 'unauthenticated') {
+            console.warn(`[AuditService] Firestore write fallback for '${metadata.action}':`, writeErr);
+          }
+          return this.recordLocalAudit(basePayload);
         }
-      } else {
-        console.warn(`[AuditService] Firestore offline fallback logging:`, payload);
-        return 'local_audit_' + Date.now();
       }
+
+      return this.recordLocalAudit(basePayload);
     } catch (err) {
-      console.error(`[AuditService] Failed to write audit event '${metadata.action}':`, err);
+      console.error(`[AuditService] Failed to record audit event '${metadata.action}':`, err);
       return null;
     }
   }

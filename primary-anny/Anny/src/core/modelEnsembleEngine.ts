@@ -48,7 +48,7 @@ export class ModelEnsembleEngine {
       return { provider: 'modly_3d', model: 'threejs-r3f-spatial-v1', role: '3D Spatial Synthesizer' };
     }
     if (taskCategory === 'vision') {
-      return { provider: 'gemini', model: 'gemini-3.6-flash', role: 'Vision Intelligence Worker' };
+      return { provider: 'gemini', model: 'gemini-4-hydrogen', role: 'Vision Intelligence Worker' };
     }
     if (taskCategory === 'security' || taskCategory === 'scada') {
       return { provider: 'deepseek', model: 'deepseek-r1-distill', role: 'Security & Safety Audit Worker' };
@@ -56,9 +56,9 @@ export class ModelEnsembleEngine {
     if (taskCategory === 'coding') {
       return highImpact 
         ? { provider: 'claude', model: 'claude-3-5-sonnet-20241022', role: 'Lead Architect Worker' }
-        : { provider: 'gemini', model: 'gemini-3.6-flash', role: 'Code Synthesizer' };
+        : { provider: 'gemini', model: 'gemini-4-hydrogen', role: 'Code Synthesizer' };
     }
-    return { provider: 'gemini', model: 'gemini-3.6-flash', role: 'Primary Executive Brain' };
+    return { provider: 'gemini', model: 'gemini-4-hydrogen', role: 'Primary Executive Brain' };
   }
 
   /**
@@ -89,7 +89,7 @@ export class ModelEnsembleEngine {
     let disagreementDetails: EnsembleResult['disagreementDetails'] = undefined;
 
     if (highImpact || taskCategory === 'coding' || taskCategory === 'security') {
-      const secondaryModelName = routeA.selectedModel.includes('gemini') ? 'claude-3-haiku' : 'gemini-3.6-flash';
+      const secondaryModelName = routeA.selectedModel.includes('gemini') ? 'claude-3-haiku' : 'gemini-4-hydrogen';
       const secondaryProvider = routeA.selectedModel.includes('gemini') ? 'claude' : 'gemini';
 
       const traceB: ModelExecutionRecord = {

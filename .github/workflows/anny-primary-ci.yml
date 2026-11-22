@@ -59,7 +59,7 @@ jobs:
         run: npm run build
 
   storage-integration:
-    name: Live S3/MinIO storage integration test
+    name: Live S3-compatible object storage integration test (SeaweedFS)
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -71,36 +71,53 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Start pinned MinIO container with explicit server command
+      - name: Start pinned SeaweedFS S3-compatible container
         run: |
-          docker run -d --name anny-minio-ci \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER=annyciaccesskey \
-            -e MINIO_ROOT_PASSWORD=annycisecretkey_strong_2026 \
-            minio/minio:RELEASE.2025-04-22T22-12-26Z \
-            server /data --console-address ":9001"
+          mkdir -p /tmp/seaweedfs
+          cat <<'EOF' > /tmp/seaweedfs/s3.json
+          {
+            "identities": [
+              {
+                "name": "anny-ci",
+                "credentials": [
+                  {
+                    "accessKey": "annyciaccesskey",
+                    "secretKey": "annycisecretkey_strong_2026"
+                  }
+                ],
+                "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+              }
+            ]
+          }
+          EOF
+          docker run -d --name anny-s3-ci \
+            -p 8333:8333 \
+            -p 9333:9333 \
+            -v /tmp/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro \
+            chrislusf/seaweedfs:3.68 \
+            server -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:9000/minio/health/live; then
-              echo "MinIO is healthy and ready."
+            if curl -fsS http://127.0.0.1:9333/cluster/status >/dev/null 2>&1 && (echo > /dev/tcp/127.0.0.1/8333) 2>/dev/null; then
+              echo "SeaweedFS S3 gateway is healthy and ready on port 8333."
               exit 0
             fi
             sleep 1
           done
-          docker logs anny-minio-ci
+          docker logs anny-s3-ci
           exit 1
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run live S3/MinIO integration suite
+      - name: Run live S3 storage integration suite
         env:
-          MINIO_ENDPOINT: http://127.0.0.1:9000
+          MINIO_ENDPOINT: http://127.0.0.1:8333
           MINIO_ACCESS_KEY: annyciaccesskey
           MINIO_SECRET_KEY: annycisecretkey_strong_2026
           MINIO_BUCKET: anny-ci-artifacts
           MINIO_USE_SSL: "false"
         run: npm run test:storage
 
-      - name: Stop MinIO container
+      - name: Stop S3 container
         if: always()
-        run: docker rm -f anny-minio-ci || true
+        run: docker rm -f anny-s3-ci || true

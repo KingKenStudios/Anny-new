@@ -203,7 +203,7 @@ export class CognitiveIntentEngine {
       relevantHistorySummary: [latestPriorUser, priorAssistantMessages.at(-1)?.content || ''].filter(Boolean).join(' | ').slice(0, 500) || 'None',
       relevantAssets: multimodalContext?.inputs.map(i => i.url || i.id) || [],
       requiredToolsAndModels: [
-        ...(taskType === 'build' ? ['code_synthesizer', 'vite_builder', 'linter_verifier'] : ['gemini-3.6-flash']),
+        ...(taskType === 'build' ? ['code_synthesizer', 'vite_builder', 'linter_verifier'] : ['gemini-4-hydrogen']),
         ...(hasImageInput ? ['vision_model'] : []),
         ...(hasUrlInput ? ['vision_model'] : [])
       ],
@@ -224,7 +224,7 @@ export class CognitiveIntentEngine {
       requiredTools.push('modly_3d_engine');
     }
     if (intent.hasImageRequirement) {
-      requiredTools.push('unsplash_image_engine');
+      requiredTools.push('creative_image_engine');
     }
 
     const stepSequence: string[] = [];
@@ -249,9 +249,9 @@ export class CognitiveIntentEngine {
       ],
       requiredTools,
       requiredModels: {
-        reasoning: 'gemini-3.6-flash',
-        coding: intent.has3DRequirement ? 'gemini-3.6-flash' : 'deepseek-coder',
-        image: 'imagen-3'
+        reasoning: 'gemini-4-hydrogen',
+        coding: intent.has3DRequirement ? 'gemini-4-hydrogen' : 'gemini-4-neon',
+        image: 'gemini-3.1-flash-lite-image'
       },
       stepSequence,
       potentialRisks: intent.ambiguities.length > 0 ? ['Ambiguous prompt references'] : [],

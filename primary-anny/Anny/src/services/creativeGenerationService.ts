@@ -68,13 +68,15 @@ export interface CreativeVideoRequest {
   category?: VideoIntentCategory;
   aspectRatio?: '16:9' | '9:16';
   durationSeconds?: number;
-  resolution?: '720p' | '1080p';
+  resolution?: '360p' | '720p' | '1080p' | '4k';
   referenceImages?: ReferenceMediaInput[];
   referenceVideo?: ReferenceMediaInput;
   parentJobId?: string;
   previousInteractionId?: string;
   planOnly?: boolean;
   providerOverride?: 'auto' | 'offline';
+  ownerUserId?: string;
+  ownerOrgId?: string;
 }
 
 export interface VideoProviderExecutionResult {
@@ -90,7 +92,7 @@ export type VideoProviderAdapter = (params: {
   mode: VideoJobRecord['mode'];
   aspectRatio: '16:9' | '9:16';
   durationSeconds: number;
-  resolution: '720p' | '1080p';
+  resolution: '360p' | '720p' | '1080p' | '4k';
   referenceImages?: ReferenceMediaInput[];
   referenceVideo?: ReferenceMediaInput;
   previousInteractionId?: string;
@@ -793,8 +795,8 @@ class CreativeGenerationService {
       (classification.domain === 'VIDEO' ? (classification.category as VideoIntentCategory) : 'TEXT_TO_VIDEO');
     const aspectRatio: '16:9' | '9:16' =
       req.aspectRatio || (classification.aspectRatio === '9:16' ? '9:16' : '16:9');
-    const duration = Math.min(16, Math.max(4, req.durationSeconds || 8));
-    const resolution: '720p' | '1080p' = req.resolution || '720p';
+    const duration = Math.min(15, Math.max(3, req.durationSeconds || 8));
+    const resolution: '720p' | '1080p' = req.resolution === '1080p' ? '1080p' : '720p';
     const enhanced = buildEnhancedPrompt({
       ...classification,
       domain: 'VIDEO',
@@ -807,13 +809,19 @@ class CreativeGenerationService {
 
     const ai = createGeminiClient();
     if (ai && req.providerOverride !== 'offline') {
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       try {
-        const res = await ai.models.generateContent({
-          model: 'gemini-4-hydrogen',
-          contents: `Create a concise directorial video production plan in pure JSON (no markdown fences) for: "${req.prompt}".
+        const res = await Promise.race([
+          ai.models.generateContent({
+            model: 'gemini-4-hydrogen',
+            contents: `Create a concise directorial video production plan in pure JSON (no markdown fences) for: "${req.prompt}".
 Schema: {"title": string, "conceptSummary": string, "narrationScript": string, "musicAndSoundDirection": string, "shots": [{"shotNumber": number, "durationSeconds": number, "visualDescription": string, "cameraMovement": string, "lightingAndMood": string, "audioCue": string, "onScreenText": string}]}.
 Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect ratio.`,
-        });
+          }),
+          new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(() => reject(new Error('Storyboard planner timed out')), 8000);
+          }),
+        ]);
         const match = (res.text || '').match(/\{[\s\S]*\}/);
         if (match) {
           const parsed = JSON.parse(match[0]);
@@ -834,6 +842,8 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
         }
       } catch {
         // Fall through cleanly to deterministic directorial planner
+      } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
       }
     }
 
@@ -895,15 +905,41 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
   }
 
   /**
+   * Downloads video bytes safely when Interactions API returns a Google Files API URI
+   * instead of inline base64 data. Strictly restricts outbound fetches to Google's API host.
+   */
+  private async downloadGeminiVideoUri(uri: string): Promise<{ bytes: Uint8Array; mimeType: string }> {
+    const parsed = new URL(uri);
+    const allowedHosts = new Set(['generativelanguage.googleapis.com', 'storage.googleapis.com']);
+    if (parsed.protocol !== 'https:' || !allowedHosts.has(parsed.hostname)) {
+      throw new Error(`Blocked untrusted video media download host: ${parsed.hostname}`);
+    }
+    const apiKey = getGeminiApiKey();
+    const headers: Record<string, string> = { 'User-Agent': 'aistudio-build' };
+    if (apiKey && parsed.hostname === 'generativelanguage.googleapis.com') {
+      headers['x-goog-api-key'] = apiKey;
+    }
+    const resp = await fetch(parsed.toString(), { headers });
+    if (!resp.ok) {
+      throw new Error(`Failed to retrieve generated video media (HTTP ${resp.status}).`);
+    }
+    const buf = new Uint8Array(await resp.arrayBuffer());
+    return {
+      bytes: buf,
+      mimeType: resp.headers.get('content-type') || 'video/mp4',
+    };
+  }
+
+  /**
    * Executes real video generation via Google Gemini Omni (`gemini-omni-1.2-flash`)
-   * using the Interactions API (`ai.interactions.create`).
+   * using the documented Interactions API (`ai.interactions.create`) contract.
    */
   private async callGeminiOmniVideoProvider(params: {
     prompt: string;
     mode: VideoJobRecord['mode'];
     aspectRatio: '16:9' | '9:16';
     durationSeconds: number;
-    resolution: '720p' | '1080p';
+    resolution: '360p' | '720p' | '1080p' | '4k';
     referenceImages?: ReferenceMediaInput[];
     referenceVideo?: ReferenceMediaInput;
     previousInteractionId?: string;
@@ -920,15 +956,24 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
     const model = 'gemini-omni-1.2-flash';
     let input: any = params.prompt;
 
+    // Interactions API multimodal ordering: media parts first, natural language instruction last
     if (params.mode === 'video_edit' && params.referenceVideo?.data) {
       const { base64, detectedMime } = stripDataUrlPrefix(params.referenceVideo.data);
       input = [
-        { type: 'text', text: params.prompt },
         {
           type: 'video',
           mime_type: params.referenceVideo.mimeType || detectedMime || 'video/mp4',
           data: base64,
         },
+        ...(params.referenceImages || []).slice(0, 6).map((img) => {
+          const parsed = stripDataUrlPrefix(img.data);
+          return {
+            type: 'image',
+            mime_type: img.mimeType || parsed.detectedMime || 'image/png',
+            data: parsed.base64,
+          };
+        }),
+        { type: 'text', text: params.prompt },
       ];
     } else if (
       (params.mode === 'image_to_video' || params.mode === 'storyboard_multi_ref') &&
@@ -936,7 +981,6 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
       params.referenceImages.length > 0
     ) {
       input = [
-        { type: 'text', text: params.prompt },
         ...params.referenceImages.slice(0, 6).map((img) => {
           const { base64, detectedMime } = stripDataUrlPrefix(img.data);
           return {
@@ -945,17 +989,24 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
             data: base64,
           };
         }),
+        { type: 'text', text: params.prompt },
       ];
     }
+
+    // gemini-omni-1.2-flash supports 3s..15s (3s..10s for video extension / 2-frame interpolation)
+    const maxAllowedSeconds = params.mode === 'video_extend' ? 10 : 15;
+    const clampedSeconds = Math.min(maxAllowedSeconds, Math.max(3, Math.round(params.durationSeconds || 8)));
 
     const interactionPayload: any = {
       model,
       input,
+      background: false,
       store: true,
+      stream: false,
       response_format: {
         type: 'video',
         aspect_ratio: params.aspectRatio,
-        duration: `${Math.min(16, Math.max(4, params.durationSeconds))}s`,
+        duration: `${clampedSeconds}s`,
         resolution: params.resolution,
       },
     };
@@ -970,26 +1021,93 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
     }
 
     const interaction = await interactionsApi.create(interactionPayload, { timeout: 300000 });
-    const rawVideoData = interaction?.output_video?.data || interaction?.outputs?.find((o: any) => o?.type === 'video')?.data;
-    if (!rawVideoData) {
-      throw new Error('gemini-omni-1.2-flash completed without returning video bytes.');
+
+    // Extract video output across all documented Interactions API response fields:
+    // 1. interaction.output_video (convenience helper)
+    // 2. interaction.steps[].content[] (model_output steps)
+    // 3. interaction.outputs[] (legacy fallback)
+    let videoPart: any = interaction?.output_video || null;
+    if (!videoPart && Array.isArray(interaction?.steps)) {
+      for (let i = interaction.steps.length - 1; i >= 0; i--) {
+        const step = interaction.steps[i];
+        if (step?.type === 'model_output' && Array.isArray(step.content)) {
+          const found = step.content.find((c: any) => c?.type === 'video' && (c?.data || c?.uri));
+          if (found) {
+            videoPart = found;
+            break;
+          }
+        }
+      }
+    }
+    if (!videoPart && Array.isArray(interaction?.outputs)) {
+      videoPart = interaction.outputs.find((o: any) => o?.type === 'video' && (o?.data || o?.uri)) || null;
     }
 
-    const bytes = base64ToBytes(rawVideoData);
+    if (videoPart?.data) {
+      const bytes = base64ToBytes(videoPart.data);
+      return {
+        videoBytes: bytes,
+        mimeType: videoPart.mime_type || 'video/mp4',
+        interactionId: interaction?.id,
+        provider: 'gemini-omni-video',
+        model,
+      };
+    }
+
+    if (videoPart?.uri) {
+      const downloaded = await this.downloadGeminiVideoUri(videoPart.uri);
+      return {
+        videoBytes: downloaded.bytes,
+        mimeType: videoPart.mime_type || downloaded.mimeType || 'video/mp4',
+        interactionId: interaction?.id,
+        provider: 'gemini-omni-video',
+        model,
+      };
+    }
+
+    throw new Error('gemini-omni-1.2-flash completed without returning retrievable video data or URI.');
+  }
+
+  private classifyVideoProviderError(err: any): {
+    status: VideoJobRecord['status'];
+    guidance: string;
+  } {
+    const msg = String(err?.message || err || '');
+    const code = Number(err?.status || err?.code || 0);
+    if (
+      code === 401 ||
+      code === 403 ||
+      /API_KEY_INVALID|PERMISSION_DENIED|UNAUTHENTICATED|unauthorized|forbidden/i.test(msg)
+    ) {
+      return {
+        status: 'AUTHENTICATION_FAILED',
+        guidance:
+          'Verify your billing-enabled GEMINI_API_KEY in server Secrets/environment settings with access to gemini-omni-1.2-flash.',
+      };
+    }
+    if (
+      code === 404 ||
+      code === 429 ||
+      code === 503 ||
+      /RESOURCE_EXHAUSTED|NOT_FOUND|quota|billing|paid|unavailable|overloaded/i.test(msg)
+    ) {
+      return {
+        status: 'PROVIDER_UNAVAILABLE',
+        guidance:
+          'gemini-omni-1.2-flash requires a paid/billing-enabled API key and available quota. Review the generated storyboard plan or upgrade billing tier.',
+      };
+    }
     return {
-      videoBytes: bytes,
-      mimeType: 'video/mp4',
-      interactionId: interaction?.id,
-      provider: 'gemini-omni-video',
-      model,
+      status: 'FAILED',
+      guidance: 'Check the prompt/media constraints (3s-15s, 16:9 or 9:16) and retry rendering.',
     };
   }
 
   /**
-   * Starts a real tracked Video Job.
-   * - If `planOnly` -> returns STORYBOARD_PLAN_ONLY (never COMPLETED/GENERATED).
-   * - If no video provider configured -> returns PROVIDER_UNCONFIGURED + storyboard plan (never COMPLETED/GENERATED).
-   * - If configured -> returns QUEUED/GENERATING immediately and executes real render + MP4 magic-byte validation.
+   * Starts a real tracked Video Job with user/org ownership isolation.
+   * - If `planOnly` -> returns STORYBOARD_PLAN_ONLY (never COMPLETED).
+   * - If no video provider configured -> returns PROVIDER_UNCONFIGURED + storyboard plan (never COMPLETED).
+   * - If configured -> returns QUEUED/GENERATING immediately and executes real render + full MP4 box validation.
    */
   public async startVideoJob(req: CreativeVideoRequest): Promise<VideoJobRecord> {
     const jobId = `vid_job_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -1023,21 +1141,26 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
 
     const aspectRatio: '16:9' | '9:16' =
       req.aspectRatio || (classification.aspectRatio === '9:16' ? '9:16' : '16:9');
-    const durationSeconds = Math.min(16, Math.max(4, req.durationSeconds || 8));
-    const resolution: '720p' | '1080p' = req.resolution || '720p';
+    const durationSeconds = Math.min(15, Math.max(3, Math.round(req.durationSeconds || 8)));
+    const resolution: VideoJobRecord['resolution'] =
+      req.resolution === '360p' || req.resolution === '1080p' || req.resolution === '4k'
+        ? req.resolution
+        : '720p';
 
     const productionPlan = await this.createVideoProductionPlan({
       ...req,
       category,
       aspectRatio,
       durationSeconds,
-      resolution,
+      resolution: resolution === '1080p' || resolution === '4k' ? '1080p' : '720p',
     });
 
-    // 1. Storyboard / Planning mode — explicitly labeled STORYBOARD_PLAN_ONLY, NEVER GENERATED!
+    // 1. Storyboard / Planning mode — explicitly labeled STORYBOARD_PLAN_ONLY, NEVER COMPLETED!
     if (mode === 'storyboard_plan') {
       const planJob: VideoJobRecord = {
         jobId,
+        ownerUserId: req.ownerUserId,
+        ownerOrgId: req.ownerOrgId,
         status: 'STORYBOARD_PLAN_ONLY',
         mode,
         category,
@@ -1064,6 +1187,8 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
     if (!hasVideoProvider) {
       const unconfiguredJob: VideoJobRecord = {
         jobId,
+        ownerUserId: req.ownerUserId,
+        ownerOrgId: req.ownerOrgId,
         status: 'PROVIDER_UNCONFIGURED',
         mode,
         category,
@@ -1082,7 +1207,7 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
         productionPlan,
         error: 'No real video rendering provider is configured on the server.',
         recoveryGuidance:
-          'Set GEMINI_API_KEY on the server to enable real MP4 video rendering via gemini-omni-1.2-flash (Interactions API). You can review and refine the generated storyboard plan right now.',
+          'Configure a billing-enabled GEMINI_API_KEY on the server to enable real MP4 video rendering via gemini-omni-1.2-flash (Interactions API). You can review and refine the generated storyboard plan right now.',
       };
       this.videoJobs.set(jobId, unconfiguredJob);
       return unconfiguredJob;
@@ -1091,6 +1216,8 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
     // 3. Create real async job & run rendering in background while returning tracked jobId immediately
     const job: VideoJobRecord = {
       jobId,
+      ownerUserId: req.ownerUserId,
+      ownerOrgId: req.ownerOrgId,
       status: 'GENERATING',
       mode,
       category,
@@ -1110,7 +1237,7 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
     };
     this.videoJobs.set(jobId, job);
 
-    // Execute async job with real validation
+    // Execute async job with real container structure validation
     void this.executeVideoJobAsync(jobId, req, productionPlan.providerPrompt);
 
     return { ...job };
@@ -1122,9 +1249,10 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
     enhancedPrompt: string
   ): Promise<void> {
     const job = this.videoJobs.get(jobId);
-    if (!job) return;
+    if (!job || job.status === 'CANCELLED') return;
 
     try {
+      job.status = 'PROCESSING';
       job.progressPct = 40;
       job.stageMessage = 'Rendering video frames and synchronizing motion...';
       job.updatedAt = new Date().toISOString();
@@ -1140,9 +1268,14 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
         previousInteractionId: req.previousInteractionId,
       });
 
+      // Respect user cancellation if cancelled mid-flight
+      if (this.videoJobs.get(jobId)?.status === 'CANCELLED') {
+        return;
+      }
+
       job.status = 'VALIDATING';
       job.progressPct = 90;
-      job.stageMessage = 'Validating playable MP4/WebM container integrity...';
+      job.stageMessage = 'Validating full MP4/WebM container structure (ftyp/moov/mdat)...';
       job.updatedAt = new Date().toISOString();
 
       const validation = validateVideoAsset(result.videoBytes);
@@ -1162,40 +1295,80 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
       job.mimeType = validation.mimeType;
       job.byteLength = validation.byteLength;
       job.playableValidated = true;
+      job.containerDetails = validation.containerDetails;
       job.videoUrl = `/api/creative/video/jobs/${encodeURIComponent(jobId)}/media`;
       job.progressPct = 100;
-      job.stageMessage = 'Playable video verified and ready for preview & download.';
+      job.stageMessage = 'Playable video container verified and ready for preview & download.';
       job.completedAt = new Date().toISOString();
       job.updatedAt = job.completedAt;
     } catch (err: any) {
-      job.status = 'FAILED';
+      if (this.videoJobs.get(jobId)?.status === 'CANCELLED') return;
+      const classified = this.classifyVideoProviderError(err);
+      job.status = classified.status;
       job.playableValidated = false;
       job.progressPct = 0;
       job.error = err?.message || 'Video generation failed.';
-      job.stageMessage = `Video rendering failed: ${job.error}`;
-      job.recoveryGuidance = 'Verify GEMINI_API_KEY permissions/quota for gemini-omni-1.2-flash or retry with a shorter duration.';
+      job.stageMessage = `Video rendering ${classified.status.toLowerCase().replace(/_/g, ' ')}: ${job.error}`;
+      job.recoveryGuidance = classified.guidance;
       job.updatedAt = new Date().toISOString();
     }
   }
 
-  public getVideoJob(jobId: string): VideoJobRecord | undefined {
-    const job = this.videoJobs.get(jobId);
-    return job ? { ...job } : undefined;
+  public canAccessVideoJob(job: VideoJobRecord, requester?: { userId?: string; orgId?: string; isAdmin?: boolean }): boolean {
+    if (!requester) return true;
+    if (requester.isAdmin) return true;
+    if (!job.ownerUserId) return false;
+    if (job.ownerUserId !== requester.userId) return false;
+    if (job.ownerOrgId && requester.orgId && job.ownerOrgId !== requester.orgId) return false;
+    return true;
   }
 
-  public listVideoJobs(): VideoJobRecord[] {
+  public getVideoJob(jobId: string, requester?: { userId?: string; orgId?: string; isAdmin?: boolean }): VideoJobRecord | undefined {
+    const job = this.videoJobs.get(jobId);
+    if (!job) return undefined;
+    if (requester && !this.canAccessVideoJob(job, requester)) return undefined;
+    return { ...job };
+  }
+
+  public listVideoJobs(requester?: { userId?: string; orgId?: string; isAdmin?: boolean }): VideoJobRecord[] {
     return Array.from(this.videoJobs.values())
+      .filter((job) => !requester || this.canAccessVideoJob(job, requester))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .map((j) => ({ ...j }));
   }
 
-  public getVideoMediaBuffer(jobId: string): { bytes: Uint8Array; mimeType: string } | undefined {
+  public cancelVideoJob(
+    jobId: string,
+    requester?: { userId?: string; orgId?: string; isAdmin?: boolean }
+  ): VideoJobRecord | null {
+    const job = this.videoJobs.get(jobId);
+    if (!job) return null;
+    if (requester && !this.canAccessVideoJob(job, requester)) return null;
+    if (job.status === 'COMPLETED' || job.status === 'FAILED' || job.status === 'CANCELLED') {
+      return { ...job };
+    }
+    job.status = 'CANCELLED';
+    job.playableValidated = false;
+    job.progressPct = 0;
+    job.stageMessage = 'Video job cancelled by operator.';
+    job.updatedAt = new Date().toISOString();
+    this.videoBuffers.delete(jobId);
+    return { ...job };
+  }
+
+  public getVideoMediaBuffer(
+    jobId: string,
+    requester?: { userId?: string; orgId?: string; isAdmin?: boolean }
+  ): { bytes: Uint8Array; mimeType: string } | undefined {
+    const job = this.videoJobs.get(jobId);
+    if (!job) return undefined;
+    if (requester && !this.canAccessVideoJob(job, requester)) return undefined;
     return this.videoBuffers.get(jobId);
   }
 
   /**
    * Real Music Studio audio synthesis using Google Lyria (`lyria-3-clip-preview` / `lyria-3-pro-preview`)
-   * when GEMINI_API_KEY is configured; honest unconfigured status otherwise.
+   * via generateContentStream when GEMINI_API_KEY is configured; honest unconfigured status otherwise.
    */
   public async generateCreativeAudio(params: {
     prompt: string;
@@ -1206,6 +1379,7 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
     model: string;
     audioUrl?: string;
     mimeType?: string;
+    byteLength?: number;
     lyrics?: string;
     error?: string;
     recoveryGuidance?: string;
@@ -1217,7 +1391,7 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
         provider: 'unconfigured',
         model: 'none',
         error: 'Music generation requires a configured audio provider (GEMINI_API_KEY for Lyria).',
-        recoveryGuidance: 'Configure GEMINI_API_KEY on the server to synthesize real MP3/WAV tracks with Lyria 3.',
+        recoveryGuidance: 'Configure a billing-enabled GEMINI_API_KEY on the server to synthesize real WAV/MP3 tracks with Lyria 3.',
       };
     }
 
@@ -1226,22 +1400,25 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
       const stream = await ai.models.generateContentStream({
         model,
         contents: params.prompt,
-        config: {
-          responseModalities: ['AUDIO', 'TEXT'],
-        },
       });
 
       const audioChunks: Buffer[] = [];
-      let mimeType = 'audio/mpeg';
-      const lyricsParts: string[] = [];
+      let mimeType = 'audio/wav';
+      let hasMime = false;
+      let lyrics = '';
 
       for await (const chunk of stream) {
         const parts = chunk.candidates?.[0]?.content?.parts || [];
         for (const part of parts) {
-          if (part.text) lyricsParts.push(part.text);
           if (part.inlineData?.data) {
-            mimeType = part.inlineData.mimeType || mimeType;
+            if (!hasMime && part.inlineData.mimeType) {
+              mimeType = part.inlineData.mimeType;
+              hasMime = true;
+            }
             audioChunks.push(Buffer.from(part.inlineData.data, 'base64'));
+          }
+          if (part.text && !lyrics) {
+            lyrics = part.text;
           }
         }
       }
@@ -1251,21 +1428,30 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
       }
 
       const combined = Buffer.concat(audioChunks);
+      if (combined.byteLength < 64) {
+        throw new Error(`${model} returned an invalid or truncated audio payload (${combined.byteLength} bytes).`);
+      }
+
       return {
         success: true,
         provider: 'gemini-lyria-music',
         model,
         audioUrl: `data:${mimeType};base64,${combined.toString('base64')}`,
         mimeType,
-        lyrics: lyricsParts.join('').trim() || undefined,
+        byteLength: combined.byteLength,
+        lyrics: lyrics.trim() || undefined,
       };
     } catch (err: any) {
+      const msg = String(err?.message || 'Lyria audio synthesis failed.');
+      const isPaidOrAuth = /401|403|429|PERMISSION_DENIED|RESOURCE_EXHAUSTED|API_KEY_INVALID/i.test(msg);
       return {
         success: false,
         provider: 'gemini-lyria-music',
         model,
-        error: err?.message || 'Lyria audio synthesis failed.',
-        recoveryGuidance: 'Verify GEMINI_API_KEY access for Lyria 3 models or retry with a cleaner music prompt.',
+        error: msg,
+        recoveryGuidance: isPaidOrAuth
+          ? 'Lyria 3 models require a billing-enabled GEMINI_API_KEY in server Secrets with active quota.'
+          : 'Retry with a clear musical style, tempo, and instrumentation prompt.',
       };
     }
   }
