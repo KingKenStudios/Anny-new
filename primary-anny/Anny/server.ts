@@ -58,6 +58,12 @@ import {
   calculateVehicleEvPreliminary,
   searchSafetyChecklists,
 } from './src/core/engineeringSafetyEngine.ts';
+import { generateArchitecturePlan } from './src/core/architectureDesignEngine.ts';
+import {
+  generateBroadcastPlan,
+  validateAndPrepareMusicRelease,
+  generateVideoStreamingPipeline,
+} from './src/core/broadcastMediaEngine.ts';
 
 import FormData from "form-data";
 import { Readable } from "stream";
@@ -3422,6 +3428,88 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
     }
   });
 
+
+  // Phase 2-5 Domain Studio Endpoints (all strictly authenticated + input validated)
+  app.post("/api/architecture/plan", requireAuth(), (req: AuthenticatedRequest, res) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const validTypologies = new Set([
+        'bungalow', 'duplex', 'detached_villa', 'mansion', 'apartment_block',
+        'office_hub', 'retail_plaza', 'studio_broadcast', 'clinic', 'hospitality'
+      ]);
+      const typology = validTypologies.has(String(body.typology)) ? body.typology : 'duplex';
+      const plan = generateArchitecturePlan({
+        projectName: typeof body.projectName === 'string' ? body.projectName.slice(0, 120) : undefined,
+        typology,
+        climate: ['tropical_west_africa', 'temperate', 'arid'].includes(String(body.climate)) ? body.climate : 'tropical_west_africa',
+        location: typeof body.location === 'string' ? body.location.slice(0, 120) : undefined,
+        plotWidthM: typeof body.plotWidthM === 'number' ? body.plotWidthM : Number(body.plotWidthM) || undefined,
+        plotDepthM: typeof body.plotDepthM === 'number' ? body.plotDepthM : Number(body.plotDepthM) || undefined,
+        bedrooms: typeof body.bedrooms === 'number' ? body.bedrooms : Number(body.bedrooms) || undefined,
+        floors: typeof body.floors === 'number' ? body.floors : Number(body.floors) || undefined,
+      });
+      res.json({ success: true, plan });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err?.message || 'Invalid architecture plan input' });
+    }
+  });
+
+  app.post("/api/broadcast/plan", requireAuth(), (req: AuthenticatedRequest, res) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const liveEndpointUrl = process.env.BROADCAST_STREAM_URL || process.env.ICECAST_URL || '';
+      const plan = generateBroadcastPlan({
+        stationName: typeof body.stationName === 'string' ? body.stationName.slice(0, 120) : 'Anny Broadcast Network',
+        medium: body.medium === 'radio' ? 'radio' : 'tv',
+        format: typeof body.format === 'string' ? body.format.slice(0, 160) : undefined,
+        tagline: typeof body.tagline === 'string' ? body.tagline.slice(0, 160) : undefined,
+        timezone: typeof body.timezone === 'string' ? body.timezone.slice(0, 64) : undefined,
+        liveEndpointUrl: liveEndpointUrl || undefined,
+      });
+      res.json({ success: true, plan });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err?.message || 'Invalid broadcast plan request' });
+    }
+  });
+
+  app.post("/api/distribution/validate-release", requireAuth(), (req: AuthenticatedRequest, res) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const result = validateAndPrepareMusicRelease({
+        artistName: typeof body.artistName === 'string' ? body.artistName.slice(0, 120) : '',
+        releaseTitle: typeof body.releaseTitle === 'string' ? body.releaseTitle.slice(0, 140) : '',
+        releaseType: ['Single', 'EP', 'Album'].includes(String(body.releaseType)) ? body.releaseType : 'Single',
+        primaryGenre: typeof body.primaryGenre === 'string' ? body.primaryGenre.slice(0, 80) : 'Afrobeats',
+        releaseDate: typeof body.releaseDate === 'string' ? body.releaseDate.slice(0, 32) : new Date().toISOString().slice(0, 10),
+        upcOrEan: typeof body.upcOrEan === 'string' ? body.upcOrEan.slice(0, 32) : undefined,
+        labelName: typeof body.labelName === 'string' ? body.labelName.slice(0, 120) : undefined,
+        rightsOwner: typeof body.rightsOwner === 'string' ? body.rightsOwner.slice(0, 140) : '',
+        artworkWidthPx: Number(body.artworkWidthPx) || 0,
+        artworkHeightPx: Number(body.artworkHeightPx) || 0,
+        tracks: Array.isArray(body.tracks) ? body.tracks.slice(0, 50) : [],
+        royaltySplits: Array.isArray(body.royaltySplits) ? body.royaltySplits.slice(0, 30) : [],
+        targetDsps: Array.isArray(body.targetDsps) ? body.targetDsps.slice(0, 20).map(String) : undefined,
+      });
+      res.json({ success: true, result });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err?.message || 'Invalid music release payload' });
+    }
+  });
+
+  app.post("/api/video-platform/abr-pipeline", requireAuth(), (req: AuthenticatedRequest, res) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const pipeline = generateVideoStreamingPipeline({
+        videoTitle: typeof body.videoTitle === 'string' ? body.videoTitle.slice(0, 140) : 'Platform Master Video',
+        sourceFileName: typeof body.sourceFileName === 'string' ? body.sourceFileName.slice(0, 120) : undefined,
+        transcriptText: typeof body.transcriptText === 'string' ? body.transcriptText.slice(0, 8000) : undefined,
+        captionSegments: Array.isArray(body.captionSegments) ? body.captionSegments.slice(0, 200) : undefined,
+      });
+      res.json({ success: true, pipeline });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err?.message || 'Invalid video streaming pipeline payload' });
+    }
+  });
 
   // Catch-all for API routes to avoid returning HTML on 404
   app.all("/api/*", (req, res) => {

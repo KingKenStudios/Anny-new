@@ -15,6 +15,8 @@ import type { LightboxImageItem } from "./components/ImageLightboxViewer";
 import type { BuildStageItem } from "./components/AnnyBuildPreviewOverlay";
 import { MobileLogoMenu } from './MobileLogoMenu';
 import { ExecutionStreamView } from './components/chat/ExecutionStreamView';
+import { AnnyPromptComposer } from './components/chat/AnnyPromptComposer';
+import { resolveDraftAfterFailedSend } from './components/chat/composerUtils';
 import {
   Sparkles,
   Command,
@@ -79,6 +81,8 @@ import {
   ScanEye,
   Link2,
   AlertCircle,
+  Sun,
+  Moon,
 } from 'lucide-react';
 
 import logoImg from './assets/logo.png';
@@ -171,7 +175,20 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isVoiceActive, setIsVoiceActive] = useState<boolean>(() => safeStorage.getItem('anny_auto_speak') === 'true');
+  const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() =>
+    safeStorage.getItem('anny_theme') === 'light' ? 'light' : 'dark'
+  );
   const [currentTime, setCurrentTime] = useState('08:14 PM');
+
+  useEffect(() => {
+    safeStorage.setItem('anny_theme', themeMode);
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle('dark', themeMode === 'dark');
+      document.documentElement.setAttribute('data-theme', themeMode);
+    }
+  }, [themeMode]);
+
+  const activeAbortRef = useRef<AbortController | null>(null);
 
   // Pro Tools, Web Search & Notice States
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState<boolean>(false);
@@ -524,9 +541,15 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   };
 
   const handleStop = () => {
+    try {
+      activeAbortRef.current?.abort();
+    } catch {}
+    activeAbortRef.current = null;
+    isSubmittingRef.current = false;
     setIsGenerating(false);
     systemBus.publish('BuildCancelled', 'AnnyWorkspace', {});
     annyVoiceService.stop();
+    showNotice('Generation stopped.', 'info');
   };
   
   // Mode toggle: true = split screen view (Prompt + Telemetry + Live Preview)
@@ -1131,10 +1154,13 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       onUpdateMessages(updatedHistory);
     }
 
+    const submittedDraft = textToSend ? '' : prompt;
     const currentAttached = [...attachedFiles];
     const capturedVision = capturedVisionImmediate;
+    if (!textToSend) {
+      setPrompt('');
+    }
     setAttachedFiles([]);
-    setPrompt('');
     setVisionSnapshot(null);
     setIsGenerating(true);
 
@@ -1363,6 +1389,9 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => prevMsgs.map(m => m.id === botMsgId ? finalMsg : m));
         if (safeStorage.getItem('anny_auto_speak') !== 'false') annyVoiceService.speakConversation(finalMsg.content);
       } catch (error: any) {
+        if (submittedDraft) {
+          setPrompt((curr) => resolveDraftAfterFailedSend(curr, submittedDraft));
+        }
         const errorText = `I could not generate a verified image for this request. ${error?.message || 'No image provider succeeded.'}`;
         const failedMsg = { id: botMsgId, role: 'assistant' as const, content: formatNaturalConversation(errorText), timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), isGeneratingImage: false };
         setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? failedMsg : msg));
@@ -1471,6 +1500,9 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? finalMsg : msg));
         if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => prevMsgs.map(m => m.id === botMsgId ? finalMsg : m));
       } catch (error: any) {
+        if (submittedDraft) {
+          setPrompt((curr) => resolveDraftAfterFailedSend(curr, submittedDraft));
+        }
         const errorText = `I could not complete the video request. ${error?.message || 'Video service unavailable.'}`;
         const failedMsg = { id: botMsgId, role: 'assistant' as const, content: formatNaturalConversation(errorText), timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), isGeneratingImage: false };
         setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? failedMsg : msg));
@@ -1554,9 +1586,13 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         : visualAttachments;
       const liveVisionContext = liveVisionActive ? sceneUnderstanding.buildPromptContext() : undefined;
 
+      const abortController = new AbortController();
+      activeAbortRef.current = abortController;
+
       const res = await fetchWithAuth("/api/anny/pipeline", { 
         method: "POST", 
         headers: { "Content-Type": "application/json" }, 
+        signal: abortController.signal,
         body: JSON.stringify({ 
           sessionId: currentChatId || projectId || "workspace_session", 
           projectId,
@@ -1670,39 +1706,40 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       }
       setIsGenerating(false);
     } catch (err: any) {
-      console.error('ANNY Stream Error:', err);
-      if (isBuildRequest) {
-        setBuildFailureInfo((prev) =>
-          prev || { error: err?.message || 'Project generation failed.', diagnostics: [] }
-        );
+      const wasAborted = err?.name === 'AbortError';
+      if (submittedDraft) {
+        setPrompt((curr) => resolveDraftAfterFailedSend(curr, submittedDraft));
       }
-      executionStreamManager.failExecution(err.message || 'Pipeline failed');
-      const errBotMsg = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant' as const,
-        content: formatNaturalConversation(`I could not complete that request. ${err?.message || 'The requested operation failed before completion.'}`),
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      };
-      setChatHistory((prev) => {
-        const cleanPrev = prev.filter((m: any) => !isSynthesisOrPlaceholderContent(m.content));
-        return [...cleanPrev, errBotMsg];
-      });
-      if (onUpdateMessages) {
-        onUpdateMessages((prevMsgs: any[]) => {
-          const cleanPrev = prevMsgs.filter((m: any) => !isSynthesisOrPlaceholderContent(m.content));
+      if (!wasAborted) {
+        console.error('ANNY Stream Error:', err);
+        if (isBuildRequest) {
+          setBuildFailureInfo((prev) =>
+            prev || { error: err?.message || 'Project generation failed.', diagnostics: [] }
+          );
+        }
+        executionStreamManager.failExecution(err.message || 'Pipeline failed');
+        showNotice('Message could not be sent — your prompt draft was preserved.', 'error');
+        const errBotMsg = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant' as const,
+          content: formatNaturalConversation(`I could not complete that request. ${err?.message || 'The requested operation failed before completion.'}`),
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        };
+        setChatHistory((prev) => {
+          const cleanPrev = prev.filter((m: any) => !isSynthesisOrPlaceholderContent(m.content));
           return [...cleanPrev, errBotMsg];
         });
+        if (onUpdateMessages) {
+          onUpdateMessages((prevMsgs: any[]) => {
+            const cleanPrev = prevMsgs.filter((m: any) => !isSynthesisOrPlaceholderContent(m.content));
+            return [...cleanPrev, errBotMsg];
+          });
+        }
       }
     } finally {
+      activeAbortRef.current = null;
       setIsGenerating(false);
       isSubmittingRef.current = false;
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
     }
   };
 
@@ -1762,7 +1799,13 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   }
 
   return (
-    <div className="flex-1 flex flex-col min-w-0 bg-[#040614] text-slate-100 h-full w-full relative overflow-hidden select-none">
+    <div
+      className={`flex-1 flex flex-col min-w-0 h-full w-full relative overflow-hidden ${
+        themeMode === 'light'
+          ? 'bg-slate-50 text-slate-900'
+          : 'bg-[#040614] text-slate-100'
+      }`}
+    >
       {/* Background Ambient Glows */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-indigo-600/15 rounded-full blur-[140px] pointer-events-none" />
       <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[400px] h-[400px] bg-purple-600/10 rounded-full blur-[100px] pointer-events-none" />
@@ -2192,208 +2235,53 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                   </div>
                 )}
 
-                {/* Selected Image for Non-Destructive Edit Badge */}
-                {selectedImageForEdit && (
-                  <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 mb-1.5 rounded-xl bg-indigo-950/70 border border-indigo-400/40 text-xs text-indigo-100">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <img src={selectedImageForEdit.url} alt="Selected for edit" className="w-6 h-6 rounded object-cover border border-white/20 shrink-0" />
-                      <span className="truncate">Editing: <strong>{selectedImageForEdit.label || 'Selected image'}</strong> (original preserved)</span>
-                    </div>
-                    <button type="button" onClick={() => setSelectedImageForEdit(null)} className="text-indigo-300 hover:text-white px-1 font-bold cursor-pointer">×</button>
-                  </div>
-                )}
-
-                {/* Attached Files & Vision Snapshot Preview */}
-                {(attachedFiles.length > 0 || visionSnapshot) && (
-                  <div className="flex flex-wrap items-center gap-1.5 p-2 bg-[#0d1130] rounded-xl border border-white/10 text-xs">
-                    {visionSnapshot && (
-                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-cyan-950/80 border border-cyan-500/40 text-cyan-200 font-mono text-[11px]">
-                        <img
-                          src={`data:image/jpeg;base64,${visionSnapshot}`}
-                          alt="Vision snapshot"
-                          className="w-5 h-5 object-cover rounded shrink-0"
-                        />
-                        <span>vision-snapshot.jpg</span>
-                        <button
-                          type="button"
-                          onClick={() => setVisionSnapshot(null)}
-                          className="text-slate-400 hover:text-white ml-1 font-bold rounded hover:bg-white/10 px-1 cursor-pointer"
-                          title="Remove snapshot"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    )}
-                    {attachedFiles.map((f) => (
-                      <div
-                        key={f.id}
-                        className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-indigo-950/80 border border-indigo-500/40 text-cyan-300 font-mono text-[11px]"
-                      >
-                        {f.previewUrl ? (
-                          <img src={f.previewUrl} alt={f.name} className="w-4 h-4 object-cover rounded shrink-0" />
-                        ) : (
-                          <FileText className="w-3 h-3 text-cyan-400 shrink-0" />
-                        )}
-                        <span className="truncate max-w-[100px]">{f.name}</span>
-                        <button
-                          type="button"
-                          onClick={() => removeAttachedFile(f.id)}
-                          className="text-slate-400 hover:text-white ml-1 font-bold rounded hover:bg-white/10 px-1 cursor-pointer"
-                          title="Remove file"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Voice Listening / Recording Live Status Strip */}
-                {(isListening || isRecordingAudio || isTranscribingAudio) && (
-                  <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-rose-950/60 border border-rose-500/40 text-[11px] text-rose-200">
-                    <span className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-                      <span>
-                        {isTranscribingAudio
-                          ? 'Transcribing voice...'
-                          : isRecordingAudio
-                          ? 'Recording voice... Click Stop to transcribe'
-                          : 'Listening... Speak naturally'}
-                      </span>
-                    </span>
-                    {!isTranscribingAudio && (
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => (isRecordingAudio ? stopMediaRecording(false) : stopSpeechRecognition())}
-                          className="px-2 py-0.5 rounded bg-rose-500/30 hover:bg-rose-500/50 text-white text-[10px] font-semibold cursor-pointer"
-                        >
-                          Stop
-                        </button>
-                        {isRecordingAudio && (
-                          <button
-                            type="button"
-                            onClick={() => stopMediaRecording(true)}
-                            className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 text-[10px] cursor-pointer"
-                          >
-                            Cancel
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="relative flex items-center gap-1.5 bg-[#0d1130] rounded-xl border border-white/10 p-2 focus-within:border-indigo-500">
-                  <input
-                    type="text"
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Ask anything or describe what you want to build..."
-                    className="w-full bg-transparent border-none outline-none text-xs text-white placeholder-slate-400 px-1"
-                  />
-                  <button
-                    type="button"
-                    onClick={startListening}
-                    disabled={isTranscribingAudio}
-                    className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 cursor-pointer transition-all ${
-                      isListening || isRecordingAudio
-                        ? 'bg-red-500/25 text-red-300 border border-red-500/60 shadow-[0_0_12px_rgba(239,68,68,0.5)] animate-pulse'
-                        : 'bg-white/5 hover:bg-white/10 text-cyan-300 border border-white/10'
-                    }`}
-                    title={isListening || isRecordingAudio ? 'Stop voice capture' : 'Voice dictation'}
-                  >
-                    {isListening || isRecordingAudio ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (isWorking) handleStop();
-                      else handleSend();
-                    }}
-                    disabled={!isWorking && !prompt.trim() && attachedFiles.length === 0 && !visionSnapshot}
-                    className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 cursor-pointer shadow-md transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
-                      isWorking
-                        ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-[0_0_12px_rgba(225,29,72,0.6)] animate-pulse'
-                        : 'bg-gradient-to-r from-cyan-500 via-indigo-500 to-purple-600 text-white shadow-[0_0_12px_rgba(99,102,241,0.5)] hover:scale-105'
-                    }`}
-                    title={isWorking ? 'Stop building' : 'Send message'}
-                  >
-                    {isWorking ? <Square className="w-3.5 h-3.5 fill-white text-white" /> : <Send className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-
-                {/* Action Chips */}
-                <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="px-2 py-0.5 rounded bg-white/5 border border-white/10 flex items-center gap-1 text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all"
-                      title="Attach images, PDFs, code, documents, or project archives"
-                    >
-                      <Paperclip className="w-2.5 h-2.5 text-cyan-400" /> Attach Files
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = !isWebSearchEnabled;
-                        setIsWebSearchEnabled(next);
-                        showNotice(next ? 'Live Web Search grounding enabled.' : 'Live Web Search disabled.', 'info');
-                      }}
-                      className={`px-2 py-0.5 rounded border flex items-center gap-1 cursor-pointer transition-all ${
-                        isWebSearchEnabled
-                          ? 'bg-blue-500/20 border-blue-400/60 text-blue-200'
-                          : 'bg-white/5 border-white/10 text-slate-300 hover:text-white hover:bg-white/10'
-                      }`}
-                    >
-                      <Globe className="w-2.5 h-2.5 text-blue-400" /> {isWebSearchEnabled ? 'Web Live' : 'Web Search'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActivePopover(activePopover === 'protools' ? 'none' : 'protools')}
-                      className={`px-2 py-0.5 rounded border flex items-center gap-1 cursor-pointer transition-all ${
-                        activePopover === 'protools' || isDeepThinkingEnabled || isSaharaEnabled
-                          ? 'bg-amber-500/20 border-amber-400/60 text-amber-200'
-                          : 'bg-white/5 border-white/10 text-slate-300 hover:text-white hover:bg-white/10'
-                      }`}
-                    >
-                      <Zap className="w-2.5 h-2.5 text-amber-400" /> Pro Tools
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActivePopover(activePopover === 'model' ? 'none' : 'model')}
-                      className={`px-2 py-0.5 rounded border flex items-center gap-1 cursor-pointer transition-all ${
-                        activePopover === 'model' || selectedModelId !== 'auto'
-                          ? 'bg-purple-500/20 border-purple-400/60 text-purple-200'
-                          : 'bg-white/5 border-white/10 text-slate-300 hover:text-white hover:bg-white/10'
-                      }`}
-                    >
-                      <Brain className="w-2.5 h-2.5 text-purple-400" /> {activeModel.split(' ')[0]}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = !includeCodeContext;
-                        setIncludeCodeContext(next);
-                        showNotice(
-                          next
-                            ? `Workspace Code Context attached (${Object.keys(vfsFiles).length} files).`
-                            : 'Workspace Code Context detached.',
-                          'info'
-                        );
-                      }}
-                      className={`px-2 py-0.5 rounded border flex items-center gap-1 cursor-pointer transition-all ${
-                        includeCodeContext
-                          ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-200'
-                          : 'bg-white/5 border-white/10 text-slate-300 hover:text-white hover:bg-white/10'
-                      }`}
-                    >
-                      <Code2 className="w-2.5 h-2.5 text-emerald-400" /> Code Context
-                    </button>
-                  </div>
-                </div>
+                <AnnyPromptComposer
+                  prompt={prompt}
+                  setPrompt={setPrompt}
+                  onSend={handleSend}
+                  onStop={handleStop}
+                  isWorking={isWorking}
+                  placeholder="Ask anything or describe what you want to build..."
+                  variant="split"
+                  theme={themeMode}
+                  attachedFiles={attachedFiles}
+                  onRemoveAttachedFile={removeAttachedFile}
+                  visionSnapshot={visionSnapshot}
+                  onClearVisionSnapshot={() => setVisionSnapshot(null)}
+                  selectedImageForEdit={selectedImageForEdit}
+                  onClearSelectedImageForEdit={() => setSelectedImageForEdit(null)}
+                  isListening={isListening}
+                  isRecordingAudio={isRecordingAudio}
+                  isTranscribingAudio={isTranscribingAudio}
+                  onToggleVoiceInput={startListening}
+                  onStopSpeechRecognition={stopSpeechRecognition}
+                  onStopMediaRecording={stopMediaRecording}
+                  onAttachFilesClick={() => fileInputRef.current?.click()}
+                  isWebSearchEnabled={isWebSearchEnabled}
+                  onToggleWebSearch={() => {
+                    const next = !isWebSearchEnabled;
+                    setIsWebSearchEnabled(next);
+                    showNotice(next ? 'Live Web Search grounding enabled.' : 'Live Web Search disabled.', 'info');
+                  }}
+                  isProToolsActive={activePopover === 'protools' || isDeepThinkingEnabled || isSaharaEnabled || includeCodeContext}
+                  onToggleProTools={() => setActivePopover(activePopover === 'protools' ? 'none' : 'protools')}
+                  activeModelLabel={activeModel}
+                  isModelPopoverActive={activePopover === 'model'}
+                  selectedModelId={selectedModelId}
+                  onToggleModelPopover={() => setActivePopover(activePopover === 'model' ? 'none' : 'model')}
+                  includeCodeContext={includeCodeContext}
+                  onToggleCodeContext={() => {
+                    const next = !includeCodeContext;
+                    setIncludeCodeContext(next);
+                    showNotice(
+                      next
+                        ? `Workspace Code Context attached (${Object.keys(vfsFiles).length} files).`
+                        : 'Workspace Code Context detached.',
+                      'info'
+                    );
+                  }}
+                  vfsFileCount={Object.keys(vfsFiles).length}
+                />
 
                 {/* Model & Tokens Footer bar */}
                 <div className="flex items-center justify-between text-[9px] text-slate-400 pt-1 border-t border-white/5 font-mono">
@@ -2697,13 +2585,31 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                 <span>Vision Monitor</span>
               </button>
 
+              {/* Theme Mode Toggle (Light / Dark) */}
+              <button
+                type="button"
+                onClick={() => setThemeMode((t) => (t === 'dark' ? 'light' : 'dark'))}
+                aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                title={themeMode === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+                className={`p-2 rounded-xl transition-all cursor-pointer backdrop-blur-sm border ${
+                  themeMode === 'light'
+                    ? 'bg-slate-200 hover:bg-slate-300 border-slate-300 text-slate-800'
+                    : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300'
+                }`}
+              >
+                {themeMode === 'dark' ? <Sun className="w-3.5 h-3.5 text-amber-300" /> : <Moon className="w-3.5 h-3.5 text-indigo-700" />}
+              </button>
+
               {/* Speaker Voice Control (Icon only, color changes when ON, no text write up) */}
               <button
                 type="button"
                 onClick={toggleVoice}
+                aria-label={isVoiceActive ? 'Mute ANNY voice output' : 'Enable ANNY voice output'}
                 className={`p-2 rounded-xl transition-all cursor-pointer backdrop-blur-sm border ${
                   isVoiceActive
                     ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400/60 shadow-[0_0_15px_rgba(0,240,255,0.4)] animate-pulse'
+                    : themeMode === 'light'
+                    ? 'bg-slate-200 hover:bg-slate-300 border-slate-300 text-slate-700'
                     : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-400'
                 }`}
                 title={isVoiceActive ? "ANNY Voice Synthesizer: ENABLED (Click to Mute)" : "ANNY Voice Synthesizer: DISABLED (Click to Enable)"}
@@ -2878,8 +2784,8 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                     <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight font-heading pb-2 leading-relaxed inline-block overflow-visible animate-aios-shift drop-shadow-[0_0_12px_rgba(0,229,255,0.6)]">
                       Anny
                     </h1>
-                    <p className="text-xs sm:text-sm lg:text-base text-slate-300 font-medium tracking-wide">
-                      Your All-in-One AI Developer Assistant
+                    <p className={`text-xs sm:text-sm lg:text-base font-medium tracking-wide ${themeMode === 'light' ? 'text-slate-700' : 'text-slate-300'}`}>
+                      One AI. One Brain. Unlimited Applications.
                     </p>
                   </div>
 
@@ -3240,8 +3146,8 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
             </main>
           </div>
 
-          {/* ANCHORED CHAT BOX (Stands completely still at bottom) */}
-          <div className="shrink-0 w-full max-w-3xl mx-auto px-4 pb-4 sm:pb-6 pt-2 z-20 relative">
+          {/* ANCHORED CHAT BOX (Stands completely still at bottom, mobile safe-area aware) */}
+          <div className="shrink-0 w-full max-w-3xl mx-auto px-3 sm:px-4 pt-2 anny-safe-bottom z-20 relative">
             {/* Inline Notice Banner */}
             {workspaceNotice && (
               <div
@@ -3403,227 +3309,53 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
               </div>
             )}
 
-            <div className="bg-[#0b0f2d]/90 border border-white/15 rounded-2xl p-2.5 sm:p-3 shadow-[0_10px_30px_rgba(0,0,0,0.5)] focus-within:border-indigo-500/80 focus-within:ring-2 focus-within:ring-indigo-500/30 transition-all backdrop-blur-md">
-              {/* Selected Image for Non-Destructive Edit Badge (Main View) */}
-              {selectedImageForEdit && (
-                <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 mb-2 rounded-xl bg-indigo-950/70 border border-indigo-400/40 text-xs text-indigo-100">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <img src={selectedImageForEdit.url} alt="Selected for edit" className="w-6 h-6 rounded object-cover border border-white/20 shrink-0" />
-                    <span className="truncate">Editing: <strong>{selectedImageForEdit.label || 'Selected image'}</strong> (original preserved)</span>
-                  </div>
-                  <button type="button" onClick={() => setSelectedImageForEdit(null)} className="text-indigo-300 hover:text-white px-1 font-bold cursor-pointer">×</button>
-                </div>
-              )}
-
-              {/* Attached Files & Vision Snapshot Preview Strip (Main View) */}
-              {(attachedFiles.length > 0 || visionSnapshot) && (
-                <div className="flex flex-wrap items-center gap-1.5 mb-2 p-2 bg-[#06091e] rounded-xl border border-white/10 text-xs">
-                  {visionSnapshot && (
-                    <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-cyan-950/80 border border-cyan-500/40 text-cyan-200 font-mono text-[11px]">
-                      <img
-                        src={`data:image/jpeg;base64,${visionSnapshot}`}
-                        alt="Vision snapshot"
-                        className="w-5 h-5 object-cover rounded shrink-0"
-                      />
-                      <span>vision-snapshot.jpg</span>
-                      <button
-                        type="button"
-                        onClick={() => setVisionSnapshot(null)}
-                        className="text-slate-400 hover:text-white ml-1 font-bold rounded hover:bg-white/10 px-1 cursor-pointer"
-                        title="Remove snapshot"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  )}
-                  {attachedFiles.map((f) => (
-                    <div
-                      key={f.id}
-                      className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-indigo-950/80 border border-indigo-500/40 text-cyan-300 font-mono text-[11px]"
-                    >
-                      {f.previewUrl ? (
-                        <img src={f.previewUrl} alt={f.name} className="w-4 h-4 object-cover rounded shrink-0" />
-                      ) : (
-                        <FileText className="w-3 h-3 text-cyan-400 shrink-0" />
-                      )}
-                      <span className="truncate max-w-[140px]">{f.name}</span>
-                      <button
-                        type="button"
-                        onClick={() => removeAttachedFile(f.id)}
-                        className="text-slate-400 hover:text-white ml-1 font-bold rounded hover:bg-white/10 px-1 cursor-pointer"
-                        title="Remove file"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Voice Listening / Recording Live Status Strip */}
-              {(isListening || isRecordingAudio || isTranscribingAudio) && (
-                <div className="mb-2 flex items-center justify-between px-3 py-1.5 rounded-xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-200">
-                  <span className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-                    <span>
-                      {isTranscribingAudio
-                        ? 'Transcribing voice...'
-                        : isRecordingAudio
-                        ? 'Recording voice... Click Stop to transcribe'
-                        : 'Listening... Speak naturally'}
-                    </span>
-                  </span>
-                  {!isTranscribingAudio && (
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => (isRecordingAudio ? stopMediaRecording(false) : stopSpeechRecognition())}
-                        className="px-2.5 py-0.5 rounded-lg bg-rose-500/30 hover:bg-rose-500/50 text-white text-[11px] font-semibold cursor-pointer"
-                      >
-                        Stop
-                      </button>
-                      {isRecordingAudio && (
-                        <button
-                          type="button"
-                          onClick={() => stopMediaRecording(true)}
-                          className="px-2.5 py-0.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 text-[11px] cursor-pointer"
-                        >
-                          Cancel
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="flex items-center gap-2 px-2">
-                <input
-                  type="text"
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Ask Anny to build an app, website, search the web, or analyze files..."
-                  className="w-full bg-transparent border-none outline-none text-xs sm:text-sm text-white placeholder-slate-400 py-1"
-                />
-                <button
-                  type="button"
-                  onClick={startListening}
-                  disabled={isTranscribingAudio}
-                  className={`p-2 sm:p-2.5 rounded-xl flex items-center justify-center shrink-0 transition-all cursor-pointer ${
-                    isListening || isRecordingAudio
-                      ? 'bg-red-500/25 text-red-300 border border-red-500/60 shadow-[0_0_15px_rgba(239,68,68,0.5)] animate-pulse'
-                      : 'bg-white/5 hover:bg-white/10 text-cyan-300 border border-white/10 hover:scale-105'
-                  }`}
-                  title={isListening || isRecordingAudio ? 'Stop voice capture' : 'Voice dictation'}
-                >
-                  {isListening || isRecordingAudio ? (
-                    <MicOff className="w-4 h-4 text-red-400 animate-pulse" />
-                  ) : (
-                    <Mic className="w-4 h-4 text-cyan-300" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (isWorking) handleStop();
-                    else handleSend();
-                  }}
-                  disabled={!isWorking && !prompt.trim() && attachedFiles.length === 0 && !visionSnapshot}
-                  className={`p-2 sm:p-2.5 rounded-xl flex items-center justify-center shrink-0 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
-                    isWorking
-                      ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-[0_0_15px_rgba(225,29,72,0.6)] animate-pulse'
-                      : 'bg-gradient-to-r from-cyan-500 via-indigo-500 to-purple-600 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)] hover:scale-105'
-                  }`}
-                  title={isWorking ? 'Stop building' : 'Send message'}
-                >
-                  {isWorking ? <Square className="w-4 h-4 fill-white text-white" /> : <Send className="w-4 h-4" />}
-                </button>
-              </div>
-
-              {/* Bottom Chips */}
-              <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-white/5 mt-2 px-1 gap-2 flex-wrap">
-                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 flex items-center gap-1 text-slate-300 hover:text-white transition-all cursor-pointer"
-                    title="Attach images, PDFs, code, documents, or project archives"
-                  >
-                    <Paperclip className="w-3 h-3 text-cyan-400" />
-                    <span>Attach</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = !isWebSearchEnabled;
-                      setIsWebSearchEnabled(next);
-                      showNotice(next ? 'Live Web Search grounding enabled.' : 'Live Web Search disabled.', 'info');
-                    }}
-                    className={`px-2 py-1 rounded-lg border flex items-center gap-1 transition-all cursor-pointer ${
-                      isWebSearchEnabled
-                        ? 'bg-blue-500/20 border-blue-400/60 text-blue-200'
-                        : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
-                    }`}
-                    title="Toggle live web search grounding"
-                  >
-                    <Globe className="w-3 h-3 text-blue-400" />
-                    <span>{isWebSearchEnabled ? 'Web Live' : 'Web'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActivePopover(activePopover === 'protools' ? 'none' : 'protools')}
-                    className={`px-2 py-1 rounded-lg border flex items-center gap-1 transition-all cursor-pointer ${
-                      activePopover === 'protools' || isDeepThinkingEnabled || isSaharaEnabled || includeCodeContext
-                        ? 'bg-amber-500/20 border-amber-400/60 text-amber-200'
-                        : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
-                    }`}
-                    title="Open ANNY Pro Tools (Deep Think, Code Context, URL Inspector, Vision, Sahara)"
-                  >
-                    <Zap className="w-3 h-3 text-amber-400" />
-                    <span>Pro Tools</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActivePopover(activePopover === 'model' ? 'none' : 'model')}
-                    className={`px-2 py-1 rounded-lg border flex items-center gap-1 transition-all cursor-pointer ${
-                      activePopover === 'model' || selectedModelId !== 'auto'
-                        ? 'bg-purple-500/20 border-purple-400/60 text-purple-200'
-                        : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
-                    }`}
-                    title="Select AI Model / Neural Route"
-                  >
-                    <Brain className="w-3 h-3 text-purple-400" />
-                    <span className="hidden sm:inline">{activeModel.split(' ')[0]}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = !includeCodeContext;
-                      setIncludeCodeContext(next);
-                      showNotice(
-                        next
-                          ? `Workspace Code Context attached (${Object.keys(vfsFiles).length} files).`
-                          : 'Workspace Code Context detached.',
-                        'info'
-                      );
-                    }}
-                    className={`px-2 py-1 rounded-lg border flex items-center gap-1 transition-all cursor-pointer ${
-                      includeCodeContext
-                        ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-200'
-                        : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
-                    }`}
-                    title="Include workspace VFS files as context"
-                  >
-                    <Code2 className="w-3 h-3 text-emerald-400" />
-                    <span className="hidden sm:inline">Code</span>
-                  </button>
-                </div>
-
-                <span className="text-[10px] text-slate-500 font-mono">
-                  Press Enter to send
-                </span>
-              </div>
-            </div>
+            <AnnyPromptComposer
+              prompt={prompt}
+              setPrompt={setPrompt}
+              onSend={handleSend}
+              onStop={handleStop}
+              isWorking={isWorking}
+              placeholder="Ask Anny to build an app, architecture plan, broadcast workflow, or search..."
+              variant="main"
+              theme={themeMode}
+              attachedFiles={attachedFiles}
+              onRemoveAttachedFile={removeAttachedFile}
+              visionSnapshot={visionSnapshot}
+              onClearVisionSnapshot={() => setVisionSnapshot(null)}
+              selectedImageForEdit={selectedImageForEdit}
+              onClearSelectedImageForEdit={() => setSelectedImageForEdit(null)}
+              isListening={isListening}
+              isRecordingAudio={isRecordingAudio}
+              isTranscribingAudio={isTranscribingAudio}
+              onToggleVoiceInput={startListening}
+              onStopSpeechRecognition={stopSpeechRecognition}
+              onStopMediaRecording={stopMediaRecording}
+              onAttachFilesClick={() => fileInputRef.current?.click()}
+              isWebSearchEnabled={isWebSearchEnabled}
+              onToggleWebSearch={() => {
+                const next = !isWebSearchEnabled;
+                setIsWebSearchEnabled(next);
+                showNotice(next ? 'Live Web Search grounding enabled.' : 'Live Web Search disabled.', 'info');
+              }}
+              isProToolsActive={activePopover === 'protools' || isDeepThinkingEnabled || isSaharaEnabled || includeCodeContext}
+              onToggleProTools={() => setActivePopover(activePopover === 'protools' ? 'none' : 'protools')}
+              activeModelLabel={activeModel}
+              isModelPopoverActive={activePopover === 'model'}
+              selectedModelId={selectedModelId}
+              onToggleModelPopover={() => setActivePopover(activePopover === 'model' ? 'none' : 'model')}
+              includeCodeContext={includeCodeContext}
+              onToggleCodeContext={() => {
+                const next = !includeCodeContext;
+                setIncludeCodeContext(next);
+                showNotice(
+                  next
+                    ? `Workspace Code Context attached (${Object.keys(vfsFiles).length} files).`
+                    : 'Workspace Code Context detached.',
+                  'info'
+                );
+              }}
+              vfsFileCount={Object.keys(vfsFiles).length}
+            />
           </div>
         </div>
       )}

@@ -16,6 +16,7 @@ import {
   X,
   Shield,
   Calculator,
+  Building2,
 } from 'lucide-react';
 import logoImg from './assets/logo.png';
 
@@ -70,6 +71,7 @@ export const AnnySlideMenu: React.FC<AnnySlideMenuProps> = ({
     { key: 'models', label: 'Models', icon: Cpu },
     { key: 'tools', label: 'Tools', icon: Wrench },
     { key: 'engineering-safety', label: 'Engineering & Safety', icon: Calculator },
+    { key: 'media-arch-studio', label: 'Architecture & Media', icon: Building2 },
     { key: 'watchdog', label: 'Watchdog Security', icon: Shield },
     { key: 'integrations', label: 'Integrations', icon: Puzzle },
     { key: 'settings', label: 'Settings', icon: Settings },
@@ -87,6 +89,7 @@ export const AnnySlideMenu: React.FC<AnnySlideMenuProps> = ({
     if (itemKey === 'models' && (currentTab === 'models' || currentTab === 'anny-models')) return true;
     if (itemKey === 'tools' && (currentTab === 'tools' || currentTab === 'anny-tools')) return true;
     if (itemKey === 'engineering-safety' && (currentTab === 'engineering-safety' || currentTab === 'safety')) return true;
+    if (itemKey === 'media-arch-studio' && (currentTab === 'media-arch-studio' || currentTab === 'architecture' || currentTab === 'broadcast' || currentTab === 'distribution')) return true;
     if (itemKey === 'watchdog' && (currentTab === 'watchdog' || currentTab === 'cybersecurity')) return true;
     if (itemKey === 'integrations' && (currentTab === 'integrations' || currentTab === 'anny-integrations')) return true;
     if (itemKey === 'settings' && (currentTab === 'settings' || currentTab === 'anny-settings')) return true;

@@ -12,6 +12,7 @@
  */
 
 import { modelRouter } from './modelRouter';
+import { buildDomainPlatformBlueprint } from './platformBlueprintEngine';
 import type { ChatMessage, ChatOptions, ChatPart, ChatResponse } from '../services/aiProviderPlatform';
 import type { ProjectVerificationReport } from './generatedProjectValidator';
 
@@ -176,6 +177,18 @@ export function classifyProjectRequest(prompt: string): ProjectRequestClassifica
     industryStyle = 'luxury editorial minimalism: warm ivory (#FAF9F6), obsidian black typography (#111111), generous whitespace, hairline borders, refined serif display scale';
   } else if (/\b(finance|bank|fintech|corporate|consulting|legal|enterprise|law)\b/i.test(lower)) {
     industryStyle = 'executive corporate aesthetic: crisp daylight white & cool gray surfaces (#F8FAFC), deep navy (#0B1F3A), restrained emerald/blue accents, crisp data tables and trust credentials';
+  }
+
+  const domainBlueprint = buildDomainPlatformBlueprint(prompt);
+  if (domainBlueprint && !explicitFrontendOnly) {
+    requiresBackend = true;
+    if (projectType === 'website') {
+      projectType = 'fullstack_web_app';
+      label = domainBlueprint.label;
+    }
+    if (!explicitDarkNeonRequested) {
+      industryStyle = domainBlueprint.recommendedIndustryStyle;
+    }
   }
 
   const designDirection = `${label} — ${industryStyle}`;
@@ -624,9 +637,13 @@ export async function synthesizeAppFiles(
         .join('\n')
     : '';
 
-  const referenceContext = options.referenceBlueprint
-    ? `\nREFERENCE EVIDENCE FOR CLEAN-ROOM REBUILD\n${JSON.stringify(options.referenceBlueprint).slice(0, 60000)}\nEND REFERENCE EVIDENCE\n`
-    : '';
+  const domainBlueprint = buildDomainPlatformBlueprint(prompt);
+  const referenceContext = [
+    options.referenceBlueprint
+      ? `\nREFERENCE EVIDENCE FOR CLEAN-ROOM REBUILD\n${JSON.stringify(options.referenceBlueprint).slice(0, 60000)}\nEND REFERENCE EVIDENCE\n`
+      : '',
+    domainBlueprint ? `\n${domainBlueprint.promptContextBlock}\n` : '',
+  ].filter(Boolean).join('\n');
 
   const systemPrompt = `You are ANNY's production software architect and full-stack implementation engineer.
 

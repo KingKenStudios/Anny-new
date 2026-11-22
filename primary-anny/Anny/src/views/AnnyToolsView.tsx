@@ -152,6 +152,33 @@ export const AnnyToolsView: React.FC<AnnyToolsViewProps> = ({
       color: 'from-indigo-500 to-purple-600',
       promptHint: 'Perform deep research on state-of-the-art WebAssembly compilers and micro-VM runtimes',
     },
+    {
+      id: 'tool-10',
+      name: 'Architecture & CAD DXF Studio',
+      category: 'Architecture',
+      description: 'Generates scaled SVG floor plans, AutoCAD DXF R12 drawings, room/door/window schedules, and preliminary BOQ guidance.',
+      icon: Layout,
+      color: 'from-sky-500 to-cyan-600',
+      promptHint: 'Build me an architectural planning and CAD DXF floor plan web application for tropical West African passive cooling',
+    },
+    {
+      id: 'tool-11',
+      name: 'TV & Radio Broadcast Brain',
+      category: 'Broadcasting',
+      description: 'Produces 24-hour EPG schedules, control-room rundowns, presenter scripts, Icecast2 XML, Liquidsoap .liq, and FFmpeg HLS configs.',
+      icon: Video,
+      color: 'from-amber-500 to-red-600',
+      promptHint: 'Build me an online TV station platform with 24h EPG, studio rundown, and FFmpeg RTMP/HLS configs',
+    },
+    {
+      id: 'tool-12',
+      name: 'Music Distribution & Video ABR Studio',
+      category: 'Media Distribution',
+      description: 'Validates ISRC, mod-10 UPC/EAN check digits, 100% royalty splits, DDEX JSON exports, and multi-bitrate FFmpeg ABR + WebVTT pipelines.',
+      icon: Music,
+      color: 'from-emerald-500 to-cyan-600',
+      promptHint: 'Build me a music distribution and video streaming platform with ISRC/UPC validation and ABR HLS pipelines',
+    },
   ];
 
   const filteredTools = tools.filter((t) =>

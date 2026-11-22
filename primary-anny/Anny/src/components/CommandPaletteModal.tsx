@@ -31,6 +31,7 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
     { id: 'database', title: 'Database Visualizer & Manager', category: 'Development', icon: Database, view: 'database' },
     { id: 'deployment', title: 'Deployment & CI/CD Pipeline', category: 'Operations', icon: CloudUpload, view: 'deployment' },
     { id: 'terminal', title: 'Open Interactive Terminal', category: 'Development', icon: Terminal, view: 'terminal' },
+    { id: 'media_arch', title: 'Open Architecture & Media Studio', category: 'Studios', icon: FileText, view: 'media-arch-studio' },
     { id: 'security', title: 'Cybersecurity Command & LOTO', category: 'Operations', icon: Shield, view: 'cybersecurity' },
     { id: 'settings', title: 'Platform Settings & Config', category: 'System', icon: Settings, view: 'settings' },
   ];

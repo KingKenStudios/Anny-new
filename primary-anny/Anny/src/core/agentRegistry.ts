@@ -65,7 +65,13 @@ export class AgentRegistrySystem {
 
       // Business & Support Layer
       { id: 'tech_writer', name: 'Technical Documentation Writer', role: 'Docs & API Manual Lead', layer: 'business', description: 'Produces OpenAPI docs, developer READMEs, architecture guides, and user manuals.', capabilities: ['readme_generation', 'openapi_docs', 'architecture_diagrams'], status: 'active' },
-      { id: 'research_agent', name: 'Research & RAG Agent', role: 'Deep Knowledge Search', layer: 'support', description: 'Retrieves external API docs, vector memory embeddings, and best practice frameworks.', capabilities: ['vector_search', 'rag_retrieval', 'api_research'], status: 'active' }
+      { id: 'research_agent', name: 'Research & RAG Agent', role: 'Deep Knowledge Search', layer: 'support', description: 'Retrieves external API docs, vector memory embeddings, and best practice frameworks.', capabilities: ['vector_search', 'rag_retrieval', 'api_research'], status: 'active' },
+
+      // Specialized Domain Intelligence Layer (Architecture, Broadcast & Media Platforms)
+      { id: 'architectural_designer', name: 'Architectural Design Intelligence', role: 'Residential & Commercial Spatial Planner', layer: 'architecture', description: 'Generates non-overlapping spatial layouts, passive cooling orientations, SVG blueprints, AutoCAD DXF R12 exports, room/door/window schedules, and preliminary BOQ guidance.', capabilities: ['floor_plan_svg', 'autocad_dxf_r12', 'passive_climate_planning', 'preliminary_boq'], status: 'active' },
+      { id: 'broadcast_director', name: 'TV & Radio Broadcast Brain', role: 'EPG, Rundown & Stream Config Lead', layer: 'creative', description: 'Builds 24h EPG grids, control-room rundowns, presenter scripts, Icecast2 XML, Liquidsoap .liq, and FFmpeg RTMP/HLS ingest configs.', capabilities: ['epg_scheduling', 'rundown_scripting', 'icecast_liquidsoap_ffmpeg'], status: 'active' },
+      { id: 'music_distribution_lead', name: 'Music Distribution & Metadata Lead', role: 'ISRC/UPC, Royalty & DDEX Prep', layer: 'business', description: 'Validates ISRC, mathematical mod-10 UPC/EAN check digits, 100% royalty splits, >=3000px artwork specs, and prepares DDEX ERN JSON packages.', capabilities: ['isrc_upc_validation', 'royalty_split_verification', 'ddex_package_prep'], status: 'active' },
+      { id: 'video_streaming_architect', name: 'Video Streaming & ABR Architect', role: 'HLS/DASH Transcoding & Platform Lead', layer: 'engineering', description: 'Designs multi-bitrate FFmpeg ABR ladders (1080p–360p), WebVTT caption tracks, MinIO/S3 ingest pipelines, and QoE telemetry schemas.', capabilities: ['ffmpeg_abr_ladder', 'webvtt_captions', 'vod_platform_architecture'], status: 'active' }
     ];
 
     for (const agent of workforce) {

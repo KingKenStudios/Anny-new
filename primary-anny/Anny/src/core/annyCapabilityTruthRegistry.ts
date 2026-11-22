@@ -117,7 +117,11 @@ export class AnnyCapabilityTruthRegistry {
       { id: 'REALITY_SCORE_INTEGRITY', name: 'Reality Score Mathematical Proof', category: 'AUDIT', inputs: [], entry: 'AnnyCapabilityTruthRegistry.getRealityScore', reqs: ['MATHEMATICAL_VERIFICATION'] },
       { id: 'ZERO_PRODUCTION_SIMULATION', name: 'Zero Production Simulation Compliance', category: 'AUDIT', inputs: [], entry: 'AnnyPhase24RealitySuite', reqs: ['ANTI_SIMULATION_CHECK'] },
       { id: 'AUTONOMOUS_REPAIR', name: 'Autonomous Code Repair Engine', category: 'REPAIR', inputs: ['error'], entry: 'repairOrchestrator', reqs: ['HEALING_LOOP_INVOCATION'] },
-      { id: 'FINAL_SOVEREIGN_EXECUTION_PROOF', name: 'Final Sovereign Reality Certification', category: 'AUDIT', inputs: ['proofs'], entry: 'AnnyPhase24RealitySuite', reqs: ['FORENSIC_SUITE_CERTIFICATION'] }
+      { id: 'FINAL_SOVEREIGN_EXECUTION_PROOF', name: 'Final Sovereign Reality Certification', category: 'AUDIT', inputs: ['proofs'], entry: 'AnnyPhase24RealitySuite', reqs: ['FORENSIC_SUITE_CERTIFICATION'] },
+      { id: 'ARCHITECTURE_PLANNING', name: 'Conceptual Architecture & DXF R12 Planning', category: 'ARCHITECTURE', inputs: ['typology', 'plotWidthM', 'plotDepthM'], entry: 'architectureDesignEngine.generateArchitecturePlan', reqs: ['NON_OVERLAPPING_LAYOUT', 'VALID_DXF_R12', 'PROFESSIONAL_SIGNOFF_DISCLAIMER'] },
+      { id: 'BROADCAST_STUDIO_PLANNING', name: 'TV & Radio Broadcast EPG & Config Engine', category: 'BROADCAST', inputs: ['stationName', 'medium'], entry: 'broadcastMediaEngine.generateBroadcastPlan', reqs: ['EPG_24H_GRID', 'ICECAST_LIQUIDSOAP_FFMPEG_CONFIGS'] },
+      { id: 'MUSIC_DISTRIBUTION_PREP', name: 'Music Distribution Validation & DDEX Prep', category: 'DISTRIBUTION', inputs: ['releaseTitle', 'tracks', 'royaltySplits'], entry: 'broadcastMediaEngine.validateAndPrepareMusicRelease', reqs: ['ISRC_FORMAT_CHECK', 'MOD10_BARCODE_CHECK', 'PARTNER_API_HONESTY'] },
+      { id: 'VIDEO_STREAMING_PIPELINE', name: 'ABR HLS/DASH & WebVTT Video Pipeline', category: 'STREAMING', inputs: ['videoTitle'], entry: 'broadcastMediaEngine.generateVideoStreamingPipeline', reqs: ['FFMPEG_ABR_LADDER', 'WEBVTT_CAPTIONS'] }
     ];
 
     definitions.forEach(d => {
