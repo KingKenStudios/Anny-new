@@ -18,6 +18,7 @@ import {
   PROHIBITED_OR_INVENTED_MODELS,
   VERIFIED_MODEL_REGISTRY,
 } from '../core/modelRegistry.ts';
+import { MultiOrgIsolationTestSuite } from '../core/annyMultiOrgIsolationTest.ts';
 
 // Minimal valid 1x1 PNG binary (signature + IHDR with width=64, height=64)
 function createValidPngHeaderBytes(width = 64, height = 64): Uint8Array {
@@ -561,4 +562,13 @@ test('12. Central Model Registry contains zero prohibited/invented models and ac
   const onlineOmni = onlineModels.find((m) => m.id === 'gemini-omni-1.2-flash');
   assert.equal(onlineOmni?.availability, 'REQUIRES_PAID_KEY');
 });
+
+test('13. Multi-Organization Isolation Suite enforces bidirectional Keda / King Ken Studios knowledge graph boundaries', async () => {
+  const results = await MultiOrgIsolationTestSuite.runAllTests();
+  assert.equal(results.length, 6);
+  for (const r of results) {
+    assert.equal(r.passed, true, `Multi-org test failed (${r.testName}): ${r.message}`);
+  }
+});
+
 

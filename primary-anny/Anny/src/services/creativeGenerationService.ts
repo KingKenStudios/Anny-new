@@ -717,7 +717,7 @@ class CreativeGenerationService {
         primaryImageUrl: '',
         primaryMimeType: 'application/octet-stream',
         primaryFormat: 'png',
-        provider: 'unconfigured',
+        provider: noProviderConfigured ? 'unconfigured' : 'provider_error',
         model: 'none',
         quality: {
           valid: false,
@@ -1403,7 +1403,7 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
       });
 
       const audioChunks: Buffer[] = [];
-      let mimeType = 'audio/wav';
+      let mimeType = 'audio/mpeg';
       let hasMime = false;
       let lyrics = '';
 
@@ -1417,8 +1417,8 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
             }
             audioChunks.push(Buffer.from(part.inlineData.data, 'base64'));
           }
-          if (part.text && !lyrics) {
-            lyrics = part.text;
+          if (part.text) {
+            lyrics += part.text;
           }
         }
       }

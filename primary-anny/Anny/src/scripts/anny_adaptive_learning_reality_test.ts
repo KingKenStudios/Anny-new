@@ -108,7 +108,7 @@ async function runAdaptiveRealityTestSuite() {
         'Make a simple calculator',
         cognitiveIntentEngine.buildIntentModel('Make a simple calculator', []),
         ['Add secondary analytics server', 'Add user login modal', 'Add calculator canvas'],
-        'gemini-3.6-flash'
+        'gemini-4-hydrogen'
       );
       passed = evalRes.score >= 80;
       score = evalRes.score;
@@ -164,7 +164,7 @@ async function runAdaptiveRealityTestSuite() {
         intentGoal: 'Build SCADA UI',
         taskType: 'build',
         domain: 'SCADA',
-        modelsUsed: ['gemini-3.6-flash'],
+        modelsUsed: ['gemini-4-hydrogen'],
         toolsUsed: ['VFS'],
         strategy: 'Candidate B: Scalable Sub-System Architecture',
         result: 'SUCCESS',
@@ -334,11 +334,11 @@ async function runAdaptiveRealityTestSuite() {
       details = `Hardware Tier Detected: "${tier}"`;
     } else if (i === 3) {
       // Empirical performance modifier integration
-      adaptiveIntelligenceEngine.recordModelPerformance('gemini-3.6-flash', 'gemini', 'coding', 120, true, false, false);
-      const mod = adaptiveIntelligenceEngine.getEmpiricalModelModifier('gemini-3.6-flash', 'coding');
+      adaptiveIntelligenceEngine.recordModelPerformance('gemini-4-hydrogen', 'gemini', 'coding', 120, true, false, false);
+      const mod = adaptiveIntelligenceEngine.getEmpiricalModelModifier('gemini-4-hydrogen', 'coding');
       passed = typeof mod === 'number';
       score = passed ? 96 : 30;
-      details = `Empirical Model Modifier for gemini-3.6-flash: +${mod} pts`;
+      details = `Empirical Model Modifier for gemini-4-hydrogen: +${mod} pts`;
     } else if (i === 4) {
       // Model capability mapping for SCADA
       const route = enterpriseModelRouter.selectRoute({ taskCategory: 'scada' });

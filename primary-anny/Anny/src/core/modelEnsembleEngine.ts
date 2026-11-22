@@ -51,11 +51,11 @@ export class ModelEnsembleEngine {
       return { provider: 'gemini', model: 'gemini-4-hydrogen', role: 'Vision Intelligence Worker' };
     }
     if (taskCategory === 'security' || taskCategory === 'scada') {
-      return { provider: 'deepseek', model: 'deepseek-r1-distill', role: 'Security & Safety Audit Worker' };
+      return { provider: 'gemini', model: 'gemini-4-carbon', role: 'Security & Safety Audit Worker' };
     }
     if (taskCategory === 'coding') {
-      return highImpact 
-        ? { provider: 'claude', model: 'claude-3-5-sonnet-20241022', role: 'Lead Architect Worker' }
+      return highImpact
+        ? { provider: 'gemini', model: 'gemini-4-neon', role: 'Lead Architect Worker' }
         : { provider: 'gemini', model: 'gemini-4-hydrogen', role: 'Code Synthesizer' };
     }
     return { provider: 'gemini', model: 'gemini-4-hydrogen', role: 'Primary Executive Brain' };
@@ -89,8 +89,8 @@ export class ModelEnsembleEngine {
     let disagreementDetails: EnsembleResult['disagreementDetails'] = undefined;
 
     if (highImpact || taskCategory === 'coding' || taskCategory === 'security') {
-      const secondaryModelName = routeA.selectedModel.includes('gemini') ? 'claude-3-haiku' : 'gemini-4-hydrogen';
-      const secondaryProvider = routeA.selectedModel.includes('gemini') ? 'claude' : 'gemini';
+      const secondaryModelName = routeA.selectedModel === 'gemini-4-hydrogen' ? 'gemini-3.1-flash-lite' : 'gemini-4-hydrogen';
+      const secondaryProvider = 'gemini';
 
       const traceB: ModelExecutionRecord = {
         modelName: secondaryModelName,

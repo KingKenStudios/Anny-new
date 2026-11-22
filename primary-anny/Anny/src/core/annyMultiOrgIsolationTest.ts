@@ -20,7 +20,7 @@ export class MultiOrgIsolationTestSuite {
   public static async runAllTests(): Promise<TestResult[]> {
     const results: TestResult[] = [];
 
-    // Test A: Keda execution can access authorized Keda knowledge
+    // Test A: Keda execution can access authorized Keda knowledge via KnowledgeGraphEngine
     try {
       const kedaCtx = ExecutionContextFactory.create('proj_keda_1', 'sess_1', 'keda');
       knowledgeGraphEngine.addEntity({
@@ -33,42 +33,59 @@ export class MultiOrgIsolationTestSuite {
         updatedAt: new Date().toISOString()
       });
 
-      const canAccess = kedaCtx.dataAccessScope?.includes('keda');
+      const fetched = knowledgeGraphEngine.getEntity('entity_keda_secret', kedaCtx.organizationId);
+      const queryHits = knowledgeGraphEngine.queryGraph('Keda Automation', kedaCtx.organizationId);
+      const canAccess = Boolean(fetched && fetched.id === 'entity_keda_secret' && queryHits.some((e) => e.id === 'entity_keda_secret'));
       results.push({
         testName: 'Test A: Keda execution accesses authorized Keda knowledge',
-        passed: Boolean(canAccess),
-        message: canAccess ? 'Access verified for Keda context.' : 'Access denied incorrectly.'
+        passed: canAccess,
+        message: canAccess ? 'Authorized org lookup & graph query succeeded for Keda.' : 'Access denied incorrectly.'
       });
     } catch (e: any) {
       results.push({ testName: 'Test A: Keda execution accesses authorized Keda knowledge', passed: false, message: e.message });
     }
 
-    // Test B: Keda execution cannot access private King Ken Studios knowledge
+    // Test B: Keda execution cannot access private King Ken Studios knowledge via KnowledgeGraphEngine
     try {
       const kedaCtx = ExecutionContextFactory.create('proj_keda_1', 'sess_1', 'keda');
-      const targetOrg = 'king_ken_studios';
-      const isAllowed = kedaCtx.organizationId === targetOrg || kedaCtx.dataAccessScope?.includes(targetOrg);
+      knowledgeGraphEngine.addEntity({
+        id: 'entity_kks_private',
+        type: 'project',
+        name: 'King Ken Studios Master Vault',
+        organizationId: 'king_ken_studios',
+        properties: { org: 'king_ken_studios', access: 'confidential' },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      const leakedById = knowledgeGraphEngine.getEntity('entity_kks_private', kedaCtx.organizationId);
+      const leakedByQuery = knowledgeGraphEngine.queryGraph('Master Vault', kedaCtx.organizationId);
+      const ownOrgFetch = knowledgeGraphEngine.getEntity('entity_kks_private', 'king_ken_studios');
+      const isolated = !leakedById && leakedByQuery.length === 0 && Boolean(ownOrgFetch);
       results.push({
         testName: 'Test B: Keda execution blocked from private King Ken Studios knowledge',
-        passed: !isAllowed,
-        message: !isAllowed ? 'Isolation successfully enforced.' : 'Security breach: Keda accessed King Ken Studios.'
+        passed: isolated,
+        message: isolated ? 'Cross-org getEntity and queryGraph both returned empty for Keda while King Ken Studios retained access.' : 'Security breach: Keda accessed King Ken Studios.'
       });
     } catch (e: any) {
       results.push({ testName: 'Test B: Keda execution blocked from private King Ken Studios knowledge', passed: false, message: e.message });
     }
 
-    // Test C: Cross-organization mutation protection
+    // Test C: Cross-organization scope boundary & global entity immutability check
     try {
       const kedaCtx = ExecutionContextFactory.create('proj_keda_1', 'sess_1', 'keda');
-      const targetProjectOrg = 'king_ken_studios_proj';
-      const canMutate = kedaCtx.organizationId === 'king_ken_studios';
+      const kksCtx = ExecutionContextFactory.create('proj_kks_1', 'sess_2', 'king_ken_studios');
+      const crossScopeAllowed =
+        kedaCtx.dataAccessScope?.includes('king_ken_studios') ||
+        kksCtx.dataAccessScope?.includes('keda');
+      const kksSeesKeda = Boolean(knowledgeGraphEngine.getEntity('entity_keda_secret', kksCtx.organizationId));
+      const blocked = !crossScopeAllowed && !kksSeesKeda;
       results.push({
-        testName: 'Test C: Cross-organization project mutation blocked',
-        passed: !canMutate,
-        message: !canMutate ? 'Cross-org mutation correctly blocked.' : 'Unauthorized mutation allowed.'
+        testName: 'Test C: Bidirectional cross-organization isolation enforced',
+        passed: blocked,
+        message: blocked ? 'Bidirectional org isolation enforced between Keda and King Ken Studios.' : 'Unauthorized cross-org access detected.'
       });
     } catch (e: any) {
-      results.push({ testName: 'Test C: Cross-organization project mutation blocked', passed: false, message: e.message });
+      results.push({ testName: 'Test C: Bidirectional cross-organization isolation enforced', passed: false, message: e.message });
     }
 
     // Test D: Global ANNY intelligence available to all
