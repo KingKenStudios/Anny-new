@@ -1,218 +1,391 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Shield, Lock, Eye, Terminal, AlertTriangle, Cpu, Globe, Zap, Activity, Search } from 'lucide-react';
+import {
+  Shield,
+  Lock,
+  Terminal,
+  AlertTriangle,
+  Link2,
+  Activity,
+  Search,
+  CheckCircle2,
+  RefreshCw,
+  Info,
+  EyeOff
+} from 'lucide-react';
+import { MobileLogoMenu } from '../MobileLogoMenu';
+import { fetchWithAuth, safeFetchJson } from '../lib/apiUtils';
+import {
+  scanFilesWithWatchdog,
+  analyzeUrlWithWatchdog,
+  WatchdogScanReport,
+  UrlInspectionResult,
+} from '../services/watchdogSecurityService';
 
-interface SecurityAlert {
-  id: string;
-  type: 'intrusion' | 'anomaly' | 'vulnerability';
-  severity: 'low' | 'medium' | 'high' | 'critical';
-  source: string;
-  timestamp: string;
-  description: string;
+interface CybersecurityCommandProps {
+  onToggleMobileMenu?: () => void;
 }
 
-export default function CybersecurityCommand() {
-  const [alerts, setAlerts] = useState<SecurityAlert[]>([]);
+const SAMPLE_ARTIFACT = `// Paste source code, config, or package.json to inspect with Watchdog
+export function fetchProfile(userUrl: string) {
+  return fetch(userUrl);
+}`;
+
+export default function CybersecurityCommand({ onToggleMobileMenu }: CybersecurityCommandProps = {}) {
+  const [scanTargetName, setScanTargetName] = useState('snippet.ts');
+  const [scanInput, setScanInput] = useState(SAMPLE_ARTIFACT);
+  const [scanReport, setScanReport] = useState<WatchdogScanReport | null>(null);
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const [isScanning, setIsScanning] = useState(false);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [securityScore, setSecurityScore] = useState(94);
 
-  useEffect(() => {
-    // Initial logs
-    setLogs([
-      '[CORE] Firewall: Layer 7 Deep Packet Inspection ACTIVE',
-      '[CORE] IPS: Neural signature matching engine READY',
-      '[CORE] Encrypted Tunnel: Sovereign 256-bit CBC initialized'
-    ]);
+  const [urlInput, setUrlInput] = useState('');
+  const [urlResult, setUrlResult] = useState<UrlInspectionResult | null>(null);
+  const [isCheckingUrl, setIsCheckingUrl] = useState(false);
 
-    // Simulated real-time alerts
-    const interval = setInterval(() => {
-      if (Math.random() > 0.8) {
-        const newAlert: SecurityAlert = {
-          id: Math.random().toString(36).substring(7),
-          type: Math.random() > 0.5 ? 'anomaly' : 'intrusion',
-          severity: Math.random() > 0.7 ? 'high' : 'medium',
-          source: `IP_${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.X.X`,
-          timestamp: new Date().toLocaleTimeString(),
-          description: 'Unusual outbound traffic detected on port 443'
-        };
-        setAlerts(prev => [newAlert, ...prev].slice(0, 10));
-        setLogs(prev => [`[ALERT] ${newAlert.severity.toUpperCase()}: ${newAlert.description} from ${newAlert.source}`, ...prev]);
-        setSecurityScore(prev => Math.max(70, prev - (newAlert.severity === 'high' ? 5 : 2)));
-      }
-    }, 5000);
+  const [watchdogStatus, setWatchdogStatus] = useState<any>(null);
+  const [statusLoading, setStatusLoading] = useState(true);
 
-    return () => clearInterval(interval);
-  }, []);
-
-  const runVulnerabilityScan = () => {
-    setIsScanning(true);
-    setLogs(prev => ['[SYSTEM] Initiating full heuristic vulnerability scan...', ...prev]);
-    setTimeout(() => {
-      setIsScanning(false);
-      setLogs(prev => ['[SYSTEM] Scan complete. 0 critical vulnerabilities found.', ...prev]);
-      setSecurityScore(prev => Math.min(100, prev + 2));
-    }, 4000);
+  const loadStatus = async () => {
+    setStatusLoading(true);
+    const res = await safeFetchJson('/api/watchdog/status');
+    if (res.data?.success) {
+      setWatchdogStatus(res.data);
+    }
+    setStatusLoading(false);
   };
 
+  useEffect(() => {
+    void loadStatus();
+    // Run an initial deterministic scan on the default artifact
+    setScanReport(scanFilesWithWatchdog({ [scanTargetName]: SAMPLE_ARTIFACT }));
+  }, []);
+
+  const runWatchdogScan = async () => {
+    if (!scanInput.trim()) return;
+    setIsScanning(true);
+    setDismissedIds(new Set());
+    try {
+      const res = await fetchWithAuth('/api/watchdog/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          files: { [scanTargetName || 'artifact.ts']: scanInput },
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json?.report) {
+        setScanReport(json.report);
+      } else {
+        setScanReport(scanFilesWithWatchdog({ [scanTargetName || 'artifact.ts']: scanInput }));
+      }
+      void loadStatus();
+    } catch {
+      setScanReport(scanFilesWithWatchdog({ [scanTargetName || 'artifact.ts']: scanInput }));
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const runUrlCheck = async () => {
+    if (!urlInput.trim()) return;
+    setIsCheckingUrl(true);
+    try {
+      const res = await fetchWithAuth('/api/watchdog/url-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: urlInput.trim() }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json?.inspection) {
+        setUrlResult(json.inspection);
+      } else {
+        setUrlResult(analyzeUrlWithWatchdog(urlInput));
+      }
+      void loadStatus();
+    } catch {
+      setUrlResult(analyzeUrlWithWatchdog(urlInput));
+    } finally {
+      setIsCheckingUrl(false);
+    }
+  };
+
+  const activeFindings = (scanReport?.findings || []).filter((f) => !dismissedIds.has(f.id));
+  const integrityScore = Math.max(0, 100 - (scanReport?.riskScore ?? 0));
+
   return (
-    <div className="flex-1 overflow-y-auto bg-[#050505] text-white p-4 md:p-10 font-mono scrollbar-hide">
-      <div className="max-w-7xl mx-auto space-y-8 pb-20">
-        
+    <div className="flex-1 overflow-y-auto bg-[#050505] text-white p-4 md:p-8 font-mono custom-scrollbar">
+      <div className="max-w-7xl mx-auto space-y-6 pb-20">
         {/* Header Bar */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 p-8 bg-white/[0.03] border border-white/10 rounded-[2.5rem] backdrop-blur-xl">
-           <div className="flex items-center gap-4">
-              <div className="p-4 bg-cyan-500/10 rounded-2xl border border-cyan-500/20">
-                <Shield className="w-8 h-8 text-cyan-400" />
-              </div>
-              <div>
-                <h1 className="text-3xl font-black italic tracking-tighter uppercase leading-none">Cybersecurity.Command</h1>
-                <p className="text-[10px] text-white/40 uppercase tracking-[0.4em] font-bold mt-2">Neural Threat Intelligence Engine</p>
-              </div>
-           </div>
-
-           <div className="flex items-center gap-8">
-              <div className="text-right">
-                 <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] mb-1">Defense_Integrity</p>
-                 <p className={`text-4xl font-black italic ${securityScore > 90 ? 'text-green-500' : 'text-yellow-500'}`}>{securityScore}%</p>
-              </div>
-              <button 
-                onClick={runVulnerabilityScan}
-                disabled={isScanning}
-                className="px-6 py-4 bg-cyan-500 text-black rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-cyan-400 transition-all flex items-center gap-3 disabled:opacity-50"
-              >
-                {isScanning ? <Activity className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                Init_Heuristic_Scan
-              </button>
-           </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          
-          {/* Threats & Alerts */}
-          <div className="lg:col-span-8 space-y-6">
-            <div className="p-8 bg-white/[0.02] border border-white/10 rounded-[3rem] min-h-[500px] flex flex-col">
-               <div className="flex items-center justify-between mb-8">
-                  <h2 className="text-lg font-black italic uppercase tracking-widest flex items-center gap-3">
-                    <AlertTriangle className="w-5 h-5 text-yellow-500" />
-                    Threat_Vector_Monitor
-                  </h2>
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                    <span className="text-[10px] text-red-500 uppercase font-bold tracking-widest">Live Uplink</span>
-                  </div>
-               </div>
-
-               <div className="flex-1 space-y-3">
-                  <AnimatePresence initial={false}>
-                    {alerts.map(alert => (
-                      <motion.div 
-                        key={alert.id}
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        exit={{ opacity: 0, scale: 0.95 }}
-                        className={`p-4 rounded-2xl border bg-black/40 flex items-center justify-between group hover:border-white/20 transition-all ${
-                          alert.severity === 'critical' ? 'border-red-500/30' : 'border-white/5'
-                        }`}
-                      >
-                         <div className="flex items-center gap-4">
-                            <div className={`p-2 rounded-lg ${
-                              alert.severity === 'critical' ? 'bg-red-500/20 text-red-400' : 
-                              alert.severity === 'high' ? 'bg-orange-500/20 text-orange-400' : 'bg-cyan-500/20 text-cyan-400'
-                            }`}>
-                               {alert.type === 'intrusion' ? <Lock className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                            </div>
-                            <div>
-                               <p className="text-xs font-bold uppercase tracking-wide">{alert.description}</p>
-                               <p className="text-[9px] text-white/30 uppercase mt-1">Source: {alert.source} • {alert.timestamp}</p>
-                            </div>
-                         </div>
-                         <div className="text-right">
-                            <span className={`text-[8px] px-2 py-1 rounded-full uppercase font-black tracking-widest ${
-                              alert.severity === 'critical' ? 'bg-red-500 text-black' :
-                              alert.severity === 'high' ? 'bg-orange-500 text-black' : 'bg-white/10 text-white/40'
-                            }`}>
-                               {alert.severity}
-                            </span>
-                         </div>
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                  {alerts.length === 0 && (
-                    <div className="h-full flex flex-col items-center justify-center text-white/10 py-20">
-                       <Shield className="w-16 h-16 mb-4 opacity-10" />
-                       <p className="text-[10px] uppercase tracking-[0.4em]">Perimeter_Stable</p>
-                    </div>
-                  )}
-               </div>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 p-6 bg-white/[0.03] border border-white/10 rounded-3xl backdrop-blur-xl">
+          <div className="flex items-center gap-4">
+            {onToggleMobileMenu && <MobileLogoMenu onToggleMobileMenu={onToggleMobileMenu} />}
+            <div className="p-3.5 bg-cyan-500/10 rounded-2xl border border-cyan-500/20">
+              <Shield className="w-7 h-7 text-cyan-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-black tracking-tight uppercase leading-none">
+                Watchdog Security Center
+              </h1>
+              <p className="text-[11px] text-white/50 uppercase tracking-wider mt-1.5">
+                Offline-Capable Static Leak Scanner, Phishing URL Inspector & Audit Telemetry
+              </p>
             </div>
           </div>
 
-          {/* Side Panels */}
-          <div className="lg:col-span-4 space-y-6">
-             {/* Security Nodes */}
-             <div className="p-8 bg-white/[0.03] border border-white/10 rounded-[2.5rem] space-y-6">
-                <h3 className="text-xs font-black uppercase tracking-widest text-cyan-400 flex items-center gap-2">
-                  <Globe className="w-4 h-4" />
-                  Distributed_Nodes
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                   {[
-                     { label: 'LAG_CORE_01', status: 'Online', color: 'text-green-500' },
-                     { label: 'ABJ_UPLINK', status: 'Online', color: 'text-green-500' },
-                     { label: 'LON_PROXY', status: 'Standby', color: 'text-cyan-500' },
-                     { label: 'NYC_VAULT', status: 'Online', color: 'text-green-500' },
-                   ].map((node, i) => (
-                     <div key={i} className="p-4 bg-black/40 border border-white/5 rounded-2xl">
-                        <p className="text-[9px] text-white/30 uppercase mb-1">{node.label}</p>
-                        <p className={`text-[10px] font-black uppercase tracking-widest ${node.color}`}>{node.status}</p>
-                     </div>
-                   ))}
-                </div>
-             </div>
+          <div className="flex items-center gap-6">
+            <div className="text-right">
+              <p className="text-[10px] text-white/40 uppercase tracking-widest mb-1">
+                Artifact Score
+              </p>
+              <p
+                className={`text-3xl font-black ${
+                  integrityScore >= 80
+                    ? 'text-emerald-400'
+                    : integrityScore >= 50
+                    ? 'text-amber-400'
+                    : 'text-rose-400'
+                }`}
+              >
+                {integrityScore}/100
+              </p>
+            </div>
+            <button
+              onClick={() => void runWatchdogScan()}
+              disabled={isScanning}
+              className="px-5 py-3 bg-cyan-500 text-black rounded-2xl font-black text-xs uppercase tracking-wider hover:bg-cyan-400 transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+            >
+              {isScanning ? <Activity className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+              <span>{isScanning ? 'Scanning...' : 'Scan Artifact'}</span>
+            </button>
+          </div>
+        </div>
 
-             {/* Live Terminal Logs */}
-             <div className="p-6 bg-black border border-white/10 rounded-[2.5rem] flex flex-col h-[400px]">
-                <div className="flex items-center gap-2 mb-4 px-2">
-                   <Terminal className="w-3 h-3 text-cyan-400" />
-                   <span className="text-[9px] font-bold uppercase tracking-widest text-white/40">Secure_Event_Stream</span>
+        {/* Honest Scope Banner */}
+        <div className="p-4 rounded-2xl bg-cyan-500/5 border border-cyan-500/20 flex items-start gap-3 text-xs text-cyan-100/80">
+          <Info className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+          <span>
+            {watchdogStatus?.scopeNotice ||
+              'Watchdog runs strictly defensive static secret/code analysis, phishing URL syntax inspection, and application audit logging. It does NOT hook host OS firewalls or claim external CVE immunity.'}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Left: Static Artifact Scanner & Findings */}
+          <div className="lg:col-span-7 space-y-6">
+            <div className="p-6 bg-white/[0.02] border border-white/10 rounded-3xl space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-black uppercase tracking-wider flex items-center gap-2 text-white">
+                  <Lock className="w-4 h-4 text-cyan-400" />
+                  Static Secret & Vulnerability Inspector
+                </h2>
+                <input
+                  type="text"
+                  value={scanTargetName}
+                  onChange={(e) => setScanTargetName(e.target.value)}
+                  placeholder="filename.ts or package.json"
+                  className="bg-black/60 border border-white/10 rounded-lg px-3 py-1 text-xs text-cyan-300 outline-none focus:border-cyan-500/50"
+                />
+              </div>
+
+              <textarea
+                rows={7}
+                value={scanInput}
+                onChange={(e) => setScanInput(e.target.value)}
+                placeholder="Paste TypeScript, JavaScript, Python, SQL, .env, or package.json content..."
+                className="w-full bg-black/70 border border-white/10 rounded-2xl p-4 text-xs text-slate-200 focus:border-cyan-500/50 outline-none font-mono"
+              />
+
+              {scanReport && (
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/10 text-xs">
+                  <span>
+                    Risk Level:{' '}
+                    <strong
+                      className={
+                        scanReport.riskLevel === 'MINIMAL' || scanReport.riskLevel === 'LOW'
+                          ? 'text-emerald-400'
+                          : scanReport.riskLevel === 'MODERATE'
+                          ? 'text-amber-400'
+                          : 'text-rose-400'
+                      }
+                    >
+                      {scanReport.riskLevel} ({scanReport.riskScore}/100)
+                    </strong>
+                  </span>
+                  <span className="text-white/40">
+                    Active Findings: {activeFindings.length} ({dismissedIds.size} suppressed)
+                  </span>
                 </div>
-                <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar-fancy pr-2 text-left">
-                   {logs.map((log, i) => (
-                     <p key={i} className={`text-[9px] font-mono leading-relaxed ${log.includes('[ALERT]') ? 'text-orange-400' : 'text-white/30'}`}>
-                        <span className="text-cyan-400/20 mr-2">[{new Date().toLocaleTimeString()}]</span>
-                        {log}
-                     </p>
-                   ))}
-                </div>
-             </div>
+              )}
+
+              <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                <AnimatePresence initial={false}>
+                  {activeFindings.map((finding) => (
+                    <motion.div
+                      key={finding.id}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      className={`p-4 rounded-2xl border bg-black/50 space-y-2 ${
+                        finding.severity === 'critical'
+                          ? 'border-rose-500/40'
+                          : finding.severity === 'high'
+                          ? 'border-orange-500/40'
+                          : 'border-white/10'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle
+                            className={`w-4 h-4 shrink-0 ${
+                              finding.severity === 'critical'
+                                ? 'text-rose-400'
+                                : finding.severity === 'high'
+                                ? 'text-orange-400'
+                                : 'text-amber-300'
+                            }`}
+                          />
+                          <span className="text-xs font-bold text-white">{finding.title}</span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-white/10 text-white">
+                            {finding.severity}
+                          </span>
+                          <button
+                            onClick={() => setDismissedIds((prev) => new Set(prev).add(finding.id))}
+                            className="text-[10px] text-white/40 hover:text-white flex items-center gap-1 cursor-pointer"
+                            title="Suppress false positive"
+                          >
+                            <EyeOff className="w-3 h-3" />
+                            <span>Dismiss</span>
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-cyan-300/80 break-all">
+                        {finding.target}
+                        {finding.line ? `:${finding.line}` : ''} — Evidence: {finding.evidence}
+                      </p>
+                      <p className="text-[11px] text-white/60">Fix: {finding.remediation}</p>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+
+                {scanReport && activeFindings.length === 0 && (
+                  <div className="p-6 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 flex items-center gap-3 text-xs text-emerald-300">
+                    <CheckCircle2 className="w-5 h-5 shrink-0" />
+                    <span>{scanReport.disclaimer}</span>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
-        </div>
+          {/* Right: Phishing / URL Inspector + Real Audit Feed */}
+          <div className="lg:col-span-5 space-y-6">
+            <div className="p-6 bg-white/[0.03] border border-white/10 rounded-3xl space-y-4">
+              <h3 className="text-xs font-black uppercase tracking-wider text-cyan-400 flex items-center gap-2">
+                <Link2 className="w-4 h-4" />
+                Phishing & Suspicious URL Inspector
+              </h3>
 
-        {/* Bottom Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-           <SecurityStat label="Encryption_Load" value="14.4 Gbps" icon={Lock} />
-           <SecurityStat label="Active_Identities" value="2,842" icon={Cpu} />
-           <SecurityStat label="Neural_Filtering" value="99.98%" icon={Zap} />
-           <SecurityStat label="Threat_Level" value="MINIMAL" icon={Shield} color="text-green-400" />
-        </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && void runUrlCheck()}
+                  placeholder="https://example.com/login"
+                  className="flex-1 bg-black/60 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-cyan-500/50"
+                />
+                <button
+                  onClick={() => void runUrlCheck()}
+                  disabled={isCheckingUrl}
+                  className="px-4 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 text-xs font-bold cursor-pointer"
+                >
+                  Inspect
+                </button>
+              </div>
 
+              {urlResult && (
+                <div className="p-4 rounded-2xl bg-black/60 border border-white/10 space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-white">Risk: {urlResult.riskLevel}</span>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        urlResult.safeToOpen
+                          ? 'bg-emerald-500/20 text-emerald-300'
+                          : 'bg-rose-500/20 text-rose-300'
+                      }`}
+                    >
+                      {urlResult.safeToOpen ? 'LOW SYNTAX RISK' : 'CAUTION / BLOCK'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-white/60">{urlResult.recommendation}</p>
+                  {urlResult.signals.length > 0 && (
+                    <ul className="space-y-1 pt-2 border-t border-white/10">
+                      {urlResult.signals.map((sig, i) => (
+                        <li key={i} className="text-[11px] text-amber-300">
+                          [{sig.severity.toUpperCase()}] {sig.code}: {sig.detail}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Real Local Audit Events & Runtime Summary */}
+            <div className="p-6 bg-black border border-white/10 rounded-3xl flex flex-col h-[340px]">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Terminal className="w-3.5 h-3.5 text-cyan-400" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-white/60">
+                    Server Audit Events ({watchdogStatus?.recentAuditEvents?.length || 0})
+                  </span>
+                </div>
+                <button
+                  onClick={() => void loadStatus()}
+                  className="text-white/40 hover:text-white cursor-pointer"
+                  title="Refresh audit status"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${statusLoading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+
+              {watchdogStatus?.hostSummary && (
+                <div className="grid grid-cols-3 gap-2 mb-3 text-[10px]">
+                  <div className="p-2 rounded-xl bg-white/5 border border-white/10">
+                    <span className="text-white/40 block">Sessions</span>
+                    <strong className="text-cyan-300">{watchdogStatus.activeSessionsCount ?? 0}</strong>
+                  </div>
+                  <div className="p-2 rounded-xl bg-white/5 border border-white/10">
+                    <span className="text-white/40 block">RAM Used</span>
+                    <strong className="text-white">{watchdogStatus.hostSummary.ramUsedMB} MB</strong>
+                  </div>
+                  <div className="p-2 rounded-xl bg-white/5 border border-white/10">
+                    <span className="text-white/40 block">Host FW Hook</span>
+                    <strong className="text-amber-300">DISABLED</strong>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex-1 overflow-y-auto space-y-2 pr-1 text-[10px]">
+                {Array.isArray(watchdogStatus?.recentAuditEvents) && watchdogStatus.recentAuditEvents.length > 0 ? (
+                  watchdogStatus.recentAuditEvents.map((ev: any, i: number) => (
+                    <div key={ev.id || i} className="p-2 rounded-lg bg-white/5 border border-white/5">
+                      <span className="text-cyan-400">[{ev.action}]</span>{' '}
+                      <span className="text-white/70">{ev.details}</span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-white/30 italic py-6 text-center">
+                    No Watchdog alerts triggered in current server session yet.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
-  );
-}
-
-function SecurityStat({ label, value, icon: Icon, color = "text-white" }: { label: string, value: string, icon: any, color?: string }) {
-  return (
-    <div className="p-6 bg-white/[0.02] border border-white/10 rounded-3xl flex items-center gap-4">
-       <div className="p-3 bg-white/5 rounded-xl">
-          <Icon className="w-5 h-5 text-cyan-400" />
-       </div>
-       <div>
-          <p className="text-[8px] text-white/20 uppercase tracking-widest font-bold">{label}</p>
-          <p className={`text-sm font-black italic uppercase tracking-tighter ${color}`}>{value}</p>
-       </div>
     </div>
   );
 }

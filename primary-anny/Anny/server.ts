@@ -50,6 +50,14 @@ import { toolPermissionSystem } from './src/core/toolPermissionSystem.ts';
 import { memoryEngine } from './src/core/memoryEngine.ts';
 import { annyCorePipeline } from './src/core/specialistWorkers.ts';
 import { formatNaturalConversation } from './src/utils/chatHelpers.ts';
+import { scanFilesWithWatchdog, analyzeUrlWithWatchdog } from './src/services/watchdogSecurityService.ts';
+import {
+  calculateElectricalAndSolar,
+  calculateRoboticsMechatronics,
+  calculateAerospacePreliminary,
+  calculateVehicleEvPreliminary,
+  searchSafetyChecklists,
+} from './src/core/engineeringSafetyEngine.ts';
 
 import FormData from "form-data";
 import { Readable } from "stream";
@@ -832,13 +840,30 @@ async function startServer() {
 
   app.post("/api/v1/anny/memory/feedback", requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
-      const { sessionId, projectId, feedback, taskType = 'conversation', success = true } = req.body || {};
-      if (!feedback) return res.status(400).json({ success: false, error: 'feedback is required' });
+      const { sessionId, projectId, feedback, taskType = 'conversation', success = true, manualRule, topic } = req.body || {};
+      if (!feedback && !manualRule) return res.status(400).json({ success: false, error: 'feedback or manualRule is required' });
       const { annyLearningMemory } = await import('./src/core/AnnyLearningMemory.ts');
+      if (manualRule) {
+        const record = await annyLearningMemory.addManualMemory(req.authUser!.uid, String(manualRule), String(topic || 'Custom Rule'), projectId || 'default_project');
+        return res.json({ success: true, record });
+      }
       await annyLearningMemory.learnOutcome({ userId: req.authUser!.uid, sessionId: sessionId || 'api_session', projectId: projectId || 'default_project', taskType, success: Boolean(success), feedback, source: 'feedback' });
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message || 'Learning update failed' });
+    }
+  });
+
+  app.delete("/api/v1/anny/memory/:id", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { annyLearningMemory } = await import('./src/core/AnnyLearningMemory.ts');
+      const deleted = await annyLearningMemory.deletePrivateMemory(req.authUser!.uid, req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ success: false, error: 'Memory item not found or not owned by current user.' });
+      }
+      res.json({ success: true, deletedId: req.params.id });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'Memory deletion failed' });
     }
   });
 
@@ -1291,23 +1316,41 @@ async function startServer() {
     }
   });
 
-  app.get(["/api/v1/anny/offline-matrix", "/api/anny/offline-matrix"], requireAuth({ allowApiKey: true }), (_req, res) => {
+  app.get(["/api/v1/anny/offline-matrix", "/api/anny/offline-matrix"], requireAuth({ allowApiKey: true }), async (_req, res) => {
+    const [ollamaDiscovery, pgHealth, providerHealth] = await Promise.all([
+      ollamaDiscoveryService.discoverAndTest().catch(() => ({ reachable: false, discoveredModels: [], inferenceTestPassed: false, latencyMs: 0 })),
+      postgresPlatform.checkHealth().catch(() => ({ status: 'NOT_CONFIGURED' })),
+      aiProviderPlatform.refreshHealthChecks().catch(() => ({})),
+    ]);
+
+    const ggufModels = Array.isArray(ollamaDiscovery?.discoveredModels)
+      ? ollamaDiscovery.discoveredModels.map((m: any) => String(m?.name || m)).filter(Boolean)
+      : [];
+
+    const ollamaUrl = (process.env.OLLAMA_BASE_URL || '').trim();
+    const pgConnected = pgHealth?.status === 'CONNECTED';
+
     res.json({
-      offlineStatus: "OFFLINE_FIRST_ARCHITECTURE",
+      offlineStatus: ollamaDiscovery?.reachable ? "OLLAMA_LOCAL_ACTIVE" : "OFFLINE_FIRST_DETERMINISTIC_READY",
       localCores: {
-        akinwumiCore: "LOCAL_PROVIDER_REQUIRED",
-        ollama: process.env.OLLAMA_BASE_URL || "NOT_CONFIGURED",
-        ggufModels: "DISCOVERED_AT_RUNTIME",
-        onnxInference: "AVAILABLE_WHEN_CONFIGURED",
-        localEmbeddings: "QDRANT_WHEN_CONFIGURED",
-        localDatabase: "POSTGRES_WHEN_CONFIGURED"
+        akinwumiCore: "DETERMINISTIC_LOCAL_ENGINE",
+        ollama: ollamaDiscovery?.reachable ? (ollamaUrl || "http://127.0.0.1:11434 (CONNECTED)") : (ollamaUrl ? `${ollamaUrl} (UNREACHABLE)` : "NOT_CONFIGURED"),
+        ollamaReachable: Boolean(ollamaDiscovery?.reachable),
+        ggufModels,
+        onnxInference: "BROWSER_WEBGPU_WASM_CAPABLE",
+        localEmbeddings: process.env.QDRANT_URL ? "QDRANT_CONFIGURED" : "LOCAL_MEMORY_INDEX",
+        localDatabase: pgConnected ? "POSTGRES_CONNECTED" : "IN_MEMORY_FALLBACK"
       },
       onlineFallbacks: {
-        gemini: !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_STUDIO_KEY),
+        gemini: !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_STUDIO_KEY || process.env.GOOGLE_API_KEY),
+        openai: !!process.env.OPENAI_API_KEY,
         groq: !!process.env.GROQ_API_KEY,
         huggingface: !!process.env.HUGGINGFACE_API_KEY,
-        claude: !!process.env.ANTHROPIC_API_KEY
-      }
+        claude: !!process.env.ANTHROPIC_API_KEY,
+        deepseek: !!process.env.DEEPSEEK_API_KEY,
+        openrouter: !!process.env.OPENROUTER_API_KEY,
+      },
+      providerHealth
     });
   });
 
@@ -1635,6 +1678,141 @@ async function startServer() {
         error: err?.message || 'Ollama discovery error'
       });
     }
+  });
+
+  // ---------------------------------------------------------------------
+  // Watchdog Defensive Security & URL Inspection Endpoints
+  // ---------------------------------------------------------------------
+  app.post("/api/watchdog/scan", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { files, text, targetName } = req.body || {};
+      let targetFiles: Record<string, string> = {};
+      if (files && typeof files === 'object' && !Array.isArray(files)) {
+        for (const [k, v] of Object.entries(files)) {
+          targetFiles[String(k).slice(0, 260)] = String(v ?? '').slice(0, 250000);
+        }
+      } else if (typeof text === 'string' && text.trim()) {
+        targetFiles[String(targetName || 'pasted_artifact.ts').slice(0, 260)] = text.slice(0, 250000);
+      } else {
+        return res.status(400).json({ error: 'Provide either files ({ path: content }) or non-empty text for Watchdog scanning.' });
+      }
+
+      const report = scanFilesWithWatchdog(targetFiles);
+      const criticalCount = report.findings.filter((f) => f.severity === 'critical' || f.severity === 'high').length;
+      if (criticalCount > 0) {
+        await auditService.logEvent({
+          action: 'security_alert',
+          severity: 'warning',
+          userId: req.authUser?.uid,
+          userEmail: req.authUser?.email || undefined,
+          details: `Watchdog scan ${report.scanId} flagged ${criticalCount} high/critical finding(s) across ${report.targetCount} target(s).`,
+        });
+      }
+      res.json({ success: true, report });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Watchdog static scan failed' });
+    }
+  });
+
+  app.post("/api/watchdog/url-check", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const rawUrl = req.body?.url;
+      if (typeof rawUrl !== 'string' || !rawUrl.trim()) {
+        return res.status(400).json({ error: 'url is required for inspection.' });
+      }
+      const inspection = analyzeUrlWithWatchdog(rawUrl);
+      if (inspection.riskLevel === 'HIGH' || inspection.riskLevel === 'CRITICAL') {
+        await auditService.logEvent({
+          action: 'security_alert',
+          severity: 'warning',
+          userId: req.authUser?.uid,
+          details: `Watchdog URL check flagged ${inspection.riskLevel} risk on host inspection.`,
+        });
+      }
+      res.json({ success: true, inspection });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Watchdog URL inspection failed' });
+    }
+  });
+
+  app.get("/api/watchdog/status", requireAuth(), (_req, res) => {
+    const cpuCount = os.cpus().length || 1;
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    res.json({
+      success: true,
+      mode: 'DEFENSIVE_STATIC_AND_AUDIT',
+      liveHostFirewallHooked: false,
+      activeSessionsCount: authSecurityPlatform.getActiveSessionCount(),
+      recentAuditEvents: auditService.getRecentLocalLogs(25).reverse(),
+      hostSummary: {
+        cpuCount,
+        ramUsedMB: Math.round((totalMem - freeMem) / 1024 / 1024),
+        ramTotalMB: Math.round(totalMem / 1024 / 1024),
+        uptimeSeconds: Math.round(process.uptime()),
+      },
+      scopeNotice: 'Watchdog performs real static secret/code scanning, phishing URL inspection, and application audit logging. It does NOT claim kernel firewall interception or external CVE feed immunity.',
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // Engineering, Safety Checklists & Honest Robotics Bridge Status
+  // ---------------------------------------------------------------------
+  app.post("/api/engineering/calculate", requireAuth(), (req, res) => {
+    try {
+      const { discipline, params } = req.body || {};
+      const inputParams = (params && typeof params === 'object') ? params : {};
+      let result;
+      switch (discipline) {
+        case 'electrical_power':
+          result = calculateElectricalAndSolar(inputParams);
+          break;
+        case 'robotics_mechatronics':
+          result = calculateRoboticsMechatronics(inputParams);
+          break;
+        case 'aerospace_preliminary':
+          result = calculateAerospacePreliminary(inputParams);
+          break;
+        case 'vehicle_ev':
+          result = calculateVehicleEvPreliminary(inputParams);
+          break;
+        default:
+          return res.status(400).json({
+            error: "Unsupported discipline. Use 'electrical_power', 'robotics_mechatronics', 'aerospace_preliminary', or 'vehicle_ev'."
+          });
+      }
+      res.json({ success: true, result });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Engineering calculation failed' });
+    }
+  });
+
+  app.get("/api/safety/checklists", requireAuth(), (req, res) => {
+    const queryText = String(req.query.q || '');
+    const checklists = searchSafetyChecklists(queryText);
+    res.json({
+      success: true,
+      offlineCapable: true,
+      autoEmergencyDialerSupported: false,
+      checklists,
+    });
+  });
+
+  app.get("/api/robotics/status", requireAuth(), (_req, res) => {
+    const bridgeUrl = (process.env.ROS2_BRIDGE_URL || '').trim();
+    res.json({
+      success: true,
+      connected: false,
+      bridgeConfigured: Boolean(bridgeUrl),
+      bridgeUrl: bridgeUrl ? '[CONFIGURED]' : null,
+      simulationOnly: true,
+      status: bridgeUrl ? 'BRIDGE_CONFIGURED_UNVERIFIED' : 'DISCONNECTED_NO_LIVE_BRIDGE',
+      nodes: [],
+      message: bridgeUrl
+        ? 'ROS2_BRIDGE_URL is configured, but no active WebSocket/rosbridge session is verified in this runtime.'
+        : 'No ROS 2 rosbridge/DDS hardware endpoint is configured. Hardware robotics control remains in simulation sandbox only.',
+      timestamp: new Date().toISOString(),
+    });
   });
 
   // ---------------------------------------------------------------------

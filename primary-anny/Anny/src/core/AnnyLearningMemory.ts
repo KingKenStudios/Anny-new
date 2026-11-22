@@ -187,6 +187,39 @@ export class AnnyLearningMemory {
     });
   }
 
+  /** Record a manual rule/memory explicitly added by the user and return its stored record. */
+  async addManualMemory(userId: string, content: string, topic = 'Manual Rule', projectId = 'default_project'): Promise<LearningRecord | null> {
+    if (!userId || userId === 'anonymous') return null;
+    const cleaned = clean(content);
+    if (!cleaned) return null;
+    const pg = await getServerPostgresPlatform();
+    if (!pg) return null;
+    const inserted = await pg.insert('memory_items', {
+      owner_user_id: userId,
+      session_id: 'manual_memory',
+      project_id: clean(projectId, 160) || 'default_project',
+      scope: 'private',
+      type: 'preference',
+      content: cleaned,
+      topic: clean(topic, 180) || 'Manual Rule',
+      importance: 0.95,
+      source: 'feedback',
+    } as any);
+    return this.toRecord(inserted, cleaned);
+  }
+
+  /** Delete an owned private memory entry cleanly. */
+  async deletePrivateMemory(userId: string, id: string): Promise<boolean> {
+    if (!userId || userId === 'anonymous' || !id) return false;
+    const pg = await getServerPostgresPlatform();
+    if (!pg) return false;
+    const row = await pg.findById<any>('memory_items', id);
+    if (!row) return false;
+    const owner = row.owner_user_id ?? row.ownerUserId;
+    if (owner !== userId) return false;
+    return pg.delete('memory_items', id);
+  }
+
   private toRecord(row: any, content: string): LearningRecord {
     return {
       id: String(row.id),

@@ -14,6 +14,8 @@ import {
   Sparkles,
   Plus,
   X,
+  Shield,
+  Calculator,
 } from 'lucide-react';
 import logoImg from './assets/logo.png';
 
@@ -67,6 +69,8 @@ export const AnnySlideMenu: React.FC<AnnySlideMenuProps> = ({
     { key: 'memory', label: 'Memory', icon: Brain },
     { key: 'models', label: 'Models', icon: Cpu },
     { key: 'tools', label: 'Tools', icon: Wrench },
+    { key: 'engineering-safety', label: 'Engineering & Safety', icon: Calculator },
+    { key: 'watchdog', label: 'Watchdog Security', icon: Shield },
     { key: 'integrations', label: 'Integrations', icon: Puzzle },
     { key: 'settings', label: 'Settings', icon: Settings },
   ];
@@ -82,6 +86,8 @@ export const AnnySlideMenu: React.FC<AnnySlideMenuProps> = ({
     if (itemKey === 'prompt-library' && (currentTab === 'prompt-library' || currentTab === 'prompts' || currentTab === 'anny-prompts')) return true;
     if (itemKey === 'models' && (currentTab === 'models' || currentTab === 'anny-models')) return true;
     if (itemKey === 'tools' && (currentTab === 'tools' || currentTab === 'anny-tools')) return true;
+    if (itemKey === 'engineering-safety' && (currentTab === 'engineering-safety' || currentTab === 'safety')) return true;
+    if (itemKey === 'watchdog' && (currentTab === 'watchdog' || currentTab === 'cybersecurity')) return true;
     if (itemKey === 'integrations' && (currentTab === 'integrations' || currentTab === 'anny-integrations')) return true;
     if (itemKey === 'settings' && (currentTab === 'settings' || currentTab === 'anny-settings')) return true;
     return currentTab === itemKey;

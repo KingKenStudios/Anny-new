@@ -12,6 +12,8 @@ import { AnnyToolsView } from './views/AnnyToolsView';
 import { AnnyIntegrationsView } from './views/AnnyIntegrationsView';
 import { AnnySettingsView } from './views/AnnySettingsView';
 import { KingKenStudiosView } from './views/KingKenStudiosView';
+import { EngineeringSafetyView } from './views/EngineeringSafetyView';
+import CybersecurityCommand from './components/CybersecurityCommand';
 import { AnnySlideMenu } from './AnnySlideMenu';
 import { AnnyMenuStateProvider } from './MobileLogoMenu';
 
@@ -245,6 +247,14 @@ export const AnnyApp: React.FC<AnnyAppProps> = (props) => {
       );
     }
 
+    if (currentTab === 'engineering-safety' || currentTab === 'safety') {
+      return <EngineeringSafetyView onToggleMobileMenu={handleToggleMenu} />;
+    }
+
+    if (currentTab === 'watchdog' || currentTab === 'cybersecurity') {
+      return <CybersecurityCommand onToggleMobileMenu={handleToggleMenu} />;
+    }
+
     if (currentTab === 'integrations' || currentTab === 'anny-integrations') {
       return <AnnyIntegrationsView onToggleMobileMenu={handleToggleMenu} />;
     }
@@ -277,6 +287,8 @@ export const AnnyApp: React.FC<AnnyAppProps> = (props) => {
     if (currentTab === 'prompt-library' || currentTab === 'prompts' || currentTab === 'anny-prompts') return 'prompt-library';
     if (currentTab === 'models' || currentTab === 'anny-models') return 'models';
     if (currentTab === 'tools' || currentTab === 'anny-tools') return 'tools';
+    if (currentTab === 'engineering-safety' || currentTab === 'safety') return 'engineering-safety';
+    if (currentTab === 'watchdog' || currentTab === 'cybersecurity') return 'watchdog';
     if (currentTab === 'integrations' || currentTab === 'anny-integrations') return 'integrations';
     if (currentTab === 'settings' || currentTab === 'anny-settings') return 'settings';
     return 'chats';

@@ -58,6 +58,7 @@ export function AnnyEcosystemGateway() {
   const [intelLoading, setIntelLoading] = useState(false);
 
   const [copiedKey, setCopiedKey] = useState(false);
+  const [bannerMessage, setBannerMessage] = useState<{ type: 'error' | 'info' | 'success'; text: string } | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -132,10 +133,13 @@ export function AnnyEcosystemGateway() {
       const json = await res.json();
       if (json.apiKey) {
         setGeneratedKeyResult(json.apiKey);
+        setBannerMessage({ type: 'success', text: `API key issued for ${selectedEnt?.name || newKeyCompanyId}.` });
         fetchData();
+      } else {
+        setBannerMessage({ type: 'error', text: json.error || 'Key generation requires verified admin access.' });
       }
     } catch (err: any) {
-      alert(`Key generation failed: ${err.message}`);
+      setBannerMessage({ type: 'error', text: `Key generation failed: ${err.message}` });
     }
   };
 
@@ -167,7 +171,7 @@ export function AnnyEcosystemGateway() {
     const nextStatus = nextLoto === 'LOCKED_OUT' ? 'INTERLOCKED' : 'OPERATIONAL';
 
     try {
-      await fetchWithAuth('/api/v1/anny/control-hierarchy', {
+      const res = await fetchWithAuth('/api/v1/anny/control-hierarchy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -176,9 +180,15 @@ export function AnnyEcosystemGateway() {
           lotoStatus: nextLoto
         })
       });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setBannerMessage({ type: 'error', text: json.error || `Failed to update level ${levelNum} (Admin role required).` });
+        return;
+      }
+      setBannerMessage({ type: 'info', text: `Control Level ${levelNum} set to ${nextLoto}.` });
       fetchData();
     } catch (err: any) {
-      alert(`Failed to update level ${levelNum}: ${err.message}`);
+      setBannerMessage({ type: 'error', text: `Failed to update level ${levelNum}: ${err.message}` });
     }
   };
 
@@ -254,6 +264,18 @@ export function AnnyEcosystemGateway() {
 
       {/* Content Area */}
       <div className="flex-1 overflow-auto p-4 md:p-6 space-y-6">
+        {bannerMessage && (
+          <div className={`px-4 py-2.5 rounded-xl border font-mono text-xs flex items-center justify-between ${
+            bannerMessage.type === 'error'
+              ? 'bg-red-500/10 border-red-500/30 text-red-300'
+              : bannerMessage.type === 'success'
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+              : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300'
+          }`}>
+            <span>{bannerMessage.text}</span>
+            <button onClick={() => setBannerMessage(null)} className="text-white/60 hover:text-white ml-4">Dismiss</button>
+          </div>
+        )}
         {activeTab === 'enterprises' && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
@@ -439,7 +461,7 @@ export function AnnyEcosystemGateway() {
                   <pre className="p-3 bg-[#0D1017] border border-[#262C39] rounded-xl text-[11px] font-mono text-cyan-300 overflow-x-auto">
 {`curl -X POST "${window.location.origin}/api/v1/anny/intelligence" \\
   -H "Content-Type: application/json" \\
-  -H "X-ANNY-API-KEY: anny_live_keda_9f81a7:sk_keda_secret_live_01" \\
+  -H "X-ANNY-API-KEY: <YOUR_ANNY_API_KEY>" \\
   -d '{
     "query": "Process KEDA social feed recommendations",
     "companyId": "keda"
@@ -633,13 +655,21 @@ res = requests.post(url, json=payload)`}
                   </div>
 
                   <div className="p-2.5 bg-[#0D1017] rounded-lg border border-[#262C39] space-y-1">
-                    <span className="text-[#8890A0]">GGUF Local LLM Quantizations:</span>
+                    <span className="text-[#8890A0]">GGUF / Ollama Local Models:</span>
                     <div className="flex flex-wrap gap-1 mt-1">
-                      {offlineMatrix.localCores.ggufModels.map((m: string, i: number) => (
-                        <span key={i} className="px-2 py-0.5 bg-white/5 border border-white/10 rounded text-[10px] text-white">
-                          {m}
+                      {Array.isArray(offlineMatrix.localCores?.ggufModels) && offlineMatrix.localCores.ggufModels.length > 0 ? (
+                        offlineMatrix.localCores.ggufModels.map((m: string, i: number) => (
+                          <span key={i} className="px-2 py-0.5 bg-white/5 border border-white/10 rounded text-[10px] text-white">
+                            {m}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-[10px] text-amber-300/80">
+                          {typeof offlineMatrix.localCores?.ggufModels === 'string'
+                            ? offlineMatrix.localCores.ggufModels
+                            : 'No local Ollama/GGUF models currently detected'}
                         </span>
-                      ))}
+                      )}
                     </div>
                   </div>
 

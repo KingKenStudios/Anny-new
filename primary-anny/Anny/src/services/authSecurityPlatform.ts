@@ -343,6 +343,10 @@ export class AuthSecurityPlatform {
     if (role === 'OPERATOR' && requiredPermission === 'READ_ONLY') return true;
     return requiredPermission === 'READ_ONLY';
   }
+
+  public getActiveSessionCount(): number {
+    return this.activeSessions.size;
+  }
 }
 
 export const authSecurityPlatform = AuthSecurityPlatform.getInstance();

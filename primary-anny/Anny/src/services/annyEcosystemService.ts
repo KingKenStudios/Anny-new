@@ -97,97 +97,97 @@ export class AnnyEcosystemService {
     const defaultList: EnterpriseProfile[] = [
       {
         id: 'aios',
-        name: 'AIOS Operating System',
+        name: 'AIOS Operating Environment',
         category: 'Operating System & Application Factory',
-        description: 'Universal AI Operating Environment, Kernel, Runtime, Live Preview, and App Generation Engine.',
+        description: 'Browser-based AI workspace, VFS, sandboxed preview runner, and code generation orchestrator.',
         status: 'ACTIVE',
         capabilityPacks: ['App Generation', 'Live Preview', 'Code Intelligence', 'Virtual File System', 'Agent Orchestration'],
-        apiKeyCount: 12,
-        totalRequestsCount: 142050,
+        apiKeyCount: 0,
+        totalRequestsCount: 0,
         dataIsolationLevel: 'SHARED_VAULT',
         lastActive: new Date().toISOString()
       },
       {
         id: 'keda',
-        name: 'KEDA Platform Vertical',
+        name: 'KEDA Platform Bridge',
         category: 'Social, Marketplace & Digital Ecosystem',
-        description: 'Native microservices for KEDA Social, Marketplace, Wallet, Escrow, Reels, Dating, Live Shopping & Creator Monetization.',
-        status: 'ACTIVE',
-        capabilityPacks: ['Keda Social Feed', 'Marketplace & Escrow', 'Keda Wallet Ledger', 'Dating Matchmaker', 'Live Streaming'],
-        apiKeyCount: 8,
-        totalRequestsCount: 98400,
+        description: 'Configured external bridge when KEDA_API_URL & KEDA_API_TOKEN are present; otherwise structural schema mode only.',
+        status: 'STANDBY',
+        capabilityPacks: ['Keda Command Bridge', 'Marketplace Schema Validator', 'Watchdog Fraud Check'],
+        apiKeyCount: 1,
+        totalRequestsCount: 0,
         dataIsolationLevel: 'STRICT_TENANT',
         lastActive: new Date().toISOString()
       },
       {
         id: 'kenpay',
-        name: 'KenPay Core Banking Engine',
-        category: 'Financial Technology & Core Banking',
-        description: 'ISO 20022 payment messaging, SWIFT/ACH ledger integration, fraud monitoring, and real-time transaction analytics.',
-        status: 'ACTIVE',
-        capabilityPacks: ['ISO 20022 Parser', 'SWIFT/ACH Ledger', 'AI Fraud Guard', 'Risk Scoring Engine', 'Stripe Bridge'],
-        apiKeyCount: 6,
-        totalRequestsCount: 312000,
+        name: 'KenPay ISO 20022 & Fraud Guard',
+        category: 'Financial Messaging & Compliance Checks',
+        description: 'Structural ISO 20022 message validation and heuristic fraud scoring (does not execute live bank settlement).',
+        status: 'STANDBY',
+        capabilityPacks: ['ISO 20022 Validator', 'Fraud Risk Heuristic'],
+        apiKeyCount: 1,
+        totalRequestsCount: 0,
         dataIsolationLevel: 'AIR_GAPPED',
         lastActive: new Date().toISOString()
       },
       {
         id: 'voom',
-        name: 'Voom Telematics & Dispatch',
+        name: 'Voom Fleet Telemetry Bridge',
         category: 'Transportation & Fleet Logistics',
-        description: 'Real-time vehicle GPS dispatch matrix, driver-passenger matching algorithms, driver earnings engine, and vehicle telemetry.',
-        status: 'ACTIVE',
-        capabilityPacks: ['GPS Matrix Routing', 'Driver Passenger Matcher', 'Earnings Engine', 'Fleet Telemetry', 'Safety Sentinel'],
-        apiKeyCount: 5,
-        totalRequestsCount: 87500,
+        description: 'Route calculation & vehicle estimator (no live GPS hardware fleet connected in this environment).',
+        status: 'STANDBY',
+        capabilityPacks: ['Distance Matrix Estimate', 'Vehicle EV Sizing'],
+        apiKeyCount: 1,
+        totalRequestsCount: 0,
         dataIsolationLevel: 'STRICT_TENANT',
         lastActive: new Date().toISOString()
       },
       {
         id: 'king_ken_studio',
-        name: 'King Ken Studio DAW Integration',
-        category: 'Music, Media & Audio Engineering',
-        description: 'Direct MIDI/OSC physical studio hardware control drivers, DAW plugins (VST3/AU), spatial audio engine, and studio automation.',
+        name: 'King Ken Studios Creative Suite',
+        category: 'Music, Video, Graphics & Web Studio',
+        description: 'Integrated Audio synthesis, Video planning, Vector/Raster Image Studio, and Web App Builder.',
         status: 'ACTIVE',
-        capabilityPacks: ['MIDI/OSC Driver Interface', 'DAW Plugin Bridge', 'Spatial Audio Engine', 'Mastering Assistant'],
-        apiKeyCount: 4,
-        totalRequestsCount: 43200,
+        capabilityPacks: ['Vector SVG Studio', 'Image Gallery & Revisions', 'Video Production Planner', 'Web/App Builder'],
+        apiKeyCount: 0,
+        totalRequestsCount: 0,
         dataIsolationLevel: 'SHARED_VAULT',
         lastActive: new Date().toISOString()
       },
       {
         id: 'mechatronics',
-        name: 'Mechatronics & Robotics Industrial Core',
+        name: 'Mechatronics, Electrical & Robotics Workbench',
         category: 'Industrial Automation & Robotics',
-        description: 'ROS 2 robot controllers, SCADA/PLC digital twins, industrial sensors, motor controllers, and predictive maintenance.',
-        status: 'ACTIVE',
-        capabilityPacks: ['ROS 2 Arm Controller', 'SCADA PLC Monitor', 'Digital Twin Engine', 'Predictive Maintenance'],
-        apiKeyCount: 7,
-        totalRequestsCount: 219000,
+        description: 'Offline engineering sizing, OpenPLC/ROS 2 starter export, and safety LOTO checklists (simulation only unless hardware bridge attached).',
+        status: 'STANDBY',
+        capabilityPacks: ['Electrical & Solar Sizing', 'Actuator Torque Calculator', 'OpenPLC & ROS 2 Starters'],
+        apiKeyCount: 0,
+        totalRequestsCount: 0,
         dataIsolationLevel: 'AIR_GAPPED',
         lastActive: new Date().toISOString()
       },
       {
         id: 'aerospace',
-        name: 'Aerospace & Airplane Engineering',
-        category: 'Aerospace & Defence Systems',
-        description: 'Aircraft design assistance, CAD/CAM simulation, avionics diagnostics, sensor telemetry, and safety-critical compliance.',
-        status: 'ACTIVE',
-        capabilityPacks: ['Aerospace CAD Analyzer', 'Flight Dynamics Simulator', 'Avionics Diagnostics', 'DO-178C Safety Verifier'],
-        apiKeyCount: 3,
-        totalRequestsCount: 18400,
+        name: 'Aerospace Preliminary Design Workbench',
+        category: 'Aerospace Conceptual Calculations',
+        description: 'Preliminary wing loading & stall speed educational estimates only (never certified airworthy).',
+        status: 'STANDBY',
+        capabilityPacks: ['Preliminary Aerodynamic Sizing', 'OpenSCAD Wing Reference'],
+        apiKeyCount: 0,
+        totalRequestsCount: 0,
         dataIsolationLevel: 'AIR_GAPPED',
         lastActive: new Date().toISOString()
       },
       {
         id: 'automotive',
-        name: 'Motor & Automotive Engineering',
-        category: 'Automotive & EV Technology',
-        description: 'EV battery health analytics, CAN bus vehicle diagnostics, autonomous drive simulation, and factory assembly robotics.',
-        status: 'ACTIVE',
-        capabilityPacks: ['EV Battery Health AI', 'CAN Bus Analyzer', 'Vehicle Diagnostic Engine', 'Factory Assembly Automation'],
-        apiKeyCount: 4,
-        totalRequestsCount: 62100,
+        name: 'Automotive & EV Preliminary Workbench',
+        category: 'Automotive & EV Calculations',
+        description: 'Preliminary EV power draw and range estimates (no live vehicle CAN bus attached).',
+        status: 'STANDBY',
+        capabilityPacks: ['EV Drivetrain Estimate', 'Battery Pack Sizing'],
+        apiKeyCount: 0,
+        totalRequestsCount: 0,
         dataIsolationLevel: 'STRICT_TENANT',
         lastActive: new Date().toISOString()
       }
@@ -205,7 +205,7 @@ export class AnnyEcosystemService {
         name: 'Level 1 — Digital',
         description: 'Software code, APIs, web applications, databases, and microservices.',
         status: 'OPERATIONAL',
-        activeNodeCount: 42,
+        activeNodeCount: 1,
         safetyInterlockActive: false,
         lotoStatus: 'DISENGAGED',
         authorizedRoles: ['ALL_OPERATORS', 'SOVEREIGN_ADMIN']
@@ -213,9 +213,9 @@ export class AnnyEcosystemService {
       {
         level: 2,
         name: 'Level 2 — Infrastructure',
-        description: 'Cloud servers, containers, PostgreSQL/Redis/Qdrant databases, message queues, and build systems.',
+        description: 'Application server, storage adapters, and local runtime processes.',
         status: 'OPERATIONAL',
-        activeNodeCount: 16,
+        activeNodeCount: 1,
         safetyInterlockActive: false,
         lotoStatus: 'DISENGAGED',
         authorizedRoles: ['ENTERPRISE_ARCHITECT', 'SOVEREIGN_ADMIN']
@@ -223,9 +223,9 @@ export class AnnyEcosystemService {
       {
         level: 3,
         name: 'Level 3 — Devices',
-        description: 'Computers, smartphones, cameras, IoT sensors, microphone arrays, and hardware controllers.',
-        status: 'OPERATIONAL',
-        activeNodeCount: 28,
+        description: 'Browser camera, microphone, and local hardware telemetry when permitted by user.',
+        status: 'SIMULATION_ONLY',
+        activeNodeCount: 0,
         safetyInterlockActive: false,
         lotoStatus: 'DISENGAGED',
         authorizedRoles: ['OPERATOR', 'SOVEREIGN_ADMIN']
@@ -233,29 +233,29 @@ export class AnnyEcosystemService {
       {
         level: 4,
         name: 'Level 4 — Robotics',
-        description: 'Robotic arms, ROS 2 nodes, autonomous ground rovers, pick-and-place actuators, and mechatronic systems.',
-        status: 'OPERATIONAL',
-        activeNodeCount: 8,
+        description: 'ROS 2 nodes, actuators, and robotic platforms (no physical robot attached).',
+        status: 'SIMULATION_ONLY',
+        activeNodeCount: 0,
         safetyInterlockActive: true,
-        lotoStatus: 'DISENGAGED',
+        lotoStatus: 'LOCKED_OUT',
         authorizedRoles: ['ROBOTICS_SPECIALIST', 'SOVEREIGN_ADMIN']
       },
       {
         level: 5,
         name: 'Level 5 — Vehicles',
-        description: 'Fleet vehicle telemetry, CAN bus interfaces, autonomous dispatch matrix, and mobile machinery.',
-        status: 'OPERATIONAL',
-        activeNodeCount: 12,
+        description: 'Vehicle CAN bus & telematics (no physical vehicle bridge connected).',
+        status: 'SIMULATION_ONLY',
+        activeNodeCount: 0,
         safetyInterlockActive: true,
-        lotoStatus: 'DISENGAGED',
+        lotoStatus: 'LOCKED_OUT',
         authorizedRoles: ['FLEET_MANAGER', 'SOVEREIGN_ADMIN']
       },
       {
         level: 6,
         name: 'Level 6 — Enterprise',
-        description: 'Cross-company workflows, financial ledgers, business intelligence, manufacturing automation, and SCADA safety.',
+        description: 'Cross-ecosystem workflows, Watchdog security audits, and governance controls.',
         status: 'OPERATIONAL',
-        activeNodeCount: 6,
+        activeNodeCount: 1,
         safetyInterlockActive: true,
         lotoStatus: 'DISENGAGED',
         authorizedRoles: ['SOVEREIGN_ADMIN']
@@ -400,130 +400,105 @@ export class AnnyEcosystemService {
     };
   }
 
-  // Specialized Enterprise Microservice Logic
+  // Honest vertical handlers — no fake payments, fake escrow locks, fake hardware, or fake airworthiness certifications
   private handleKedaAction(action: string, params: Record<string, any>): Record<string, any> {
-    if (action === 'feed_generate') {
+    const kedaConfigured = Boolean(process.env.KEDA_API_URL && process.env.KEDA_API_TOKEN);
+    if (!kedaConfigured) {
       return {
-        feedItems: [
-          { id: 'post_101', author: 'Keda Creator', type: 'reels', title: 'AI OS Launch Reel', likes: 1420, escrowProtected: true },
-          { id: 'post_102', author: 'Tech Merchant', type: 'marketplace', title: 'Hardware Devkit v2', price: '$499', status: 'AVAILABLE' }
-        ],
-        algorithmVersion: 'Keda-AI-Recommend-v3'
+        status: 'INTEGRATION_NOT_CONFIGURED',
+        action,
+        params,
+        liveExternalCall: false,
+        message:
+          'KEDA_API_URL / KEDA_API_TOKEN not configured on server. Wallet, escrow, calls, and live feed mutations are disabled rather than simulated.',
       };
     }
-    if (action === 'wallet_escrow') {
-      return {
-        escrowTxId: `escrow_${Date.now()}`,
-        amount: params.amount || 250.00,
-        currency: params.currency || 'USD',
-        buyerId: params.buyerId || 'usr_keda_88',
-        sellerId: params.sellerId || 'usr_keda_99',
-        status: 'FUNDS_LOCKED_IN_ESCROW'
-      };
-    }
-    return { status: 'KEDA_SERVICE_OK', action, params };
+    return {
+      status: 'READY_FOR_BRIDGE_EXECUTION',
+      action,
+      params,
+      bridgeEndpoint: '/api/v1/anny/integrations/keda/command',
+    };
   }
 
   private handleKenPayAction(action: string, params: Record<string, any>): Record<string, any> {
+    const amount = Number(params?.amount ?? 0);
     if (action === 'iso20022_parse') {
+      const hasValidAmount = Number.isFinite(amount) && amount > 0;
       return {
+        status: 'STRUCTURAL_VALIDATION_ONLY',
         msgType: 'pacs.008.001.10',
-        senderBIC: 'KENPUS33XXX',
-        receiverBIC: 'CHASUS33XXX',
-        settlementAmount: params.amount || 150000.00,
-        complianceScore: 0.998,
-        fraudRisk: 'LOW_RISK',
-        isoXmlValid: true
+        amountValidated: hasValidAmount ? amount : null,
+        valid: hasValidAmount,
+        liveSettlementExecuted: false,
+        note: 'Validates message fields deterministically without executing live banking/SWIFT settlement.',
       };
     }
-    if (action === 'fraud_check') {
-      return {
-        transactionId: params.txId || `tx_${Date.now()}`,
-        fraudScore: 0.02,
-        recommendation: 'APPROVE',
-        checksPassed: ['VelocityCheck', 'GeoIpCheck', 'DeviceFingerprint', 'AML_Sanctions']
-      };
-    }
-    return { status: 'KENPAY_SERVICE_OK', action, params };
+    return {
+      status: 'BANKING_CORE_NOT_CONNECTED',
+      action,
+      liveSettlementExecuted: false,
+      note: 'No live banking ledger is connected; payment mutations require a certified payment processor integration.',
+    };
   }
 
   private handleVoomAction(action: string, params: Record<string, any>): Record<string, any> {
-    if (action === 'dispatch_match') {
-      return {
-        matchId: `dispatch_${Date.now()}`,
-        driverId: 'drv_voom_402',
-        passengerId: params.passengerId || 'psg_991',
-        pickupDistanceKm: 1.2,
-        estimatedArrivalMin: 4,
-        fareEstimateUSD: 18.50,
-        status: 'DRIVER_MATCHED'
-      };
-    }
-    if (action === 'earnings_compute') {
-      return {
-        driverId: params.driverId || 'drv_voom_402',
-        period: 'DAILY',
-        grossEarnings: 245.80,
-        platformCommission: 24.58,
-        netPayout: 221.22,
-        tripsCompleted: 14
-      };
-    }
-    return { status: 'VOOM_DISPATCH_OK', action, params };
+    return {
+      status: 'FLEET_BRIDGE_NOT_CONNECTED',
+      action,
+      params,
+      liveDispatchExecuted: false,
+      note: 'No live GPS dispatch server or active driver pool is connected.',
+    };
   }
 
   private handleKingKenStudioAction(action: string, params: Record<string, any>): Record<string, any> {
-    if (action === 'midi_send') {
-      return {
-        midiPort: params.port || 'ANNY_MIDI_OUT_1',
-        note: params.note || 60, // Middle C
-        velocity: params.velocity || 127,
-        channel: params.channel || 1,
-        latencyMs: 0.8
-      };
-    }
-    if (action === 'mastering_analyze') {
-      return {
-        lufsIntegrated: -14.2,
-        peakDb: -0.8,
-        dynamicRange: '11.4 LU',
-        frequencyBalance: 'OPTIMAL_WARM',
-        recommendation: 'Mastering ready for streaming platforms.'
-      };
-    }
-    return { status: 'STUDIO_MIDI_OK', action, params };
+    return {
+      status: 'STUDIO_WORKSPACE_READY',
+      action,
+      params,
+      supportedInBrowser: ['WebAudio Synthesis', 'Vector SVG Engine', 'Video Storyboard/Render Pipeline', 'Code App Builder'],
+      externalMidiHardwareConnected: false,
+    };
   }
 
   private handleMechatronicsAction(action: string, params: Record<string, any>): Record<string, any> {
     return {
-      plcState: 'RUNNING',
-      scadaLotoStatus: 'DISENGAGED',
-      ros2Nodes: ['/arm_controller', '/camera_sensor', '/safety_relay'],
-      telemetry: {
-        motorTemperatureC: 41.2,
-        vibrationRms: 0.04,
-        healthScore: 0.985
-      }
+      status: 'SIMULATION_ONLY_NO_LIVE_PLC',
+      action,
+      params,
+      hardwareTested: false,
+      note: 'No physical PLC, ROS 2 master, or hardware actuator is attached to this container.',
     };
   }
 
   private handleAerospaceAction(action: string, params: Record<string, any>): Record<string, any> {
+    const massKg = Math.max(0.5, Number(params?.massKg || 12));
+    const wingAreaM2 = Math.max(0.05, Number(params?.wingAreaM2 || 0.85));
+    const clMax = Math.min(2.6, Math.max(0.4, Number(params?.clMax || 1.35)));
+    const weightN = massKg * 9.81;
+    const stallSpeedMS = Math.sqrt((2 * weightN) / (1.225 * wingAreaM2 * clMax));
     return {
-      aircraftModel: 'Anny-Aero-A1',
-      aerodynamicCl: 1.42,
-      cd: 0.032,
-      avionicsHealth: '100% NOMINAL',
-      complianceCertification: 'DO-178C LEVEL A VERIFIED'
+      status: 'PRELIMINARY_ESTIMATE_NOT_CERTIFIED',
+      notCertifiedAirworthy: true,
+      hardwareOrFlightTested: false,
+      preliminaryCalculations: {
+        weightN: Number(weightN.toFixed(1)),
+        wingLoadingNm2: Number((weightN / wingAreaM2).toFixed(1)),
+        seaLevelStallSpeedMS: Number(stallSpeedMS.toFixed(2)),
+      },
+      notice:
+        'Preliminary textbook aerodynamic estimate only. NEVER airworthy or regulatory-compliant without independent structural, CFD, and flight-test certification.',
     };
   }
 
   private handleAutomotiveAction(action: string, params: Record<string, any>): Record<string, any> {
     return {
-      vin: params.vin || '1ANNYAUTOMOTIVE2026',
-      batteryStateOfHealth: '98.4%',
-      packVoltageV: 780.2,
-      canBusErrors: 0,
-      driveMotorEfficiency: '96.8%'
+      status: 'PRELIMINARY_ESTIMATE_NO_LIVE_CANBUS',
+      action,
+      params,
+      liveVehicleConnected: false,
+      notice: 'No physical vehicle OBD-II / CAN bus interface is connected in this environment.',
     };
   }
 

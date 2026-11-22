@@ -1,34 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MobileLogoMenu } from '../MobileLogoMenu';
 import {
   Puzzle,
   Search,
-  Plus,
   CheckCircle2,
-  ExternalLink,
-  Zap,
   Database,
-  Globe,
-  Bot,
-  Shield,
-  Code2,
-  MessageSquare,
-  Key,
-  Layers,
-  Sparkles,
+  Server,
   RefreshCw,
-  X
+  AlertCircle,
+  ShieldCheck,
+  Info
 } from 'lucide-react';
+import { safeFetchJson } from '../lib/apiUtils';
 
 interface IntegrationItem {
   id: string;
   name: string;
   description: string;
   category: string;
-  status: 'connected' | 'available';
+  status: 'connected' | 'unconfigured' | 'offline_ready';
+  statusLabel: string;
+  envHint: string;
   iconColor: string;
   badge: string;
-  apiKeySet?: boolean;
 }
 
 interface AnnyIntegrationsViewProps {
@@ -40,134 +34,145 @@ export const AnnyIntegrationsView: React.FC<AnnyIntegrationsViewProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [selectedIntegration, setSelectedIntegration] = useState<IntegrationItem | null>(null);
-  const [inputApiKey, setInputApiKey] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [integrations, setIntegrations] = useState<IntegrationItem[]>([]);
+  const [selectedGuide, setSelectedGuide] = useState<IntegrationItem | null>(null);
 
-  const [integrations, setIntegrations] = useState<IntegrationItem[]>([
-    {
-      id: 'openai',
-      name: 'OpenAI API',
-      description: 'GPT-4o, o1, and DALL-E models integration for high-speed multi-turn completion.',
-      category: 'AI Models',
-      status: 'connected',
-      iconColor: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
-      badge: 'LLM Engine',
-      apiKeySet: true,
-    },
-    {
-      id: 'huggingface',
-      name: 'HuggingFace Hub',
-      description: 'Access 100,000+ open-source AI models, embeddings, and inference endpoints.',
-      category: 'AI Models',
-      status: 'connected',
-      iconColor: 'bg-amber-500/20 text-amber-400 border-amber-500/40',
-      badge: 'Open Weights',
-      apiKeySet: true,
-    },
-    {
-      id: 'supabase',
-      name: 'Supabase Vector DB',
-      description: 'PostgreSQL vector store with pgvector for real-time RAG embeddings and auth.',
-      category: 'Databases',
-      status: 'connected',
-      iconColor: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
-      badge: 'Vector DB',
-      apiKeySet: true,
-    },
-    {
-      id: 'github',
-      name: 'GitHub Repositories',
-      description: 'Sync AI-generated code, commit pull requests, and manage issue trackers automatically.',
-      category: 'Dev & CI/CD',
-      status: 'connected',
-      iconColor: 'bg-slate-500/20 text-slate-300 border-slate-500/40',
-      badge: 'Version Control',
-      apiKeySet: true,
-    },
-    {
-      id: 'anthropic',
-      name: 'Anthropic Claude API',
-      description: 'Claude 3.5 Sonnet and Haiku model access for complex code generation & analysis.',
-      category: 'AI Models',
-      status: 'available',
-      iconColor: 'bg-purple-500/20 text-purple-400 border-purple-500/40',
-      badge: 'LLM Engine',
-    },
-    {
-      id: 'pinecone',
-      name: 'Pinecone Vector Store',
-      description: 'Ultra low-latency managed vector database for billion-scale similarity search.',
-      category: 'Databases',
-      status: 'available',
-      iconColor: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40',
-      badge: 'Vector Search',
-    },
-    {
-      id: 'vercel',
-      name: 'Vercel Deployment',
-      description: 'One-click deployment pipeline for AI-generated frontend and serverless routes.',
-      category: 'Dev & CI/CD',
-      status: 'available',
-      iconColor: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40',
-      badge: 'Hosting',
-    },
-    {
-      id: 'stripe',
-      name: 'Stripe Payments',
-      description: 'Incorporate checkout sessions, subscription plans, and webhook events into built apps.',
-      category: 'Payments & Auth',
-      status: 'available',
-      iconColor: 'bg-blue-500/20 text-blue-400 border-blue-500/40',
-      badge: 'Payments',
-    },
-    {
-      id: 'resend',
-      name: 'Resend Email API',
-      description: 'Transactional email delivery for generated SaaS apps, auth links, and reports.',
-      category: 'Messaging',
-      status: 'available',
-      iconColor: 'bg-rose-500/20 text-rose-400 border-rose-500/40',
-      badge: 'Email API',
-    },
-    {
-      id: 'firebase',
-      name: 'Firebase & Firestore',
-      description: 'Real-time NoSQL database, user authentication, and Cloud Storage integration.',
-      category: 'Databases',
-      status: 'available',
-      iconColor: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
-      badge: 'Backend Service',
-    },
-  ]);
+  const probeServerIntegrations = async () => {
+    setLoading(true);
+    const [matrixRes, healthRes, capRes, kedaRes] = await Promise.all([
+      safeFetchJson('/api/v1/anny/offline-matrix'),
+      safeFetchJson('/api/router/health'),
+      safeFetchJson('/api/system/capabilities'),
+      safeFetchJson('/api/v1/anny/integrations/keda/status'),
+    ]);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    const matrix = matrixRes.data || {};
+    const fallbacks = matrix.onlineFallbacks || {};
+    const localCores = matrix.localCores || {};
+    const capProviders = capRes.data?.providers || {};
+    const healthProviders: Array<{ provider: string; status: string }> = Array.isArray(healthRes.data?.providers)
+      ? healthRes.data.providers
+      : [];
+
+    const hasHealthyProvider = (name: string, fallbackBool?: boolean) => {
+      const hp = healthProviders.find((p) => p.provider?.toLowerCase() === name.toLowerCase());
+      if (hp) return hp.status === 'HEALTHY' || hp.status === 'CONFIGURED';
+      return Boolean(fallbackBool);
+    };
+
+    const items: IntegrationItem[] = [
+      {
+        id: 'gemini',
+        name: 'Google Gemini API',
+        description: 'Cloud reasoning, multimodal understanding, and SVG/code synthesis via server-side @google/genai SDK.',
+        category: 'AI Models',
+        status: hasHealthyProvider('gemini', fallbacks.gemini) ? 'connected' : 'unconfigured',
+        statusLabel: hasHealthyProvider('gemini', fallbacks.gemini) ? 'Server Configured' : 'Unconfigured',
+        envHint: 'GEMINI_API_KEY / GOOGLE_AI_STUDIO_KEY',
+        iconColor: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40',
+        badge: 'Cloud AI',
+      },
+      {
+        id: 'ollama',
+        name: 'Ollama Local GGUF Runtime',
+        description: 'Offline sovereign LLM inference for air-gapped code generation, chat, and local embeddings.',
+        category: 'AI Models',
+        status: localCores.ollamaReachable ? 'connected' : 'offline_ready',
+        statusLabel: localCores.ollamaReachable ? 'Local Connected' : 'Standby (Not Running)',
+        envHint: 'OLLAMA_BASE_URL (default http://127.0.0.1:11434)',
+        iconColor: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
+        badge: 'Offline Core',
+      },
+      {
+        id: 'openai',
+        name: 'OpenAI API',
+        description: 'Optional GPT completion failover route managed through ANNY server Model Router.',
+        category: 'AI Models',
+        status: hasHealthyProvider('openai', fallbacks.openai) ? 'connected' : 'unconfigured',
+        statusLabel: hasHealthyProvider('openai', fallbacks.openai) ? 'Server Configured' : 'Not Configured',
+        envHint: 'OPENAI_API_KEY',
+        iconColor: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
+        badge: 'LLM Failover',
+      },
+      {
+        id: 'anthropic',
+        name: 'Anthropic Claude API',
+        description: 'Optional Claude completion route via server-side model failover pool.',
+        category: 'AI Models',
+        status: hasHealthyProvider('anthropic', fallbacks.claude) ? 'connected' : 'unconfigured',
+        statusLabel: hasHealthyProvider('anthropic', fallbacks.claude) ? 'Server Configured' : 'Not Configured',
+        envHint: 'ANTHROPIC_API_KEY',
+        iconColor: 'bg-purple-500/20 text-purple-400 border-purple-500/40',
+        badge: 'LLM Failover',
+      },
+      {
+        id: 'huggingface',
+        name: 'HuggingFace Inference Hub',
+        description: 'Open-weights cloud fallback route configured on the server router.',
+        category: 'AI Models',
+        status: hasHealthyProvider('huggingface', fallbacks.huggingface) ? 'connected' : 'unconfigured',
+        statusLabel: hasHealthyProvider('huggingface', fallbacks.huggingface) ? 'Server Configured' : 'Not Configured',
+        envHint: 'HUGGINGFACE_API_KEY',
+        iconColor: 'bg-amber-500/20 text-amber-400 border-amber-500/40',
+        badge: 'Open Weights',
+      },
+      {
+        id: 'postgres',
+        name: 'PostgreSQL / Cloud Persistence',
+        description: 'Durable relational persistence for conversations, learning memory, projects, and enterprise registry.',
+        category: 'Databases',
+        status: localCores.localDatabase === 'POSTGRES_CONNECTED' ? 'connected' : 'offline_ready',
+        statusLabel:
+          localCores.localDatabase === 'POSTGRES_CONNECTED' ? 'Postgres Connected' : 'Local Memory Fallback',
+        envHint: 'DATABASE_URL / POSTGRES_URL',
+        iconColor: 'bg-blue-500/20 text-blue-400 border-blue-500/40',
+        badge: 'Database',
+      },
+      {
+        id: 'minio',
+        name: 'MinIO / SeaweedFS S3 Storage',
+        description: 'S3-compatible object storage for generated artifacts, snapshots, and uploaded workspaces.',
+        category: 'Storage',
+        status: capProviders.storage?.configured ? 'connected' : 'unconfigured',
+        statusLabel: capProviders.storage?.configured ? 'Bucket Configured' : 'Not Configured',
+        envHint: 'MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY',
+        iconColor: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40',
+        badge: 'S3 Storage',
+      },
+      {
+        id: 'keda',
+        name: 'KEDA Social & Commerce Bridge',
+        description: 'Official bridge linking ANNY intelligence to KEDA creator feeds, moderation, and storefront tooling.',
+        category: 'Ecosystem',
+        status: kedaRes.data?.connected ? 'connected' : 'unconfigured',
+        statusLabel: kedaRes.data?.connected ? 'Bridge Connected' : 'Bridge Unconfigured',
+        envHint: 'KEDA_API_URL, KEDA_SERVICE_TOKEN',
+        iconColor: 'bg-rose-500/20 text-rose-400 border-rose-500/40',
+        badge: 'KEDA Ecosystem',
+      },
+      {
+        id: 'ros2',
+        name: 'ROS 2 Hardware Bridge',
+        description: 'Physical robot / PLC bridge telemetry. Operates strictly in simulation sandbox unless hardware bridge URL is running.',
+        category: 'Robotics',
+        status: 'unconfigured',
+        statusLabel: 'No Live Hardware Bridge',
+        envHint: 'ROS2_BRIDGE_URL',
+        iconColor: 'bg-slate-500/20 text-slate-300 border-slate-500/40',
+        badge: 'Robotics',
+      },
+    ];
+
+    setIntegrations(items);
+    setLoading(false);
   };
 
-  const toggleConnect = (item: IntegrationItem) => {
-    if (item.status === 'connected') {
-      setIntegrations((prev) =>
-        prev.map((i) => (i.id === item.id ? { ...i, status: 'available', apiKeySet: false } : i))
-      );
-      showToast(`Disconnected ${item.name}`);
-    } else {
-      setSelectedIntegration(item);
-    }
-  };
+  useEffect(() => {
+    void probeServerIntegrations();
+  }, []);
 
-  const handleSaveApiKey = () => {
-    if (!selectedIntegration) return;
-    setIntegrations((prev) =>
-      prev.map((i) =>
-        i.id === selectedIntegration.id ? { ...i, status: 'connected', apiKeySet: true } : i
-      )
-    );
-    showToast(`Successfully connected ${selectedIntegration.name}`);
-    setSelectedIntegration(null);
-    setInputApiKey('');
-  };
+  const categories = ['All', 'AI Models', 'Databases', 'Storage', 'Ecosystem', 'Robotics'];
 
   const filteredIntegrations = integrations.filter((item) => {
     const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
@@ -179,61 +184,52 @@ export const AnnyIntegrationsView: React.FC<AnnyIntegrationsViewProps> = ({
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#040612] text-slate-100 overflow-y-auto p-4 sm:p-6 lg:p-8 custom-scrollbar relative">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed top-6 right-6 z-50 bg-[#0c102b] border border-cyan-500/50 text-white px-4 py-3 rounded-2xl shadow-[0_0_30px_rgba(0,229,255,0.4)] flex items-center gap-3 animate-in fade-in slide-in-from-top-4">
-          <Sparkles className="w-5 h-5 text-cyan-400" />
-          <span className="text-xs font-semibold">{toastMessage}</span>
-        </div>
-      )}
-
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <div className="flex items-center gap-3 mb-2">
             <MobileLogoMenu onToggleMobileMenu={onToggleMobileMenu} />
             <span className="px-2.5 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-xs font-semibold uppercase tracking-wider">
-              Anny Application
+              Server Verified Status
             </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-white mt-1 flex items-center gap-2.5">
             <Puzzle className="w-7 h-7 text-cyan-400" />
-            Integrations & APIs
+            Integrations & Infrastructure
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            Connect third-party AI models, vector stores, cloud databases, and deployment platforms to Anny.
+            Live probe of connected AI models, offline runtimes, databases, storage, and Akinwumi Group bridges.
           </p>
         </div>
 
         <button
-          onClick={() => {
-            setSelectedIntegration({
-              id: 'custom-api',
-              name: 'Custom Integration',
-              description: 'Add a custom REST or GraphQL API endpoint credential',
-              category: 'Custom',
-              status: 'available',
-              iconColor: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40',
-              badge: 'Custom API',
-            });
-          }}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-cyan-500 via-indigo-600 to-fuchsia-600 hover:from-cyan-400 hover:via-indigo-500 hover:to-fuchsia-500 shadow-[0_0_20px_rgba(0,229,255,0.3)] transition-all cursor-pointer shrink-0"
+          onClick={probeServerIntegrations}
+          disabled={loading}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 transition-all cursor-pointer shrink-0"
         >
-          <Plus className="w-4 h-4" />
-          <span>Add Custom API Key</span>
+          <RefreshCw className={`w-4 h-4 text-cyan-300 ${loading ? 'animate-spin' : ''}`} />
+          <span>{loading ? 'Probing Runtime...' : 'Refresh Live Status'}</span>
         </button>
+      </div>
+
+      {/* Policy Notice */}
+      <div className="mb-6 p-3.5 rounded-2xl bg-[#080b22] border border-cyan-500/20 flex items-start gap-3 text-xs text-slate-300">
+        <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+        <span>
+          Status badges reflect live server checks from `/api/router/health`, `/api/system/capabilities`, `/api/v1/anny/offline-matrix`, and `/api/v1/anny/integrations/keda/status`. API keys and service tokens are never stored in browser forms.
+        </span>
       </div>
 
       {/* Filter Tabs & Search */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div className="flex items-center gap-2 overflow-x-auto pb-2 md:pb-0 scrollbar-none">
-          {['All', 'AI Models', 'Databases', 'Dev & CI/CD', 'Payments & Auth', 'Messaging'].map((cat) => (
+          {categories.map((cat) => (
             <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
                 selectedCategory === cat
-                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-[0_0_15px_rgba(0,229,255,0.2)]'
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
                   : 'bg-[#090d26] text-slate-400 hover:text-white border border-white/5'
               }`}
             >
@@ -246,7 +242,7 @@ export const AnnyIntegrationsView: React.FC<AnnyIntegrationsViewProps> = ({
           <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="Search integrations, models, databases..."
+            placeholder="Search integrations, providers, databases..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-[#080c24] border border-white/10 rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50"
@@ -258,29 +254,36 @@ export const AnnyIntegrationsView: React.FC<AnnyIntegrationsViewProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredIntegrations.map((item) => {
           const isConnected = item.status === 'connected';
+          const isOfflineReady = item.status === 'offline_ready';
 
           return (
             <div
               key={item.id}
-              className={`bg-[#080c24] border rounded-2xl p-5 flex flex-col justify-between transition-all duration-300 hover:border-cyan-500/40 hover:shadow-[0_0_25px_rgba(0,229,255,0.15)] ${
-                isConnected ? 'border-cyan-500/30' : 'border-white/10'
+              className={`bg-[#080c24] border rounded-2xl p-5 flex flex-col justify-between transition-all duration-300 ${
+                isConnected ? 'border-emerald-500/30' : 'border-white/10'
               }`}
             >
               <div>
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-3 gap-2">
                   <div className={`p-2.5 rounded-xl border ${item.iconColor} flex items-center justify-center`}>
-                    <Puzzle className="w-5 h-5" />
+                    <Server className="w-5 h-5" />
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap justify-end">
                     <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-slate-300 text-[10px] font-semibold">
                       {item.badge}
                     </span>
-                    {isConnected && (
-                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-[10px] font-bold">
-                        <CheckCircle2 className="w-3 h-3" />
-                        Connected
-                      </span>
-                    )}
+                    <span
+                      className={`flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-bold ${
+                        isConnected
+                          ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                          : isOfflineReady
+                          ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                          : 'bg-slate-800 border-white/10 text-slate-400'
+                      }`}
+                    >
+                      {isConnected ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                      {item.statusLabel}
+                    </span>
                   </div>
                 </div>
 
@@ -288,20 +291,15 @@ export const AnnyIntegrationsView: React.FC<AnnyIntegrationsViewProps> = ({
                 <p className="text-xs text-slate-400 leading-relaxed mb-4">{item.description}</p>
               </div>
 
-              <div className="pt-3 border-t border-white/5 flex items-center justify-between">
-                <span className="text-[11px] text-slate-500 font-medium">
-                  {item.category}
-                </span>
+              <div className="pt-3 border-t border-white/5 flex items-center justify-between gap-2">
+                <span className="text-[11px] text-slate-500 font-medium">{item.category}</span>
 
                 <button
-                  onClick={() => toggleConnect(item)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                    isConnected
-                      ? 'bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400'
-                      : 'bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300'
-                  }`}
+                  onClick={() => setSelectedGuide(item)}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-300 flex items-center gap-1.5 transition-all cursor-pointer"
                 >
-                  {isConnected ? 'Disconnect' : 'Connect API'}
+                  <Info className="w-3.5 h-3.5" />
+                  <span>Server Config</span>
                 </button>
               </div>
             </div>
@@ -309,59 +307,30 @@ export const AnnyIntegrationsView: React.FC<AnnyIntegrationsViewProps> = ({
         })}
       </div>
 
-      {/* Connect API Key Modal */}
-      {selectedIntegration && (
+      {/* Server Env Variable Configuration Guidance Drawer */}
+      {selectedGuide && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-[#090d28] border border-cyan-500/40 rounded-3xl p-6 shadow-[0_0_50px_rgba(0,229,255,0.3)] relative">
-            <button
-              onClick={() => setSelectedIntegration(null)}
-              className="absolute top-4 right-4 p-2 rounded-full bg-white/5 text-slate-400 hover:text-white"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2.5 rounded-xl bg-cyan-500/20 border border-cyan-500/40 text-cyan-300">
-                <Key className="w-5 h-5" />
+          <div className="w-full max-w-md bg-[#090d28] border border-cyan-500/40 rounded-3xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Database className="w-5 h-5 text-cyan-400" />
+                <h3 className="text-base font-bold text-white">{selectedGuide.name}</h3>
               </div>
-              <div>
-                <h3 className="text-base font-bold text-white">Connect {selectedIntegration.name}</h3>
-                <p className="text-xs text-slate-400">Enter your API key or bearer credential</p>
-              </div>
-            </div>
-
-            <div className="space-y-4 my-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                  API Key / Access Token
-                </label>
-                <input
-                  type="password"
-                  placeholder="sk-..."
-                  value={inputApiKey}
-                  onChange={(e) => setInputApiKey(e.target.value)}
-                  className="w-full bg-[#050818] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-cyan-500"
-                />
-              </div>
-              <p className="text-[11px] text-slate-500">
-                Your key is stored securely in your encrypted user session and never sent to third parties.
-              </p>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-2">
               <button
-                onClick={() => setSelectedIntegration(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white"
+                onClick={() => setSelectedGuide(null)}
+                className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded-lg bg-white/5"
               >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveApiKey}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 shadow-[0_0_15px_rgba(0,229,255,0.3)]"
-              >
-                Save & Connect
+                Close
               </button>
             </div>
+            <p className="text-xs text-slate-300 leading-relaxed">{selectedGuide.description}</p>
+            <div className="p-3.5 rounded-xl bg-[#050818] border border-white/10 space-y-1.5">
+              <span className="text-[10px] font-mono uppercase text-cyan-400 block">Required Server Environment Variables</span>
+              <code className="text-xs font-mono text-white break-all">{selectedGuide.envHint}</code>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Set these variables in your server `.env` or container configuration and restart the ANNY backend to activate.
+            </p>
           </div>
         </div>
       )}
