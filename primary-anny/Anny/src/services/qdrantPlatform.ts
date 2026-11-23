@@ -66,7 +66,7 @@ export class QdrantPlatform {
 
   // Cosine Similarity Computation
   private cosineSimilarity(vecA: number[], vecB: number[]): number {
-    if (vecA.length !== vecB.length) return 0.5;
+    if (vecA.length === 0 || vecA.length !== vecB.length) return 0;
     let dot = 0;
     let normA = 0;
     let normB = 0;
@@ -96,9 +96,14 @@ export class QdrantPlatform {
         const embRes = await aiProviderPlatform.embeddings(content);
         vector = embRes.embedding;
       } catch (e) {
-        // Fallback vector generation if API is unavailable
-        vector = Array.from({ length: 768 }, (_, idx) => (content.charCodeAt(idx % content.length) || 1) / 255);
+        throw new Error(
+          `EMBEDDING_PROVIDER_UNAVAILABLE: Cannot index document without a genuine embedding. ${e instanceof Error ? e.message : String(e)}`
+        );
       }
+    }
+
+    if (!Array.isArray(vector) || vector.length === 0 || !vector.every(Number.isFinite)) {
+      throw new Error('INVALID_EMBEDDING_VECTOR: Expected a non-empty vector containing only finite numbers.');
     }
 
     const doc: VectorDocument = {
@@ -120,21 +125,33 @@ export class QdrantPlatform {
     collectionName: string,
     queryText: string,
     limit: number = 5,
-    filterCategory?: string
+    filterCategory?: string,
+    filterSessionId?: string
   ): Promise<SearchResult[]> {
+    if (collectionName === 'conversation_memory' && !filterSessionId) {
+      throw new Error('SESSION_SCOPE_REQUIRED: Conversation memory search must specify the owning session ID.');
+    }
+
     const docs = this.collections.get(collectionName) || [];
     if (docs.length === 0) return [];
 
-    let queryVector: number[] = [];
+    let queryVector: number[];
     try {
       const queryEmbedding = await aiProviderPlatform.embeddings(queryText);
       queryVector = queryEmbedding.embedding;
     } catch (e) {
-      queryVector = Array.from({ length: 768 }, (_, idx) => (queryText.charCodeAt(idx % queryText.length) || 1) / 255);
+      throw new Error(
+        `EMBEDDING_PROVIDER_UNAVAILABLE: Cannot perform semantic search without a genuine query embedding. ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+
+    if (!Array.isArray(queryVector) || queryVector.length === 0 || !queryVector.every(Number.isFinite)) {
+      throw new Error('INVALID_EMBEDDING_VECTOR: Query embedding must be a non-empty vector containing only finite numbers.');
     }
 
     const results: SearchResult[] = docs
       .filter(doc => !filterCategory || doc.payload.category === filterCategory)
+      .filter(doc => !filterSessionId || doc.payload.sessionId === filterSessionId)
       .map(doc => {
         const score = this.cosineSimilarity(queryVector, doc.vector);
         return {
@@ -152,7 +169,7 @@ export class QdrantPlatform {
 
   // Retrieve Long Term Memory
   public async retrieveMemoryContext(sessionId: string, currentQuery: string): Promise<string> {
-    const memoryResults = await this.search('conversation_memory', currentQuery, 3);
+    const memoryResults = await this.search('conversation_memory', currentQuery, 3, undefined, sessionId);
     if (memoryResults.length === 0) return '';
 
     return memoryResults
