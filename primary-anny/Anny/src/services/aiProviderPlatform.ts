@@ -818,9 +818,21 @@ export class AIProviderPlatform {
 
           const content = String(response.data.message?.content || '');
           const rawFunctionCall = response.data.message?.tool_calls?.[0]?.function;
-          const functionCall = rawFunctionCall?.name
-            ? { name: String(rawFunctionCall.name), arguments: rawFunctionCall.arguments || {} }
-            : undefined;
+          let functionCall: ChatResponse['functionCall'];
+          if (rawFunctionCall?.name) {
+            let args = rawFunctionCall.arguments;
+            if (typeof args === 'string') {
+              try {
+                args = JSON.parse(args);
+              } catch {
+                throw new Error('OLLAMA_TOOL_ARGUMENTS_INVALID: Local model returned malformed tool arguments.');
+              }
+            }
+            functionCall = {
+              name: String(rawFunctionCall.name),
+              arguments: args && typeof args === 'object' && !Array.isArray(args) ? args : {}
+            };
+          }
           if (!content.trim() && !functionCall) {
             throw new Error('OLLAMA_EMPTY_RESPONSE: Local Ollama returned neither text nor a tool call.');
           }
