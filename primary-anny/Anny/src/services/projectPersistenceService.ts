@@ -609,7 +609,14 @@ export class ProjectPersistenceService {
         }
         // A successful database miss is authoritative; do not resurrect a stale
         // disk/cache copy that another process has deleted.
+        const hadCachedRecord = this.records.has(cleanId);
         this.records.delete(cleanId);
+        if (hadCachedRecord) {
+          this.deletedProjectIds.add(cleanId);
+          if (!this.saveToDisk()) {
+            throw new Error('PROJECT_DISK_PERSISTENCE_FAILED');
+          }
+        }
         return null;
       } catch (err: any) {
         console.warn('[ProjectPersistence] Postgres getProjectById warning:', err?.message || err);
