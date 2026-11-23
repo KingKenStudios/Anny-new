@@ -37,7 +37,7 @@ class FakePgPool {
     }
     if (/SELECT token_hash/.test(sql)) {
       const row = [...target.values()].find(candidate =>
-        (sql.includes('token_hash = $1') ? candidate.token_hash : candidate.refresh_token_hash) === params[0] &&
+        (/WHERE\\s+token_hash = \\$1/.test(sql) ? candidate.token_hash : candidate.refresh_token_hash) === params[0] &&
         candidate.revoked_at === null &&
         (sql.includes('access_expires_at >') ? candidate.access_expires_at : candidate.refresh_expires_at) > params[1]
       );
@@ -46,8 +46,8 @@ class FakePgPool {
     if (/UPDATE auth_sessions/.test(sql)) {
       const [key, now] = params;
       const matching = [...target.values()].filter(row => {
-        if (sql.includes('token_hash = $1')) return row.token_hash === key && row.revoked_at === null;
-        if (sql.includes('refresh_token_hash = $1')) {
+        if (/WHERE\\s+token_hash = \\$1/.test(sql)) return row.token_hash === key && row.revoked_at === null;
+        if (/WHERE\\s+refresh_token_hash = \\$1/.test(sql)) {
           return row.refresh_token_hash === key && row.revoked_at === null &&
             (!sql.includes('refresh_expires_at >') || row.refresh_expires_at > now);
         }
