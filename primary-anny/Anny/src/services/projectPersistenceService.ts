@@ -493,17 +493,20 @@ export class ProjectPersistenceService {
       }
     }
 
-    for (const [id, existing] of this.previewSessions.entries()) {
-      if (existing.projectId === record.projectId && id !== record.previewId) {
-        this.previewSessions.delete(id);
-      }
+    const previousProjectSessions = Array.from(this.previewSessions.entries())
+      .filter(([, existing]) => existing.projectId === record.projectId);
+    for (const [id] of previousProjectSessions) {
+      if (id !== record.previewId) this.previewSessions.delete(id);
     }
     const previousSession = this.previewSessions.get(record.previewId);
     this.previewSessions.set(record.previewId, record);
     const diskSaved = this.saveToDisk();
     if (!diskSaved && !this.pool) {
+      for (const [id] of this.previewSessions.entries()) {
+        if (this.previewSessions.get(id)?.projectId === record.projectId) this.previewSessions.delete(id);
+      }
+      previousProjectSessions.forEach(([id, session]) => this.previewSessions.set(id, session));
       if (previousSession) this.previewSessions.set(record.previewId, previousSession);
-      else this.previewSessions.delete(record.previewId);
       throw new Error('PROJECT_DISK_PERSISTENCE_FAILED');
     }
     return record;
