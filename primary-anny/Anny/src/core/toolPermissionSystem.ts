@@ -284,7 +284,7 @@ export class ToolPermissionSystem {
     if (tool.executionPolicy === 'loto_authorized_only' && !options.isLotoAuthorized) {
       return deny(tool.riskLevel, 'This tool requires trusted LOTO authorization.');
     }
-    if (tool.executionPolicy === 'require_user_confirm' && !options.userConfirmed) {
+    if ((tool.riskLevel === 'CRITICAL' || tool.executionPolicy === 'require_user_confirm') && !options.userConfirmed) {
       return deny(tool.riskLevel, `Tool '${tool.name}' requires explicit user confirmation before execution.`, 'REQUIRES_CONFIRMATION');
     }
 
