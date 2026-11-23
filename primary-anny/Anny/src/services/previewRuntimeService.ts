@@ -16,7 +16,9 @@ import {
   isValidProjectId,
   projectPersistenceService,
   sanitizeProjectFilesMap,
+  type PersistedPreviewSession,
 } from './projectPersistenceService';
+import { envConfigService, isStrongSecuritySecret } from './envConfigService';
 
 export type PreviewRuntimeStatus = 'STARTING' | 'RUNNING' | 'STOPPED' | 'ERROR';
 
@@ -182,6 +184,41 @@ export class PreviewRuntimeService {
   private previewIdByProject: Map<string, string> = new Map();
 
   private constructor() {}
+
+  private deriveCapabilityToken(session: Pick<PersistedPreviewSession,
+    'previewId' | 'projectId' | 'ownerUserId' | 'version' | 'updatedAt'
+  >): string {
+    const secret = envConfigService.refreshFromProcess().sessionSecret;
+    if (!isStrongSecuritySecret(secret)) {
+      throw new Error('PREVIEW_CAPABILITY_SECRET_UNAVAILABLE');
+    }
+    const material = [
+      session.previewId,
+      session.projectId,
+      session.ownerUserId,
+      String(session.version),
+      session.updatedAt
+    ].join('\\u0000');
+    return crypto.createHmac('sha256', secret).update(material).digest('hex');
+  }
+
+  private restoreSession(record: PersistedPreviewSession): PreviewSessionRecord {
+    const capabilityToken = this.deriveCapabilityToken(record);
+    return {
+      ...record,
+      capabilityToken,
+      previewUrl: `/api/preview/sessions/${encodeURIComponent(record.previewId)}/app?token=${encodeURIComponent(capabilityToken)}`
+    };
+  }
+
+  private async loadPersistedSession(previewId: string): Promise<PreviewSessionRecord | null> {
+    const persisted = await projectPersistenceService.getPreviewSessionById(previewId);
+    if (!persisted) return null;
+    const session = this.restoreSession(persisted);
+    this.sessionsById.set(session.previewId, session);
+    this.previewIdByProject.set(session.projectId, session.previewId);
+    return session;
+  }
 
   public static getInstance(): PreviewRuntimeService {
     if (!PreviewRuntimeService.instance) {
@@ -719,11 +756,17 @@ export class PreviewRuntimeService {
       });
     }
 
-    const existingPreviewId = this.previewIdByProject.get(cleanProjId);
-    const existingSession = existingPreviewId ? this.sessionsById.get(existingPreviewId) : undefined;
-    const previewId = existingSession?.previewId || `prev_${crypto.randomBytes(12).toString('hex')}`;
-    const capabilityToken = existingSession?.capabilityToken || crypto.randomBytes(24).toString('hex');
+    const persistedSession = await projectPersistenceService.getPreviewSessionByProjectId(cleanProjId);
+    const previewId = persistedSession?.previewId || `prev_${crypto.randomBytes(12).toString('hex')}`;
     const now = new Date().toISOString();
+    const startedAt = persistedSession?.startedAt || now;
+    const capabilityToken = this.deriveCapabilityToken({
+      previewId,
+      projectId: cleanProjId,
+      ownerUserId: project.ownerUserId,
+      version: project.version,
+      updatedAt: now
+    });
 
     try {
       const bundled = await this.bundleStandaloneProjectHtml({
@@ -745,12 +788,25 @@ export class PreviewRuntimeService {
         runtimeMode: 'ISOLATED_OPQ_ORIGIN_SANDBOX',
         entryFile: bundled.entryFile,
         lastError: null,
-        startedAt: existingSession?.startedAt || now,
+        startedAt,
         updatedAt: now,
       };
+      await projectPersistenceService.upsertPreviewSession({
+        previewId: session.previewId,
+        projectId: session.projectId,
+        ownerUserId: session.ownerUserId,
+        name: session.name,
+        version: session.version,
+        status: session.status,
+        runtimeMode: session.runtimeMode,
+        entryFile: session.entryFile,
+        lastError: session.lastError,
+        startedAt: session.startedAt,
+        updatedAt: session.updatedAt
+      });
+      await projectPersistenceService.updateProjectPreviewState(cleanProjId, 'RUNNING', null);
       this.sessionsById.set(previewId, session);
       this.previewIdByProject.set(cleanProjId, previewId);
-      await projectPersistenceService.updateProjectPreviewState(cleanProjId, 'RUNNING', null);
       return session;
     } catch (err: any) {
       const msg = err?.message || 'PREVIEW_BUNDLE_FAILED';
@@ -775,15 +831,15 @@ export class PreviewRuntimeService {
     };
   }
 
-  public getPreviewSessionStatus(
+  public async getPreviewSessionStatus(
     previewId: string,
     requesterUid: string,
     isAdmin: boolean
-  ): PreviewSessionRecord {
+  ): Promise<PreviewSessionRecord> {
     if (!VALID_PREVIEW_ID_REGEX.test(previewId)) {
       throw new Error('INVALID_PREVIEW_ID');
     }
-    const session = this.sessionsById.get(previewId);
+    const session = await this.loadPersistedSession(previewId);
     if (!session) {
       throw new Error('PREVIEW_SESSION_NOT_FOUND');
     }
@@ -798,11 +854,26 @@ export class PreviewRuntimeService {
     requesterUid: string,
     isAdmin: boolean
   ): Promise<PreviewSessionRecord> {
-    const session = this.getPreviewSessionStatus(previewId, requesterUid, isAdmin);
+    const session = await this.getPreviewSessionStatus(previewId, requesterUid, isAdmin);
     session.status = 'STOPPED';
     session.updatedAt = new Date().toISOString();
-    this.sessionsById.set(previewId, session);
+    session.capabilityToken = this.deriveCapabilityToken(session);
+    session.previewUrl = `/api/preview/sessions/${encodeURIComponent(session.previewId)}/app?token=${encodeURIComponent(session.capabilityToken)}`;
+    await projectPersistenceService.upsertPreviewSession({
+      previewId: session.previewId,
+      projectId: session.projectId,
+      ownerUserId: session.ownerUserId,
+      name: session.name,
+      version: session.version,
+      status: session.status,
+      runtimeMode: session.runtimeMode,
+      entryFile: session.entryFile,
+      lastError: session.lastError,
+      startedAt: session.startedAt,
+      updatedAt: session.updatedAt
+    });
     await projectPersistenceService.updateProjectPreviewState(session.projectId, 'STOPPED');
+    this.sessionsById.set(previewId, session);
     return session;
   }
 
@@ -813,7 +884,7 @@ export class PreviewRuntimeService {
     if (!VALID_PREVIEW_ID_REGEX.test(previewId) || typeof token !== 'string' || token.length < 24) {
       throw new Error('UNAUTHORIZED_PREVIEW_CAPABILITY');
     }
-    const session = this.sessionsById.get(previewId);
+    const session = await this.loadPersistedSession(previewId);
     if (!session) {
       throw new Error('PREVIEW_SESSION_NOT_FOUND');
     }
