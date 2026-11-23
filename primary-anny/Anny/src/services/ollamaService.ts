@@ -64,13 +64,15 @@ export class OllamaDiscoveryService {
         const tagsRes = await axios.get(`${endpoint}/api/tags`, { timeout: 2500 });
         if (tagsRes.status === 200 && tagsRes.data) {
           const rawModels: any[] = tagsRes.data.models || [];
-          const discoveredModels: OllamaModelInfo[] = rawModels.map((m) => ({
-            name: m.name,
-            modified_at: m.modified_at,
-            size: m.size,
-            digest: m.digest,
-            details: m.details
-          }));
+          const discoveredModels: OllamaModelInfo[] = rawModels
+            .filter((model) => typeof model?.name === 'string' && model.name.trim().length > 0)
+            .map((m) => ({
+              name: m.name.trim(),
+              modified_at: m.modified_at,
+              size: m.size,
+              digest: m.digest,
+              details: m.details
+            }));
 
           let inferencePassed = false;
           // If models exist, test inference with first available model
@@ -82,7 +84,7 @@ export class OllamaDiscoveryService {
                 messages: [{ role: 'user', content: 'Return the number 42.' }],
                 stream: false
               }, { timeout: 30_000 });
-              if (chatRes.data?.message?.content) {
+              if (typeof chatRes.data?.message?.content === 'string' && chatRes.data.message.content.trim()) {
                 inferencePassed = true;
               }
             } catch (_e) {
