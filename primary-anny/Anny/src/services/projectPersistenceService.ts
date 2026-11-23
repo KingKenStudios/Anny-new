@@ -116,6 +116,7 @@ export class ProjectPersistenceService {
   private static instance: ProjectPersistenceService;
   private storePath: string;
   private records: Map<string, PersistedProjectRecord> = new Map();
+  private deletedProjectIds: Set<string> = new Set();
   private previewSessions: Map<string, PersistedPreviewSession> = new Map();
   private pool: any = null;
   private pgSchemaReady = false;
@@ -144,6 +145,7 @@ export class ProjectPersistenceService {
   public setPersistencePathForTests(filePath: string): void {
     this.storePath = path.resolve(filePath);
     this.records.clear();
+    this.deletedProjectIds.clear();
     this.previewSessions.clear();
     this.loadFromDisk();
   }
@@ -273,6 +275,7 @@ export class ProjectPersistenceService {
           schemaVersion: 1,
           updatedAt: new Date().toISOString(),
           projects: Array.from(this.records.values()),
+          deletedProjectIds: Array.from(this.deletedProjectIds.values()),
           previewSessions: Array.from(this.previewSessions.values()),
         },
         null,
@@ -409,11 +412,13 @@ export class ProjectPersistenceService {
         }
       }
 
+      const wasDeleted = this.deletedProjectIds.delete(cleanId);
       this.records.set(cleanId, record);
       const diskSaved = this.saveToDisk();
       if (!diskSaved && !persistedToPostgres) {
         if (existing) this.records.set(cleanId, existing);
         else this.records.delete(cleanId);
+        if (wasDeleted) this.deletedProjectIds.add(cleanId);
         throw new Error('PROJECT_DISK_PERSISTENCE_FAILED');
       }
       return record;
@@ -598,6 +603,7 @@ export class ProjectPersistenceService {
         const res = await this.pool.query('SELECT * FROM anny_projects WHERE project_id = $1 LIMIT 1', [cleanId]);
         if (res.rows.length > 0) {
           const record = this.mapProjectRow(res.rows[0]);
+          this.deletedProjectIds.delete(cleanId);
           this.records.set(cleanId, record);
           return record;
         }
@@ -610,6 +616,7 @@ export class ProjectPersistenceService {
       }
     }
 
+    if (this.deletedProjectIds.has(cleanId)) return null;
     return this.records.get(cleanId) || null;
   }
 
@@ -620,7 +627,10 @@ export class ProjectPersistenceService {
           ? await this.pool.query('SELECT * FROM anny_projects ORDER BY updated_at DESC LIMIT 200')
           : await this.pool.query('SELECT * FROM anny_projects WHERE owner_user_id = $1 ORDER BY updated_at DESC LIMIT 200', [requesterUid]);
         const databaseProjects = res.rows.map((row: any) => this.mapProjectRow(row));
-        for (const project of databaseProjects) this.records.set(project.projectId, project);
+        for (const project of databaseProjects) {
+          this.deletedProjectIds.delete(project.projectId);
+          this.records.set(project.projectId, project);
+        }
         // A successful database query is authoritative; never merge stale cache
         // entries into a fresh tenant-scoped list.
         return databaseProjects;
@@ -629,7 +639,9 @@ export class ProjectPersistenceService {
       }
     }
 
-    const list = Array.from(this.records.values()).filter((p) => isAdmin || p.ownerUserId === requesterUid);
+    const list = Array.from(this.records.values()).filter((p) =>
+      !this.deletedProjectIds.has(p.projectId) && (isAdmin || p.ownerUserId === requesterUid)
+    );
     list.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
     return list;
   }
@@ -683,14 +695,25 @@ export class ProjectPersistenceService {
     if (!isAdmin && existing.ownerUserId !== requesterUid) {
       throw new Error('FORBIDDEN_PROJECT_OWNERSHIP');
     }
-    this.records.delete(cleanId);
-    this.saveToDisk();
 
-    if (await this.ensurePgSchema()) {
+    this.deletedProjectIds.add(cleanId);
+    this.records.delete(cleanId);
+    const diskSaved = this.saveToDisk();
+    if (!diskSaved) {
+      this.deletedProjectIds.delete(cleanId);
+      this.records.set(cleanId, existing);
+      throw new Error('PROJECT_DISK_PERSISTENCE_FAILED');
+    }
+
+    if (this.pool) {
+      if (!(await this.ensurePgSchema())) {
+        throw new Error('PROJECT_DELETE_POSTGRES_UNAVAILABLE');
+      }
       try {
         await this.pool.query('DELETE FROM anny_projects WHERE project_id = $1', [cleanId]);
       } catch (err: any) {
         console.warn('[ProjectPersistence] Postgres deleteProject warning:', err?.message || err);
+        throw new Error('PROJECT_DELETE_POSTGRES_UNAVAILABLE');
       }
     }
     return true;
