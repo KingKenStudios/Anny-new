@@ -158,3 +158,25 @@ test('durable logout revokes by access token, refresh token, and user', async ()
   });
   assert.equal(await platform.revokeAuthSessionsForUser('user-1'), 1);
 });
+
+
+test('production refuses volatile authentication session persistence when PostgreSQL is absent', async () => {
+  const poolless = Object.create(PostgresPlatform.prototype) as any;
+  poolless.pool = null;
+  poolless.authSessionSchemaPromise = null;
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalRequireDurable = process.env.ANNY_REQUIRE_DURABLE_PERSISTENCE;
+  process.env.NODE_ENV = 'production';
+  delete process.env.ANNY_REQUIRE_DURABLE_PERSISTENCE;
+  try {
+    await assert.rejects(
+      () => poolless.storeAuthSession(baseSession),
+      /POSTGRES_NOT_CONFIGURED/
+    );
+  } finally {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+    if (originalRequireDurable === undefined) delete process.env.ANNY_REQUIRE_DURABLE_PERSISTENCE;
+    else process.env.ANNY_REQUIRE_DURABLE_PERSISTENCE = originalRequireDurable;
+  }
+});
