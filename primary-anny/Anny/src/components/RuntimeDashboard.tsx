@@ -57,18 +57,18 @@ export const RuntimeDashboard: React.FC = () => {
             <Activity className="w-6 h-6 animate-pulse" />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-white tracking-wide">Anny Runtime Execution Engine</h2>
-            <p className="text-xs text-slate-400">Subsystem Process Manager • AST Transpiler • Dev Server • Auto-Recovery</p>
+            <h2 className="text-lg font-bold text-white tracking-wide">Anny Runtime Status</h2>
+            <p className="text-xs text-slate-400">Workspace structure checker • simulated lifecycle controls • no OS process launched</p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
           <div className="px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            Vite Dev Server: http://localhost:3000
+            Runtime process: Not launched
           </div>
           <div className="px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-xs font-mono">
-            Environment: Cloud Run Sandbox
+            Execution: Simulated
           </div>
         </div>
       </div>
@@ -80,7 +80,7 @@ export const RuntimeDashboard: React.FC = () => {
             <div>
               <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Process Status</p>
               <div className="flex items-center gap-2 mt-1">
-                <span className={`w-2.5 h-2.5 rounded-full ${activeProject.state === 'running' ? 'bg-emerald-400 animate-pulse' : activeProject.state === 'recovering' ? 'bg-amber-400 animate-ping' : 'bg-red-400'}`} />
+                <span className={`w-2.5 h-2.5 rounded-full ${activeProject.state === 'running' ? 'bg-emerald-400 animate-pulse' : activeProject.state === 'recovering' ? 'bg-amber-400 animate-ping' : activeProject.state === 'simulated' ? 'bg-amber-400' : 'bg-red-400'}`} />
                 <span className="text-base font-bold capitalize text-white">{activeProject.state}</span>
               </div>
             </div>
@@ -90,7 +90,7 @@ export const RuntimeDashboard: React.FC = () => {
           <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
             <div>
               <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">CPU Usage</p>
-              <p className="text-xl font-bold text-cyan-400 mt-1 font-mono">{activeProject.metrics.cpuUsagePct}%</p>
+              <p className="text-xl font-bold text-cyan-400 mt-1 font-mono">{activeProject.metrics.cpuUsagePct === null ? 'Not measured' : `${activeProject.metrics.cpuUsagePct}%`}</p>
             </div>
             <Cpu className="w-8 h-8 text-cyan-400/60" />
           </div>
@@ -98,7 +98,7 @@ export const RuntimeDashboard: React.FC = () => {
           <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
             <div>
               <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Memory Alloc</p>
-              <p className="text-xl font-bold text-purple-400 mt-1 font-mono">{activeProject.metrics.memoryUsageMb} MB</p>
+              <p className="text-xl font-bold text-purple-400 mt-1 font-mono">{activeProject.metrics.memoryUsageMb === null ? 'Not measured' : `${activeProject.metrics.memoryUsageMb} MB`}</p>
             </div>
             <HardDrive className="w-8 h-8 text-purple-400/60" />
           </div>
@@ -106,7 +106,7 @@ export const RuntimeDashboard: React.FC = () => {
           <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
             <div>
               <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Uptime / PID</p>
-              <p className="text-sm font-bold text-emerald-400 mt-1 font-mono">{activeProject.metrics.uptimeSeconds}s (PID: {activeProject.metrics.pid})</p>
+              <p className="text-sm font-bold text-emerald-400 mt-1 font-mono">{activeProject.metrics.uptimeSeconds === null ? 'Not available' : `${activeProject.metrics.uptimeSeconds}s`} (PID: {activeProject.metrics.pid ?? 'None'})</p>
             </div>
             <Activity className="w-8 h-8 text-emerald-400/60" />
           </div>
@@ -119,9 +119,9 @@ export const RuntimeDashboard: React.FC = () => {
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col gap-3">
           <div className="flex items-center justify-between pb-2 border-b border-slate-800">
             <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-              <Layers className="w-4 h-4 text-cyan-400" /> Active Processes ({projects.length})
+              <Layers className="w-4 h-4 text-cyan-400" /> Workspace Projects ({projects.length})
             </h3>
-            <span className="text-xs px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-mono">Port 3000 Active</span>
+            <span className="text-xs px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-mono">No runtime launched</span>
           </div>
 
           <div className="flex flex-col gap-2 overflow-y-auto max-h-80">
@@ -142,14 +142,14 @@ export const RuntimeDashboard: React.FC = () => {
 
                 <div className="flex items-center justify-between mt-2 text-xs text-slate-400 font-mono">
                   <span>Framework: {p.framework}</span>
-                  <span>Port: {p.port}</span>
+                  <span>Port: {p.port || 'Not launched'}</span>
                 </div>
 
                 {selectedProjectId === p.projectId && (
                   <div className="flex items-center gap-2 mt-3 pt-2 border-t border-slate-800">
                     <button
                       onClick={(e) => { e.stopPropagation(); handleStart(p.projectId); }}
-                      disabled={p.state === 'running'}
+                      disabled={p.state === 'running' || p.state === 'starting'}
                       className="px-2.5 py-1 text-xs rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white flex items-center gap-1 font-medium transition"
                     >
                       <Play className="w-3 h-3" /> Start
@@ -176,15 +176,15 @@ export const RuntimeDashboard: React.FC = () => {
           {/* Autonomous Recovery Shield Panel */}
           <div className="mt-auto bg-slate-950 border border-slate-800/80 rounded-lg p-3 text-xs">
             <div className="flex items-center gap-2 text-emerald-400 font-bold mb-1">
-              <ShieldCheck className="w-4 h-4" /> Autonomous Recovery Engine
+              <ShieldCheck className="w-4 h-4" /> Syntax-check Recovery Heuristic
             </div>
             <p className="text-slate-400">
-              Monitors compilation logs and AST checks. Automatically applies safe syntax and structural fixes upon crash detection.
+              Checks bracket balance only; it is not a compiler. Any automated repair is limited to a transaction-backed structural heuristic and requires execution context.
             </p>
           </div>
         </div>
 
-        {/* Real-time Execution Stream Logs */}
+        {/* Workspace Validation Logs (simulation) */}
         <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col gap-3 font-mono">
           <div className="flex items-center justify-between pb-2 border-b border-slate-800">
             <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2 font-sans">
