@@ -28,6 +28,7 @@ test('local model resolution auto-selects an installed model and supports exact 
   assert.equal(resolveOllamaModel('ollama-local', discovery.discoveredModels), 'llama3.2:latest');
   assert.equal(resolveOllamaModel('qwen2.5:7b-instruct-q4_K_M', discovery.discoveredModels), 'qwen2.5:7b-instruct-q4_K_M');
   assert.equal(resolveOllamaModel('llama3.2', discovery.discoveredModels), 'llama3.2:latest');
+  assert.equal(resolveOllamaModel('ollama:llama3.2:latest', discovery.discoveredModels), 'llama3.2:latest');
 });
 
 test('local model resolution fails clearly when no model is installed or requested model is missing', () => {
