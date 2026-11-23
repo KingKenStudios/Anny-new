@@ -17,25 +17,32 @@ test('runtime platform default state does not claim a real process or telemetry'
   assert.doesNotMatch(runtimePlatform.getLogs(project!.projectId).map(log => log.message).join('\n'), /dev server listening on http/i);
 });
 
-test('starting a workspace runs only structural validation and reports simulation mode', async () => {
+test('starting a workspace reports only simulated state after structural validation', async () => {
   const projectId = 'test-runtime-simulation-' + Date.now();
-  const vfs = (await import('./workspaceManager')).WorkspaceManager.getInstance().getVFS();
-  const started = runtimePlatform.startProject(projectId, 'Test Runtime', vfs);
-  assert.equal(started.executionMode, 'SIMULATED');
-  assert.equal(started.metrics.pid, null);
-  assert.equal(started.port, 0);
+  const manager = (await import('./workspaceManager')).WorkspaceManager.getInstance();
+  const originalCompile = manager.compileWorkspace.bind(manager);
+  manager.compileWorkspace = () => ({ success: true, errors: [], warnings: [], buildTimeMs: 1 });
 
-  await new Promise(resolve => setTimeout(resolve, 500));
-  const result = runtimePlatform.getProjects().find(item => item.projectId === projectId);
-  assert.ok(result);
-  assert.equal(result!.executionMode, 'SIMULATED');
-  assert.equal(result!.metrics.pid, null);
-  assert.equal(result!.metrics.cpuUsagePct, null);
-  assert.equal(result!.metrics.memoryUsageMb, null);
-  assert.equal(result!.metrics.listeningPort, null);
-  if (result!.state === 'simulated') {
+  try {
+    const vfs = manager.getVFS();
+    const started = runtimePlatform.startProject(projectId, 'Test Runtime', vfs);
+    assert.equal(started.executionMode, 'SIMULATED');
+    assert.equal(started.metrics.pid, null);
+    assert.equal(started.port, 0);
+
+    await new Promise(resolve => setTimeout(resolve, 350));
+    const result = runtimePlatform.getProjects().find(item => item.projectId === projectId);
+    assert.ok(result);
+    assert.equal(result!.executionMode, 'SIMULATED');
+    assert.equal(result!.state, 'simulated');
+    assert.equal(result!.metrics.pid, null);
+    assert.equal(result!.metrics.cpuUsagePct, null);
+    assert.equal(result!.metrics.memoryUsageMb, null);
+    assert.equal(result!.metrics.listeningPort, null);
     assert.equal(result!.metrics.healthStatus, 'degraded');
+    assert.doesNotMatch(runtimePlatform.getLogs(projectId).map(log => log.message).join('\\n'), /dev server listening on http/i);
+    runtimePlatform.stopProject(projectId);
+  } finally {
+    manager.compileWorkspace = originalCompile;
   }
-  assert.doesNotMatch(runtimePlatform.getLogs(projectId).map(log => log.message).join('\n'), /dev server listening on http/i);
-  runtimePlatform.stopProject(projectId);
 });
