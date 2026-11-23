@@ -57,6 +57,7 @@ export interface UpsertProjectInput {
   buildLogs?: string[];
   lastError?: string | null;
   bumpVersion?: boolean;
+  isAdmin?: boolean;
 }
 
 const VALID_PROJECT_ID_REGEX = /^[a-zA-Z0-9_-]{1,128}$/;
@@ -102,6 +103,7 @@ export class ProjectPersistenceService {
   private records: Map<string, PersistedProjectRecord> = new Map();
   private pool: any = null;
   private pgSchemaReady = false;
+  private projectWriteLocks: Map<string, Promise<void>> = new Map();
 
   private constructor(customStorePath?: string) {
     this.storePath = customStorePath || this.resolveDefaultStorePath();
@@ -232,6 +234,20 @@ export class ProjectPersistenceService {
     }
   }
 
+  private async acquireProjectWriteLock(projectId: string): Promise<() => void> {
+    const previous = this.projectWriteLocks.get(projectId) || Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>(resolve => { release = resolve; });
+    this.projectWriteLocks.set(projectId, current);
+    await previous;
+    return () => {
+      if (this.projectWriteLocks.get(projectId) === current) {
+        this.projectWriteLocks.delete(projectId);
+      }
+      release();
+    };
+  }
+
   public async upsertProject(input: UpsertProjectInput): Promise<PersistedProjectRecord> {
     if (!isValidProjectId(input.projectId)) {
       throw new Error('INVALID_PROJECT_ID');
@@ -242,8 +258,13 @@ export class ProjectPersistenceService {
       throw new Error('MISSING_PROJECT_OWNER');
     }
 
-    const existing = await this.getProjectById(cleanId);
-    const now = new Date().toISOString();
+    const releaseProjectLock = await this.acquireProjectWriteLock(cleanId);
+    try {
+      const existing = await this.getProjectById(cleanId);
+      if (existing && existing.ownerUserId !== owner && !input.isAdmin) {
+        throw new Error('FORBIDDEN_PROJECT_OWNERSHIP');
+      }
+      const now = new Date().toISOString();
     const incomingFiles = input.files !== undefined ? sanitizeProjectFilesMap(input.files) : undefined;
     const files = incomingFiles !== undefined ? incomingFiles : existing?.files || {};
     const nextVersion = existing
@@ -287,48 +308,57 @@ export class ProjectPersistenceService {
       updated_at: now,
     };
 
-    this.records.set(cleanId, record);
-    this.saveToDisk();
-
-    if (await this.ensurePgSchema()) {
-      try {
-        await this.pool.query(
-          `INSERT INTO anny_projects (
-            project_id, owner_user_id, session_id, name, description, project_type, category,
-            model, status, version, build_status, preview_status, files, manifest, build_logs, last_error,
-            created_at, updated_at
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14::jsonb,$15::jsonb,$16,$17,$18)
-          ON CONFLICT (project_id) DO UPDATE SET
-            session_id=$3, name=$4, description=$5, project_type=$6, category=$7,
-            model=$8, status=$9, version=$10, build_status=$11, preview_status=$12,
-            files=$13::jsonb, manifest=$14::jsonb, build_logs=$15::jsonb, last_error=$16, updated_at=$18`,
-          [
-            record.projectId,
-            record.ownerUserId,
-            record.sessionId || null,
-            record.name,
-            record.description,
-            record.projectType,
-            record.category,
-            record.model,
-            record.status,
-            record.version,
-            record.buildStatus,
-            record.previewStatus,
-            JSON.stringify(record.files),
-            record.manifest ? JSON.stringify(record.manifest) : null,
-            JSON.stringify(record.buildLogs),
-            record.lastError || null,
-            record.createdAt,
-            record.updatedAt,
-          ]
-        );
-      } catch (err: any) {
-        console.warn('[ProjectPersistence] Postgres upsert warning (saved to disk):', err?.message || err);
+      if (await this.ensurePgSchema()) {
+        try {
+          const result = await this.pool.query(
+            `INSERT INTO anny_projects (
+              project_id, owner_user_id, session_id, name, description, project_type, category,
+              model, status, version, build_status, preview_status, files, manifest, build_logs, last_error,
+              created_at, updated_at
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14::jsonb,$15::jsonb,$16,$17,$18)
+            ON CONFLICT (project_id) DO UPDATE SET
+              session_id=$3, name=$4, description=$5, project_type=$6, category=$7,
+              model=$8, status=$9, version=$10, build_status=$11, preview_status=$12,
+              files=$13::jsonb, manifest=$14::jsonb, build_logs=$15::jsonb, last_error=$16, updated_at=$18
+            WHERE anny_projects.owner_user_id = EXCLUDED.owner_user_id OR $19::boolean
+            RETURNING project_id`,
+            [
+              record.projectId,
+              record.ownerUserId,
+              record.sessionId || null,
+              record.name,
+              record.description,
+              record.projectType,
+              record.category,
+              record.model,
+              record.status,
+              record.version,
+              record.buildStatus,
+              record.previewStatus,
+              JSON.stringify(record.files),
+              record.manifest ? JSON.stringify(record.manifest) : null,
+              JSON.stringify(record.buildLogs),
+              record.lastError || null,
+              record.createdAt,
+              record.updatedAt,
+              Boolean(input.isAdmin),
+            ]
+          );
+          if (Number(result.rowCount || 0) === 0) {
+            throw new Error('FORBIDDEN_PROJECT_OWNERSHIP');
+          }
+        } catch (err: any) {
+          if (String(err?.message || '').includes('FORBIDDEN_PROJECT_OWNERSHIP')) throw err;
+          console.warn('[ProjectPersistence] Postgres upsert warning (saved to disk):', err?.message || err);
+        }
       }
-    }
 
-    return record;
+      this.records.set(cleanId, record);
+      this.saveToDisk();
+      return record;
+    } finally {
+      releaseProjectLock();
+    }
   }
 
   public async getProjectById(projectId: string): Promise<PersistedProjectRecord | null> {
@@ -449,6 +479,7 @@ export class ProjectPersistenceService {
       buildLogs: options?.buildLogs,
       lastError: options?.lastError,
       bumpVersion: true,
+      isAdmin: options?.isAdmin,
     });
   }
 
