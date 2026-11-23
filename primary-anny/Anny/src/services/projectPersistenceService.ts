@@ -143,6 +143,7 @@ export class ProjectPersistenceService {
   public setPersistencePathForTests(filePath: string): void {
     this.storePath = path.resolve(filePath);
     this.records.clear();
+    this.previewSessions.clear();
     this.loadFromDisk();
   }
 
