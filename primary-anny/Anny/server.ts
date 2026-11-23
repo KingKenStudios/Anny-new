@@ -14,6 +14,7 @@ import * as cheerio from "cheerio";
 import { GoogleGenAI } from "@google/genai";
 import { attachLiveVisionGateway } from './src/services/liveVisionGateway.ts';
 import { creativeGenerationService } from './src/services/creativeGenerationService.ts';
+import { materializeWebsiteMediaAssets } from './src/creative/websiteMediaAssetPipeline.ts';
 import { discoverRegisteredModels } from './src/core/modelRegistry.ts';
 import { aiProviderPlatform } from './src/services/aiProviderPlatform.ts';
 import { providerRegistryService } from './src/services/providerRegistryService.ts';
@@ -1156,8 +1157,30 @@ async function startServer() {
           }
         }
       }
-      const hasSynthesizedFiles = Object.keys(synthesizedFiles).length > 0;
       const isBuildRequest = reqType === 'build';
+      let websiteMediaResult: { generated: Array<{ id: string; kind: 'image' | 'video'; mimeType: string; provider: string }>; warnings: string[] } | undefined;
+      if (isBuildRequest && (synthesizedFiles['/anny-media-manifest.json'] || synthesizedFiles['/public/anny-media-manifest.json'])) {
+        updateLivePipelineProgress(reqExecId, verifiedUserId, {
+          stage: 'generating',
+          message: 'Generating and validating requested website visuals...',
+          progressPct: 82,
+          status: 'running',
+        });
+        const materialized = await materializeWebsiteMediaAssets(synthesizedFiles, {
+          ownerUserId: verifiedUserId,
+          ownerOrgId: req.authUser?.companyId || 'personal',
+          offlineOnly: providerRegistryService.getExecutionPolicy().mode === 'OFFLINE_ONLY',
+          onProgress: (message) => updateLivePipelineProgress(reqExecId, verifiedUserId, {
+            stage: 'generating', message, progressPct: 84, status: 'running',
+          }),
+        });
+        synthesizedFiles = materialized.files;
+        websiteMediaResult = { generated: materialized.generated, warnings: materialized.warnings };
+        if (materialized.generated.length || materialized.warnings.length) {
+          console.info('[AnnyWebsiteMedia]', JSON.stringify(websiteMediaResult));
+        }
+      }
+      const hasSynthesizedFiles = Object.keys(synthesizedFiles).length > 0;
       if (isBuildRequest && !hasSynthesizedFiles) {
         const detailedReason =
           (kernelOutput as any)?.error ||
@@ -1316,6 +1339,10 @@ async function startServer() {
       }
 
       const normalizedResponse = formatNaturalConversation(kernelOutput.response || pipelineLog?.coding?.summary || 'Request completed.');
+      const mediaSummary = websiteMediaResult && (websiteMediaResult.generated.length || websiteMediaResult.warnings.length)
+        ? `\n\nWebsite media: ${websiteMediaResult.generated.length} asset(s) generated${websiteMediaResult.warnings.length ? `; ${websiteMediaResult.warnings.join(' ')}` : '.'}`
+        : '';
+      const responseWithMediaSummary = normalizedResponse + mediaSummary;
       const groundingSources = Array.isArray((kernelOutput as any)?.groundingSources)
         ? (kernelOutput as any).groundingSources
         : [];
@@ -1334,7 +1361,7 @@ async function startServer() {
         evaluation: pipelineLog?.evaluation,
         modelsExecuted: pipelineLog?.modelsExecuted,
         distinctModelCount: pipelineLog?.distinctModelCount,
-        response: normalizedResponse,
+        response: responseWithMediaSummary,
         sources: groundingSources,
         verificationStatus: kernelOutput.verificationStatus,
         project: persistedProjectRecord
@@ -1350,6 +1377,7 @@ async function startServer() {
             }
           : undefined,
         preview: previewSummary || undefined,
+        websiteMedia: websiteMediaResult,
       });
     } catch (err: any) {
       console.error("[AnnyCorePipeline] Execution failed:", err.message);
