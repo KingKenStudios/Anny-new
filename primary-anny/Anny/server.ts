@@ -1421,9 +1421,10 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error("[AnnyCorePipeline] Execution failed:", err.message);
-      return res.status(500).json({
+      const message = String(err?.message || 'Pipeline execution failed');
+      return res.status(message === 'FORBIDDEN_PROJECT_OWNERSHIP' ? 403 : 500).json({
         success: false,
-        error: err.message || 'Pipeline execution failed'
+        error: message
       });
     }
   });
@@ -1531,7 +1532,8 @@ async function startServer() {
 
       return res.json({ success: true, project: saved });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err?.message || 'Failed to register project' });
+      const message = String(err?.message || 'Failed to register project');
+      return res.status(message === 'FORBIDDEN_PROJECT_OWNERSHIP' ? 403 : 500).json({ success: false, error: message });
     }
   });
 
