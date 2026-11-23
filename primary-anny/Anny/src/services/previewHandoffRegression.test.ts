@@ -198,5 +198,50 @@ test('ANNY Preview Handoff & Project Restoration Regression Tests (A - I)', asyn
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  await t.test('K: controlled-promise save orchestration concurrency and isolation', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'anny-controlled-test-'));
+    const storeFile = path.join(tmpDir, 'projects.json');
+    projectPersistenceService.setPersistencePathForTests(storeFile);
+
+    const projA = 'proj_ctrl_a';
+    const projB = 'proj_ctrl_b';
+
+    await projectPersistenceService.upsertProject({
+      projectId: projA,
+      ownerUserId: 'user_1',
+      name: 'Project A',
+      files: { '/src/A.tsx': 'v1' },
+    });
+    await projectPersistenceService.upsertProject({
+      projectId: projB,
+      ownerUserId: 'user_1',
+      name: 'Project B',
+      files: { '/src/B.tsx': 'v1' },
+    });
+
+    let resolveA: (val: any) => void = () => {};
+    const promiseA = new Promise((res) => { resolveA = res; });
+
+    const saveOpA = (async () => {
+      await promiseA;
+      return projectPersistenceService.updateProjectFiles(projA, 'user_1', { '/src/A.tsx': 'v2_updated' });
+    })();
+
+    const saveOpB = projectPersistenceService.updateProjectFiles(projB, 'user_1', { '/src/B.tsx': 'v2_b' });
+
+    resolveA(true);
+    await Promise.all([saveOpA, saveOpB]);
+
+    const finalA = await projectPersistenceService.getProjectById(projA);
+    const finalB = await projectPersistenceService.getProjectById(projB);
+
+    assert.equal(finalA?.files['/src/A.tsx'], 'v2_updated');
+    assert.equal(finalB?.files['/src/B.tsx'], 'v2_b');
+    assert.equal(finalA?.files['/src/B.tsx'], undefined);
+    assert.equal(finalB?.files['/src/A.tsx'], undefined);
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 });
 

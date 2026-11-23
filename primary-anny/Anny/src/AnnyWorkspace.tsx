@@ -1675,10 +1675,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       try {
         do {
           projectDirtyRef.current.set(targetProjectId, false);
-          const controllerFiles = projectPreviewController.extractFilesFromVFS(targetProjectId);
-          const vfsFilesMap = Object.keys(controllerFiles).length > 0
-            ? controllerFiles
-            : WorkspaceManager.getInstance().getWorkspaceVFS(targetProjectId).getAllFilesMap();
+          const vfsFilesMap = projectPreviewController.extractFilesFromVFS(targetProjectId);
 
           const cleanFiles: Record<string, string> = {};
           for (const [k, v] of Object.entries(vfsFilesMap) as [string, string][]) {
@@ -1686,6 +1683,9 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
               cleanFiles[k] = v;
             }
           }
+
+          const knownMeta = projectPreviewController.getProjectMetaById(targetProjectId);
+          const targetProjectName = (projectMetaState.projectId === targetProjectId ? projectMetaState.name : null) || knownMeta?.name || targetProjectId;
 
           setProjectSaveStatuses((prev) => ({
             ...prev,
@@ -1699,7 +1699,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           const res = await fetchWithAuth(`/api/anny/projects/${encodeURIComponent(targetProjectId)}/files`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ files: cleanFiles, name: projectMetaState.name }),
+            body: JSON.stringify({ files: cleanFiles, name: targetProjectName }),
           });
           const data = await res.json().catch(() => null);
 
