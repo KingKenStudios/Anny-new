@@ -332,11 +332,25 @@ export class QdrantPlatform {
     filterSessionId?: string,
     filterOwnerUserId?: string
   ): Promise<SearchResult[]> {
-    if (collectionName === 'conversation_memory' && !filterSessionId) {
-      throw new Error('SESSION_SCOPE_REQUIRED: Conversation memory search must specify the owning session ID.');
+    if (collectionName === 'conversation_memory') {
+      const sessionOwner = typeof filterSessionId === 'string' ? filterSessionId.trim() : '';
+      if (!sessionOwner) {
+        throw new Error('SESSION_SCOPE_REQUIRED: Conversation memory search must specify the owning session ID.');
+      }
+      if (sessionOwner.length > 256 || /[\\u0000-\\u001f\\u007f]/.test(sessionOwner)) {
+        throw new Error('SESSION_SCOPE_INVALID: Session ID must be a valid value of at most 256 characters.');
+      }
+      filterSessionId = sessionOwner;
     }
-    if (['conversation_memory', 'knowledge_base'].includes(collectionName) && !filterOwnerUserId) {
-      throw new Error('MEMORY_OWNER_SCOPE_REQUIRED: Tenant-owned memory search must specify the authenticated owner user ID.');
+    if (['conversation_memory', 'knowledge_base'].includes(collectionName)) {
+      const owner = typeof filterOwnerUserId === 'string' ? filterOwnerUserId.trim() : '';
+      if (!owner) {
+        throw new Error('MEMORY_OWNER_SCOPE_REQUIRED: Tenant-owned memory search must specify the authenticated owner user ID.');
+      }
+      if (owner.length > 128 || /[\\u0000-\\u001f\\u007f]/.test(owner)) {
+        throw new Error('MEMORY_OWNER_SCOPE_INVALID: Owner user ID must be a valid value of at most 128 characters.');
+      }
+      filterOwnerUserId = owner;
     }
     this.validateCollectionName(collectionName);
     const safeLimit = Math.max(1, Math.min(100, Math.floor(limit) || 5));
