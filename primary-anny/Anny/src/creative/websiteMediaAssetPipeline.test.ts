@@ -15,8 +15,8 @@ test('website media manifest is materialized into VFS-safe data URLs and removed
     videoGenerator: async () => ({ dataUrl: 'data:video/mp4;base64,aGVsbG8=', mimeType: 'video/mp4', provider: 'mock-video' }),
   });
   assert.equal(result.files['/anny-media-manifest.json'], undefined);
-  assert.match(result.files['/src/App.tsx'], /data:image\\/png;base64,aGVsbG8=/);
-  assert.match(result.files['/src/App.tsx'], /data:video\\/mp4;base64,aGVsbG8=/);
+  assert.match(result.files['/src/App.tsx'], /data:image\/png;base64,aGVsbG8=/);
+  assert.match(result.files['/src/App.tsx'], /data:video\/mp4;base64,aGVsbG8=/);
   assert.deepEqual(result.generated.map(a => a.kind), ['image', 'video']);
   assert.deepEqual(result.warnings, []);
 });
@@ -26,7 +26,7 @@ test('website media provider failure is non-fatal and replaces image token with 
     '/anny-media-manifest.json': JSON.stringify({ assets: [{ id: 'failed-image', kind: 'image', prompt: 'photo' }] }),
     '/src/App.tsx': 'const image = "__ANNY_MEDIA:failed-image__";',
   }, { imageGenerator: async () => { throw new Error('provider offline'); } });
-  assert.match(result.files['/src/App.tsx'], /^const image = "data:image\\/svg\\+xml;base64,/);
+  assert.match(result.files['/src/App.tsx'], /^const image = "data:image\/svg\+xml;base64,/);
   assert.equal(result.generated.length, 0);
   assert.match(result.warnings[0], /provider offline/);
 });
@@ -56,6 +56,6 @@ test('caps asset count and replaces unresolved media tokens safely', async () =>
   });
   assert.equal(imageCalls, 3);
   assert.equal(videoCalls, 1);
-  assert.match(result.files['/src/App.tsx'], /data:image\\/svg\\+xml;base64,/);
+  assert.match(result.files['/src/App.tsx'], /data:image\/svg\+xml;base64,/);
   assert.ok(result.warnings.some(w => /limited|capped/i.test(w)));
 });
