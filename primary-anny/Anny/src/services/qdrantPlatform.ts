@@ -223,7 +223,10 @@ export class QdrantPlatform {
     const doc: VectorDocument = {
       id: globalThis.crypto?.randomUUID
         ? globalThis.crypto.randomUUID()
-        : `vec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`,
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, char => {
+            const random = Math.floor(Math.random() * 16);
+            return (char === 'x' ? random : (random & 0x3) | 0x8).toString(16);
+          }),
       vector,
       payload: { content, createdAt: new Date().toISOString(), ...payload }
     };
@@ -273,16 +276,22 @@ export class QdrantPlatform {
       if (filterCategory) must.push({ key: 'category', match: { value: filterCategory } });
       if (filterSessionId) must.push({ key: 'sessionId', match: { value: filterSessionId } });
       if (filterOwnerUserId) must.push({ key: 'metadata.ownerUserId', match: { value: filterOwnerUserId } });
-      const response = await this.request(`/collections/${this.validateCollectionName(collectionName)}/points/search`, {
-        method: 'POST',
-        body: JSON.stringify({
-          vector: queryVector,
-          limit: safeLimit,
-          with_payload: true,
-          with_vector: false,
-          ...(must.length ? { filter: { must } } : {})
-        })
-      });
+      let response: any;
+      try {
+        response = await this.request(`/collections/${this.validateCollectionName(collectionName)}/points/search`, {
+          method: 'POST',
+          body: JSON.stringify({
+            vector: queryVector,
+            limit: safeLimit,
+            with_payload: true,
+            with_vector: false,
+            ...(must.length ? { filter: { must } } : {})
+          })
+        });
+      } catch (error: any) {
+        if (error?.status === 404) return [];
+        throw error;
+      }
       const points = Array.isArray(response?.result) ? response.result : [];
       return points.map((point: any) => ({
         id: String(point.id),
