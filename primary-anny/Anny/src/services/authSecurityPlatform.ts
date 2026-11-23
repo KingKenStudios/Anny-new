@@ -309,7 +309,9 @@ export class AuthSecurityPlatform {
     const existingRecord = await postgresPlatform.findAuthSessionByRefreshHash(oldHash);
 
     // Development without PostgreSQL retains the explicit in-process session behavior.
-    if (!existingRecord) return this.refreshSession(refreshToken);
+    if (!existingRecord) {
+      return postgresPlatform.isDurableDatabaseAvailable() ? null : this.refreshSession(refreshToken);
+    }
 
     const replacement = this.createToken(
       String(existingRecord.user_id),
