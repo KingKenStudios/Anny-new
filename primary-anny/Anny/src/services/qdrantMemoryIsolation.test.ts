@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { aiProviderPlatform } from './aiProviderPlatform';
-import { qdrantPlatform } from './qdrantPlatform';
+import { QdrantPlatform, qdrantPlatform } from './qdrantPlatform';
 
 test('conversation memory is session-scoped and never fabricates embeddings', async () => {
   const originalEmbeddings = aiProviderPlatform.embeddings.bind(aiProviderPlatform);
@@ -14,13 +14,13 @@ test('conversation memory is session-scoped and never fabricates embeddings', as
     await qdrantPlatform.upsertDocument(
       'conversation_memory',
       'Private memory belonging to session A',
-      { sessionId: sessionA, category: 'isolation-test' },
+      { sessionId: sessionA, category: 'isolation-test', metadata: { ownerUserId: 'owner-a' } },
       [1, 0]
     );
     await qdrantPlatform.upsertDocument(
       'conversation_memory',
       'Private memory belonging to session B',
-      { sessionId: sessionB, category: 'isolation-test' },
+      { sessionId: sessionB, category: 'isolation-test', metadata: { ownerUserId: 'owner-b' } },
       [1, 0]
     );
 
@@ -29,7 +29,11 @@ test('conversation memory is session-scoped and never fabricates embeddings', as
       /SESSION_SCOPE_REQUIRED/
     );
 
-    const sessionAContext = await qdrantPlatform.retrieveMemoryContext(sessionA, 'recall memory');
+    await assert.rejects(
+      () => qdrantPlatform.search('conversation_memory', 'session-scoped but tenant-unscoped', 3, undefined, sessionA),
+      /MEMORY_OWNER_SCOPE_REQUIRED/
+    );
+    const sessionAContext = await qdrantPlatform.retrieveMemoryContext(sessionA, 'recall memory', 'owner-a');
     assert.match(sessionAContext, /Private memory belonging to session A/);
     assert.doesNotMatch(sessionAContext, /Private memory belonging to session B/);
 
@@ -53,4 +57,26 @@ test('conversation memory is session-scoped and never fabricates embeddings', as
   } finally {
     aiProviderPlatform.embeddings = originalEmbeddings;
   }
+});
+
+
+test('conversation memory retrieval requires an authenticated owner and isolates by both session and owner', async () => {
+  const platform = new QdrantPlatform({
+    getConfig: () => ({ qdrantUrl: '', qdrantApiKey: undefined }),
+    embed: async () => [1, 0]
+  });
+  await platform.upsertDocument('conversation_memory', 'Tenant A session memory', {
+    sessionId: 'shared-session', metadata: { ownerUserId: 'tenant-a' }
+  }, [1, 0]);
+  await platform.upsertDocument('conversation_memory', 'Tenant B session memory', {
+    sessionId: 'shared-session', metadata: { ownerUserId: 'tenant-b' }
+  }, [1, 0]);
+
+  await assert.rejects(
+    () => platform.retrieveMemoryContext('shared-session', 'recall', ''),
+    /MEMORY_OWNER_SCOPE_REQUIRED/
+  );
+  const result = await platform.retrieveMemoryContext('shared-session', 'recall', 'tenant-a');
+  assert.match(result, /Tenant A session memory/);
+  assert.doesNotMatch(result, /Tenant B session memory/);
 });
