@@ -68,6 +68,8 @@ test('preview sessions and capability URLs restore after a fresh runtime instanc
     assert.equal(first.capabilityToken, restoredAfterRestart.capabilityToken);
     assert.equal(first.previewUrl, restoredAfterRestart.previewUrl);
     assert.match(first.previewUrl, /token=[a-f0-9]{64}/);
+    assert.equal(fs.statSync(path.join(directory, 'preview-capability.key')).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(path.join(directory, 'projects.json')).mode & 0o777, 0o600);
     await assert.rejects(
       () => secondRuntime.getPreviewSessionStatus(first.previewId, 'tenant-b', false),
       /FORBIDDEN_PREVIEW_OWNERSHIP/
