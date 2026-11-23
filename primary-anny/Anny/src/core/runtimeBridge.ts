@@ -65,110 +65,75 @@ export interface IPreviewProvider {
  * Local Node.js Runtime Provider
  * Executes Node/Vite applications directly within the Cloud Run container runtime on port 3000.
  */
+/**
+ * Local Node runtime placeholder. Node exists in this host, but this adapter
+ * does not mount a VFS project, spawn a child process, or bind a port.
+ */
 export class LocalNodeRuntimeProvider implements IRuntimeProvider {
   public readonly id = 'provider_local_node';
-  public readonly name = 'Local Node.js Runtime';
+  public readonly name = 'Local Node.js Runtime (Not Implemented)';
   public readonly version = '20.11.0';
-  private logs: Map<string, string[]> = new Map();
 
   public async isAvailable(): Promise<boolean> {
-    // Verified local node process environment
-    return typeof process !== 'undefined' && true;
+    return false;
   }
 
   public async execute(options: ExecutionOptions): Promise<ExecutionResult> {
-    const projectLogs: string[] = [
-      `[${new Date().toLocaleTimeString()}] [LOCAL NODE] Spawning Node.js process for project ${options.projectId}`,
-      `[${new Date().toLocaleTimeString()}] [LOCAL NODE] Host: 0.0.0.0 | Port: ${options.port || 3000}`,
-      `[${new Date().toLocaleTimeString()}] [LOCAL NODE] Binding Vite dev server middleware...`,
-      `[${new Date().toLocaleTimeString()}] [LOCAL NODE] Server listening & ready for requests.`
-    ];
-
-    this.logs.set(options.projectId, projectLogs);
-
-    // Update capability manager
-    capabilityManager.updateStatus(this.id, {
-      status: 'active',
-      isConnected: true,
-      lastVerified: new Date().toLocaleTimeString()
-    });
-
     return {
-      success: true,
+      success: false,
       providerId: this.id,
       providerName: this.name,
-      processId: `node_pid_${Math.floor(Math.random() * 89999 + 10000)}`,
-      port: options.port || 3000,
-      logs: projectLogs,
-      timestamp: new Date().toLocaleTimeString()
+      logs: [
+        `[LOCAL NODE] Runtime execution for project ${options.projectId} is not implemented.`,
+        '[LOCAL NODE] No process was spawned and no port was opened.'
+      ],
+      errorMessage: 'REAL_RUNTIME_UNAVAILABLE: This adapter is a placeholder; it does not launch project processes.',
+      timestamp: new Date().toISOString()
     };
   }
 
-  public async stop(projectId: string): Promise<boolean> {
-    const logs = this.logs.get(projectId) || [];
-    logs.push(`[${new Date().toLocaleTimeString()}] [LOCAL NODE] Gracefully terminated process.`);
-    this.logs.set(projectId, logs);
-    return true;
+  public async stop(_projectId: string): Promise<boolean> {
+    return false;
   }
 
-  public getLogs(projectId: string): string[] {
-    return this.logs.get(projectId) || [];
+  public getLogs(_projectId: string): string[] {
+    return [];
   }
 }
 
 /**
- * Sandpack Browser Runtime Provider
- * In-browser transpilation and execution fallback.
+ * Browser runtime placeholder. This is not a WebContainer/Sandpack compiler;
+ * actual isolated VFS preview is handled by the standalone preview runner.
  */
 export class SandpackRuntimeProvider implements IRuntimeProvider {
   public readonly id = 'provider_sandpack';
-  public readonly name = 'Sandpack Browser Engine';
+  public readonly name = 'Browser Runtime (Not Implemented)';
   public readonly version = '2.6.0';
-  private logs: Map<string, string[]> = new Map();
 
   public async isAvailable(): Promise<boolean> {
-    return typeof window !== 'undefined';
+    return false;
   }
 
   public async execute(options: ExecutionOptions): Promise<ExecutionResult> {
-    const projectLogs: string[] = [
-      `[${new Date().toLocaleTimeString()}] [SANDPACK] Initializing browser-side WebContainer bundler...`,
-      `[${new Date().toLocaleTimeString()}] [SANDPACK] Mounting virtual files into browser memory...`,
-      `[${new Date().toLocaleTimeString()}] [SANDPACK] In-browser React/Vite transpilation complete.`
-    ];
-
-    this.logs.set(options.projectId, projectLogs);
-
-    capabilityManager.updateStatus(this.id, {
-      status: 'active',
-      isConnected: true,
-      lastVerified: new Date().toLocaleTimeString()
-    });
-
     return {
-      success: true,
+      success: false,
       providerId: this.id,
       providerName: this.name,
-      processId: `sandpack_worker_${Date.now()}`,
-      port: 3000,
-      logs: projectLogs,
-      timestamp: new Date().toLocaleTimeString()
+      logs: [`[BROWSER RUNTIME] No real WebContainer/Sandpack runtime is attached for ${options.projectId}.`],
+      errorMessage: 'REAL_RUNTIME_UNAVAILABLE: Use the separate isolated VFS preview pipeline; this adapter does not bundle or execute projects.',
+      timestamp: new Date().toISOString()
     };
   }
 
-  public async stop(projectId: string): Promise<boolean> {
-    return true;
+  public async stop(_projectId: string): Promise<boolean> {
+    return false;
   }
 
-  public getLogs(projectId: string): string[] {
-    return this.logs.get(projectId) || [];
+  public getLogs(_projectId: string): string[] {
+    return [];
   }
 }
 
-/**
- * Docker Runtime Provider
- * Containerized execution environment.
- */
 export class DockerRuntimeProvider implements IRuntimeProvider {
   public readonly id = 'provider_docker';
   public readonly name = 'Docker Container Engine';
@@ -208,41 +173,35 @@ export class DockerRuntimeProvider implements IRuntimeProvider {
 /**
  * Remote Runtime Provider (Placeholder Interface for External Cloud Run Services)
  */
+/**
+ * Remote runtime placeholder. No remote endpoint or authenticated job API is
+ * configured in this adapter.
+ */
 export class RemoteRuntimeProvider implements IRuntimeProvider {
   public readonly id = 'provider_remote';
-  public readonly name = 'Remote Cloud Run Engine';
+  public readonly name = 'Remote Runtime (Not Implemented)';
   public readonly version = '1.0.0';
 
   public async isAvailable(): Promise<boolean> {
-    return true;
+    return false;
   }
 
   public async execute(options: ExecutionOptions): Promise<ExecutionResult> {
-    const logs = [
-      `[REMOTE ENGINE] Connected to Cloud Run cluster endpoint...`,
-      `[REMOTE ENGINE] Provisioned stateless container instance for project ${options.projectId}`
-    ];
-
-    capabilityManager.updateStatus(this.id, {
-      status: 'standby',
-      isConnected: true,
-      lastVerified: new Date().toLocaleTimeString()
-    });
-
     return {
-      success: true,
+      success: false,
       providerId: this.id,
       providerName: this.name,
-      logs,
-      timestamp: new Date().toLocaleTimeString()
+      logs: [`[REMOTE ENGINE] No authenticated remote runtime endpoint is configured for project ${options.projectId}.`],
+      errorMessage: 'REMOTE_RUNTIME_UNCONFIGURED: No remote execution endpoint or job API is implemented.',
+      timestamp: new Date().toISOString()
     };
   }
 
-  public async stop(): Promise<boolean> {
-    return true;
+  public async stop(_projectId: string): Promise<boolean> {
+    return false;
   }
 
-  public getLogs(): string[] {
+  public getLogs(_projectId: string): string[] {
     return [];
   }
 }
@@ -263,9 +222,9 @@ export class ViteIframePreviewProvider implements IPreviewProvider {
     return {
       providerId: this.id,
       providerName: this.name,
-      activeUrl: typeof window !== 'undefined' ? `${window.location.origin}?preview=standalone&project=${projectId}` : `http://localhost:${port}?preview=standalone&project=${projectId}`,
+      activeUrl: typeof window !== 'undefined' ? `${window.location.origin}?preview=standalone&project=${encodeURIComponent(projectId)}` : '',
       mode: 'vite_iframe',
-      isLive: true
+      isLive: false // Route exists; target artifact render/load has not been independently verified.
     };
   }
 }
@@ -301,7 +260,7 @@ export class NextJsPreviewProvider implements IPreviewProvider {
     return {
       providerId: this.id,
       providerName: this.name,
-      activeUrl: `http://localhost:${port}`,
+      activeUrl: '',
       mode: 'nextjs_preview',
       // No real Next.js dev server is spawned in this client-side VFS architecture —
       // do not claim this URL is live when nothing is listening on it.
