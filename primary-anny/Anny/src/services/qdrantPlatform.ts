@@ -306,7 +306,7 @@ export class QdrantPlatform {
   public async putKeywordChunk(chunk: StoredKeywordChunk): Promise<boolean> {
     const ownerUserId = String(chunk?.ownerUserId || '').trim();
     if (!ownerUserId) throw new Error('MEMORY_OWNER_SCOPE_REQUIRED: Keyword ingestion requires an authenticated owner user ID.');
-    if (ownerUserId.length > 128 || /[\\u0000-\\u001f\\u007f]/.test(ownerUserId)) {
+    if (ownerUserId.length > 128 || /[\u0000-\u001f\u007f]/.test(ownerUserId)) {
       throw new Error('MEMORY_OWNER_SCOPE_INVALID: Owner user ID must be a valid value of at most 128 characters.');
     }
     if (!this.localStore.isAvailable()) return false;
@@ -317,7 +317,7 @@ export class QdrantPlatform {
   public async getKeywordChunks(ownerUserId: string): Promise<StoredKeywordChunk[]> {
     const owner = String(ownerUserId || '').trim();
     if (!owner) throw new Error('MEMORY_OWNER_SCOPE_REQUIRED: Keyword retrieval requires an authenticated owner user ID.');
-    if (owner.length > 128 || /[\\u0000-\\u001f\\u007f]/.test(owner)) {
+    if (owner.length > 128 || /[\u0000-\u001f\u007f]/.test(owner)) {
       throw new Error('MEMORY_OWNER_SCOPE_INVALID: Owner user ID must be a valid value of at most 128 characters.');
     }
     if (!this.localStore.isAvailable()) return [];
