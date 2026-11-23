@@ -356,14 +356,16 @@ export class AuthSecurityPlatform {
 
   public async revokeSessionPersistent(token: string): Promise<boolean> {
     if (!token) return false;
-    this.revokeSession(token);
-    return postgresPlatform.revokeAuthSessionByTokenHash(this.hashSessionCredential(token));
+    const localRevoked = this.revokeSession(token);
+    const durableRevoked = await postgresPlatform.revokeAuthSessionByTokenHash(this.hashSessionCredential(token));
+    return localRevoked || durableRevoked;
   }
 
   public async revokeRefreshTokenPersistent(refreshToken: string): Promise<boolean> {
     if (!refreshToken) return false;
-    this.revokeRefreshToken(refreshToken);
-    return postgresPlatform.revokeAuthSessionByRefreshHash(this.hashSessionCredential(refreshToken));
+    const localRevoked = this.revokeRefreshToken(refreshToken);
+    const durableRevoked = await postgresPlatform.revokeAuthSessionByRefreshHash(this.hashSessionCredential(refreshToken));
+    return localRevoked || durableRevoked;
   }
 
   public async revokeUserSessionsPersistent(userId: string): Promise<number> {
