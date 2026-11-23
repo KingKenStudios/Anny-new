@@ -847,7 +847,10 @@ export class PreviewRuntimeService {
       this.previewIdByProject.set(cleanProjId, previewId);
       return session;
     } catch (err: any) {
-      const msg = err?.message || 'PREVIEW_BUNDLE_FAILED';
+      const msg = String(err?.message || 'PREVIEW_BUNDLE_FAILED');
+      if (msg === 'FORBIDDEN_PREVIEW_OWNERSHIP' || msg === 'FORBIDDEN_PROJECT_OWNERSHIP') {
+        throw new Error(msg);
+      }
       await projectPersistenceService.updateProjectPreviewState(cleanProjId, 'ERROR', msg);
       throw new Error(msg);
     }
