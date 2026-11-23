@@ -13,3 +13,13 @@ test('preview route selection is not misreported as verified rendering', () => {
   assert.match(report.details, /independent render\/load evidence/i);
   assert.match(report.details, /Host application DOM is not counted/i);
 });
+
+
+test('preview router rejects unknown artifact instead of silently routing to the ANNY shell', () => {
+  const before = universalPreviewEngine.getActiveRoute();
+  assert.throws(
+    () => universalPreviewEngine.routePreview('missing-artifact-' + Date.now()),
+    /PREVIEW_ARTIFACT_NOT_FOUND/
+  );
+  assert.equal(universalPreviewEngine.getActiveRoute(), before);
+});
