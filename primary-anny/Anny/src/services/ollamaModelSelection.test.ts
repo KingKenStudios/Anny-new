@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isInstalledOllamaModel, resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
+import { isInstalledOllamaModel, isOllamaVisionModel, resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
 import type { OllamaDiscoveryResult } from './ollamaService';
 
 const discovery: OllamaDiscoveryResult = {
@@ -42,4 +42,12 @@ test('model router only treats an exact discovered Ollama model as installed', (
   const installed = discovery.discoveredModels.map(model => model.name);
   assert.equal(isInstalledOllamaModel('llama3.2:latest', installed), true);
   assert.equal(isInstalledOllamaModel('qwen2.5:72b', installed), false);
+});
+
+
+test('vision support is inferred only for known vision model families', () => {
+  assert.equal(isOllamaVisionModel('llava:7b'), true);
+  assert.equal(isOllamaVisionModel('qwen2.5-vl:7b'), true);
+  assert.equal(isOllamaVisionModel('moondream:latest'), true);
+  assert.equal(isOllamaVisionModel('qwen2.5-coder:7b'), false);
 });
