@@ -92,3 +92,8 @@ Preview capability credentials are derived with HMAC-SHA-256 from the preview id
 - In local development, ANNY creates `.anny-data/preview-capability.key` with mode `0600`, keeps the local data directory at mode `0700`, and reuses the key across restarts. The entire `.anny-data/` directory is Git-ignored.
 - If PostgreSQL is configured but the durable preview-session registry is unavailable, preview status, refresh, stop, and serving return a service-unavailable response instead of trusting stale process memory.
 - Preview session ownership is checked against the owning persisted project.
+
+
+### Project deletion durability
+
+The local project store now records deletion tombstones in `.anny-data/projects.json`. A deleted project ID is excluded when the store is reloaded, preventing an old cached project snapshot from reappearing after a restart. When PostgreSQL is configured, its successful reads remain authoritative; if a PostgreSQL delete cannot be confirmed, the API reports the failure while the local tombstone prevents an offline cache from exposing the stale copy.
