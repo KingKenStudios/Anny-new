@@ -75,6 +75,98 @@ function resolveRelativeImport(fromFile: string, specifier: string, fileSet: Set
   return candidates.some((c) => fileSet.has(c));
 }
 
+function checkCompilerSyntax(filePath: string, code: string): { valid: boolean; reason?: string } {
+  if (!/\.(tsx|jsx|ts|js)$/i.test(filePath)) return { valid: true };
+  if (filePath.endsWith('.d.ts')) return { valid: true };
+
+  // 1. Node runtime: use local esbuild.transformSync for authoritative JSX/TSX syntax verification
+  try {
+    const nodeProcess = typeof globalThis !== 'undefined' ? (globalThis as any).process : undefined;
+    if (nodeProcess?.versions?.node) {
+      const loader = filePath.endsWith('.tsx')
+        ? 'tsx'
+        : filePath.endsWith('.ts')
+          ? 'ts'
+          : filePath.endsWith('.jsx')
+            ? 'jsx'
+            : 'js';
+      const dynamicReq =
+        typeof require === 'function'
+          ? require
+          : (globalThis as any).__annyValidatorRequire ||
+            (() => {
+              const mod = Function('return import("node:module")');
+              return mod;
+            });
+      let esbuildMod: any = (globalThis as any).__annyCachedEsbuild;
+      if (!esbuildMod) {
+        if (typeof require === 'function') {
+          esbuildMod = require('esbuild');
+        } else {
+          const builtinMod = nodeProcess.getBuiltinModule?.('node:module') || nodeProcess.mainModule?.require?.('node:module');
+          if (builtinMod?.createRequire) {
+            const req = builtinMod.createRequire(import.meta.url);
+            esbuildMod = req('esbuild');
+          }
+        }
+        if (esbuildMod) {
+          (globalThis as any).__annyCachedEsbuild = esbuildMod;
+        }
+      }
+      if (esbuildMod && typeof esbuildMod.transformSync === 'function') {
+        esbuildMod.transformSync(code, {
+          loader,
+          format: 'cjs',
+          jsx: 'transform',
+          jsxFactory: 'React.createElement',
+          jsxFragment: 'React.Fragment',
+          target: 'es2020',
+          sourcefile: filePath,
+          logLevel: 'silent',
+        });
+        return { valid: true };
+      }
+      void dynamicReq;
+    }
+  } catch (err: any) {
+    const firstErr = Array.isArray(err?.errors) && err.errors.length > 0 ? err.errors[0] : null;
+    if (firstErr && firstErr.text) {
+      const loc = firstErr.location ? `line ${firstErr.location.line}:${firstErr.location.column}` : '';
+      return {
+        valid: false,
+        reason: `JSX/TS compile error${loc ? ` at ${loc}` : ''} — ${firstErr.text}`,
+      };
+    }
+    const cleanMsg = String(err?.message || 'JSX/TS compile error')
+      .replace(/\bERROR:\s*/gi, '')
+      .split(/\r?\n/)
+      .slice(0, 2)
+      .join(' ')
+      .trim();
+    return { valid: false, reason: cleanMsg };
+  }
+
+  // 2. Browser fallback: use @babel/standalone if loaded on window
+  try {
+    const win = typeof window !== 'undefined' ? (window as any) : undefined;
+    if (win?.Babel && typeof win.Babel.transform === 'function') {
+      win.Babel.transform(code, {
+        filename: filePath,
+        presets: ['react', 'typescript'],
+      });
+      return { valid: true };
+    }
+  } catch (err: any) {
+    const cleanMsg = String(err?.message || 'JSX/TS syntax error')
+      .replace(/\bERROR:\s*/gi, '')
+      .split(/\r?\n/)[0]
+      .trim();
+    return { valid: false, reason: cleanMsg };
+  }
+
+  return { valid: true };
+}
+
 function checkBalancedDelimiters(code: string): { balanced: boolean; reason?: string } {
   let braceDepth = 0;
   let parenDepth = 0;
@@ -357,9 +449,10 @@ export function verifyGeneratedProject(
     });
   }
 
-  // 4. Relative import resolution, external dependency declarations, syntax balance, and truncation check
+  // 4. Relative import resolution, external dependency declarations, syntax balance, compiler check, and truncation check
   const brokenImports: string[] = [];
   const unbalancedFiles: string[] = [];
+  const compilerErrorFiles: string[] = [];
   const truncatedFiles: string[] = [];
   const undeclaredPackages = new Set<string>();
   const codeFiles = paths.filter((p) => /\.(tsx?|jsx?|mjs|cjs)$/i.test(p));
@@ -369,6 +462,11 @@ export function verifyGeneratedProject(
     const balance = checkBalancedDelimiters(content);
     if (!balance.balanced) {
       unbalancedFiles.push(`${filePath} (${balance.reason})`);
+    } else {
+      const compiled = checkCompilerSyntax(filePath, content);
+      if (!compiled.valid) {
+        compilerErrorFiles.push(`${filePath} (${compiled.reason})`);
+      }
     }
     if (/\/\/\s*\.\.\.\s*(?:rest of|remaining|omitted|truncated|existing code)/i.test(content)) {
       truncatedFiles.push(filePath);
@@ -420,13 +518,14 @@ export function verifyGeneratedProject(
   pushCheck({
     id: 'syntax-balance',
     label: 'Source Brace & Syntax Balance',
-    passed: unbalancedFiles.length === 0 && truncatedFiles.length === 0,
+    passed: unbalancedFiles.length === 0 && compilerErrorFiles.length === 0 && truncatedFiles.length === 0,
     severity: 'error',
     detail:
-      unbalancedFiles.length === 0 && truncatedFiles.length === 0
-        ? 'All generated TypeScript/JSX files have balanced block structure with no truncation stubs.'
+      unbalancedFiles.length === 0 && compilerErrorFiles.length === 0 && truncatedFiles.length === 0
+        ? 'All generated TypeScript/JSX files have balanced block structure and valid JSX/TS compilation with no truncation stubs.'
         : [
             unbalancedFiles.length > 0 ? `Unbalanced syntax in: ${unbalancedFiles.join(', ')}` : '',
+            compilerErrorFiles.length > 0 ? `Unbalanced/invalid JSX or TypeScript syntax in: ${compilerErrorFiles.join('; ')}` : '',
             truncatedFiles.length > 0 ? `Truncated placeholder comments in: ${truncatedFiles.join(', ')}` : '',
           ]
             .filter(Boolean)
@@ -518,6 +617,39 @@ export function verifyGeneratedProject(
       ? 'Verified responsive breakpoints or adaptive fluid CSS grid rules.'
       : 'No responsive media queries or adaptive layout rules detected.',
   });
+
+  // 8. CSS Stylesheet & Styling System Check
+  const hasCssOrTailwind =
+    combinedCss.trim().length > 0 ||
+    /\bclassName\s*=\s*["'`{]/.test(combinedUi) ||
+    /<style[\s>]/i.test(files['/index.html'] || '');
+
+  if (!options.allowCodeOnly) {
+    pushCheck({
+      id: 'css-styles',
+      label: 'Stylesheet & Visual System Loaded',
+      passed: hasCssOrTailwind,
+      severity: 'warning',
+      detail: hasCssOrTailwind
+        ? 'Verified CSS stylesheets or component className styling system.'
+        : 'No CSS stylesheet or component styling detected.',
+    });
+
+    // 9. Navigation & Multi-Section Structure Check
+    const hasNavigationStructure =
+      /<(nav|header|footer|main|section)\b/i.test(combinedUi + '\n' + (files['/index.html'] || '')) ||
+      /\b(activeTab|activePage|currentPage|activeSection|view|route)\b/i.test(combinedUi);
+
+    pushCheck({
+      id: 'navigation-structure',
+      label: 'Semantic Navigation & Multi-Section Architecture',
+      passed: hasNavigationStructure,
+      severity: 'warning',
+      detail: hasNavigationStructure
+        ? 'Verified semantic navigation landmarks (<nav>, <header>, <section>, <footer>) and multi-view state.'
+        : 'No semantic navigation or multi-section landmarks detected.',
+    });
+  }
 
   const passedCount = checks.filter((c) => c.passed).length;
   const score = Math.round((passedCount / Math.max(1, checks.length)) * 100);

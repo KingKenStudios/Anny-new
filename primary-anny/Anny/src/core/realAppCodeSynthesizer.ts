@@ -680,7 +680,11 @@ ARCHITECTURE & QUALITY REQUIREMENTS
    - ${classification.industryStyle}
    - NEVER force ANNY's dark neon theme onto customer websites unless explicitly requested.
    - Zero Lorem Ipsum, zero TODO/FIXME stubs, zero dead buttons, zero broken image links (use crisp inline SVG illustrations/diagrams or valid data URIs where visuals are needed so nothing renders as a broken image icon).
-6. SECURITY:
+6. ARCHETYPE-SPECIFIC FUNCTIONAL COMPLETENESS:
+   - For E-Commerce Websites (ecommerce): Include a complete storefront with Homepage hero & featured categories, Shop/Catalogue view with live search & category/price filtering, Product Detail modal or view with technical specs & related items, interactive Shopping Cart drawer with quantity +/- controls & order summary subtotal, Checkout view/drawer with validated shipping & payment form, Customer Account/Orders view, About Us, Contact Us, FAQ, Shipping/Return Policies, and Footer.
+   - For Business / Engineering / Corporate Websites (website, landing_page): Include Header navigation with responsive mobile drawer, Hero with primary & secondary CTAs, About / Company Credentials section, Services / Solutions grid with interactive Service Detail modal or view, Filterable Projects / Case Studies portfolio, Client Testimonials & Certifications, FAQ accordion, Validated Quote / Contact Request form with confirmation state, and comprehensive Footer.
+   - For Dashboards / SaaS / Operational Apps (dashboard, saas, admin_panel, fullstack_web_app): Include Sidebar & Topbar navigation, Overview KPI metric cards, Filterable & searchable data tables, interactive Create / Edit record modal with validation, Status toggles, Settings view, and realistic empty/error states.
+7. SECURITY:
    - Never embed API keys, passwords, or secrets.
    - Never access window.parent or window.top storage/documents.
    - Never put shell commands in package.json preinstall/postinstall scripts.
@@ -869,8 +873,9 @@ Include every file that was created or repaired (or the complete file map if sta
       verification,
     };
   } catch (error: any) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[ANNY:${generationId}] Project synthesis failed: ${message}`);
-    throw new Error(message.startsWith('PROJECT_GENERATION_FAILED:') ? message : `PROJECT_GENERATION_FAILED: ${message}`);
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const cleanLogMsg = rawMessage.replace(/\bERROR:\s*/gi, '').replace(/\r?\n/g, ' | ');
+    console.warn(`[ANNY:${generationId}] Project synthesis notice: ${cleanLogMsg}`);
+    throw new Error(rawMessage.startsWith('PROJECT_GENERATION_FAILED:') ? rawMessage : `PROJECT_GENERATION_FAILED: ${rawMessage}`);
   }
 }

@@ -72,6 +72,14 @@ import {
   previewRuntimeService,
   STANDALONE_TAB_SANDBOX_CSP,
 } from './src/services/previewRuntimeService.ts';
+import {
+  localSttService,
+  parseBase64AudioPayload,
+} from './src/services/localSttService.ts';
+import {
+  voiceNoteService,
+  isValidVoiceNoteId,
+} from './src/services/voiceNoteService.ts';
 
 import FormData from "form-data";
 import { Readable } from "stream";
@@ -1056,7 +1064,23 @@ async function startServer() {
           previewSummary = previewRuntimeService.getPublicSessionSummary(previewSession);
           persistedProjectRecord = await projectPersistenceService.getProjectById(effectiveProjectId) || persistedProjectRecord;
         } catch (previewErr: any) {
-          console.warn('[AnnyCorePipeline] Preview session pre-warm warning:', previewErr?.message || previewErr);
+          const cleanDiag = String(previewErr?.message || 'PREVIEW_BUNDLE_FAILED')
+            .replace(/\bERROR:\s*/gi, '')
+            .replace(/\r?\n/g, ' | ')
+            .slice(0, 300);
+          persistedProjectRecord =
+            (await projectPersistenceService.getProjectById(effectiveProjectId)) || persistedProjectRecord;
+          previewSummary = {
+            previewId: null,
+            projectId: effectiveProjectId,
+            name: projectName,
+            version: persistedProjectRecord.version,
+            status: 'ERROR',
+            previewUrl: null,
+            runtimeMode: 'ISOLATED_OPQ_ORIGIN_SANDBOX',
+            entryFile: primaryAppArtifact?.manifest?.entryPoint || '/src/App.tsx',
+            lastError: cleanDiag,
+          };
         }
 
         const existingMatches = await postgresPlatform.query<any>('projects', (p: any) =>
@@ -1547,6 +1571,209 @@ async function startServer() {
     } catch (err: any) {
       console.error("Failed to delete session:", err.message);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // =========================================================================
+  // LOCAL SPEECH-TO-TEXT & SESSION VOICE NOTES API (Authenticated)
+  // =========================================================================
+  app.get("/api/anny/voice-notes/status", requireAuth(), async (_req: AuthenticatedRequest, res) => {
+    try {
+      const status = await localSttService.getStatus();
+      return res.json({ success: true, ...status });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || 'Unable to check local STT status.' });
+    }
+  });
+
+  app.get("/api/anny/sessions/:sessionId/voice-notes", requireAuth(), (req: AuthenticatedRequest, res) => {
+    try {
+      const notes = voiceNoteService.listSessionVoiceNotes(
+        String(req.params.sessionId || ''),
+        req.authUser!.uid,
+        req.authUser!.isAdmin
+      );
+      return res.json({
+        success: true,
+        voiceNotes: notes.map((n) => voiceNoteService.toPublicSummary(n)),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || 'Unable to list voice notes.' });
+    }
+  });
+
+  app.post("/api/anny/voice-notes", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { audio, mimeType, sessionId, language, name, promptHint } = req.body || {};
+      const parsedAudio = parseBase64AudioPayload(audio, mimeType);
+      const localResult = await localSttService.transcribeAudioLocally({
+        audioBuffer: parsedAudio.buffer,
+        mimeType: parsedAudio.mimeType,
+        extension: parsedAudio.extension,
+        language: typeof language === 'string' ? language : 'auto',
+        promptHint: typeof promptHint === 'string' ? promptHint : undefined,
+      });
+
+      const saved = voiceNoteService.saveVoiceNote({
+        ownerUserId: req.authUser!.uid,
+        sessionId: typeof sessionId === 'string' ? sessionId : 'workspace_session',
+        name: typeof name === 'string' ? name : undefined,
+        mimeType: parsedAudio.mimeType,
+        audioBuffer: parsedAudio.buffer,
+        durationSec: localResult.durationSec,
+        transcript: localResult.text,
+        transcriptionEngine: localResult.engine,
+        transcribed: localResult.transcribed,
+      });
+
+      return res.status(201).json({
+        success: true,
+        voiceNote: voiceNoteService.toPublicSummary(saved),
+        localStt: {
+          transcribed: localResult.transcribed,
+          text: localResult.text,
+          engine: localResult.engine,
+          modelUsed: localResult.modelUsed || null,
+          durationSec: localResult.durationSec,
+          error: localResult.error || null,
+          guidance: localResult.guidance || null,
+        },
+      });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Voice note save failed');
+      const status =
+        msg.startsWith('UNSUPPORTED_AUDIO_MIME_TYPE') ||
+        msg === 'AUDIO_PAYLOAD_MISSING' ||
+        msg === 'INVALID_AUDIO_BASE64' ||
+        msg === 'AUDIO_TOO_SHORT'
+          ? 400
+          : msg === 'AUDIO_TOO_LARGE'
+            ? 413
+            : 500;
+      return res.status(status).json({ success: false, error: msg });
+    }
+  });
+
+  app.post("/api/anny/voice-notes/:noteId/transcribe", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const noteId = String(req.params.noteId || '');
+      if (!isValidVoiceNoteId(noteId)) {
+        return res.status(400).json({ success: false, error: 'INVALID_VOICE_NOTE_ID' });
+      }
+      const existing = voiceNoteService.getVoiceNoteById(noteId);
+      if (!existing) {
+        return res.status(404).json({ success: false, error: 'VOICE_NOTE_NOT_FOUND' });
+      }
+      if (!req.authUser!.isAdmin && existing.ownerUserId !== req.authUser!.uid) {
+        return res.status(403).json({ success: false, error: 'FORBIDDEN_VOICE_NOTE_OWNERSHIP' });
+      }
+
+      const { buffer } = voiceNoteService.getVoiceNoteAudioBuffer(noteId, {
+        requesterUid: req.authUser!.uid,
+        isAdmin: req.authUser!.isAdmin,
+      });
+      const ext = existing.fileName.split('.').pop() || 'webm';
+      const localResult = await localSttService.transcribeAudioLocally({
+        audioBuffer: buffer,
+        mimeType: existing.mimeType,
+        extension: ext,
+        language: typeof req.body?.language === 'string' ? req.body.language : 'auto',
+        promptHint: typeof req.body?.promptHint === 'string' ? req.body.promptHint : undefined,
+      });
+
+      const updated = localResult.transcribed
+        ? voiceNoteService.updateTranscript(noteId, req.authUser!.uid, req.authUser!.isAdmin, {
+            transcript: localResult.text,
+            transcriptionEngine: localResult.engine,
+            transcribed: true,
+          })
+        : existing;
+
+      return res.json({
+        success: true,
+        voiceNote: voiceNoteService.toPublicSummary(updated),
+        localStt: {
+          transcribed: localResult.transcribed,
+          text: localResult.text,
+          engine: localResult.engine,
+          modelUsed: localResult.modelUsed || null,
+          durationSec: localResult.durationSec,
+          error: localResult.error || null,
+          guidance: localResult.guidance || null,
+        },
+      });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Voice note transcription failed');
+      const status = msg === 'FORBIDDEN_VOICE_NOTE_OWNERSHIP' ? 403 : msg === 'VOICE_NOTE_NOT_FOUND' ? 404 : 500;
+      return res.status(status).json({ success: false, error: msg });
+    }
+  });
+
+  app.patch("/api/anny/voice-notes/:noteId", requireAuth(), (req: AuthenticatedRequest, res) => {
+    try {
+      const noteId = String(req.params.noteId || '');
+      if (!isValidVoiceNoteId(noteId)) {
+        return res.status(400).json({ success: false, error: 'INVALID_VOICE_NOTE_ID' });
+      }
+      const transcript = typeof req.body?.transcript === 'string' ? req.body.transcript : '';
+      const updated = voiceNoteService.updateTranscript(noteId, req.authUser!.uid, req.authUser!.isAdmin, {
+        transcript,
+        transcriptionEngine: typeof req.body?.transcriptionEngine === 'string' ? req.body.transcriptionEngine : 'manual',
+        transcribed: Boolean(transcript.trim()),
+      });
+      return res.json({ success: true, voiceNote: voiceNoteService.toPublicSummary(updated) });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Failed to update voice note transcript');
+      const status = msg === 'FORBIDDEN_VOICE_NOTE_OWNERSHIP' ? 403 : msg === 'VOICE_NOTE_NOT_FOUND' ? 404 : 500;
+      return res.status(status).json({ success: false, error: msg });
+    }
+  });
+
+  app.get("/api/anny/voice-notes/:noteId/audio", (req: AuthenticatedRequest, res) => {
+    try {
+      const noteId = String(req.params.noteId || '');
+      if (!isValidVoiceNoteId(noteId)) {
+        return res.status(400).json({ success: false, error: 'INVALID_VOICE_NOTE_ID' });
+      }
+      const token = typeof req.query.token === 'string' ? req.query.token : undefined;
+      const { record, buffer } = voiceNoteService.getVoiceNoteAudioBuffer(noteId, {
+        token,
+        requesterUid: req.authUser?.uid,
+        isAdmin: req.authUser?.isAdmin,
+      });
+
+      res.setHeader('Content-Type', record.mimeType || 'audio/webm');
+      res.setHeader('Content-Length', String(buffer.length));
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      return res.status(200).send(buffer);
+    } catch (err: any) {
+      const msg = String(err?.message || 'Unable to load voice note audio');
+      const status =
+        msg === 'UNAUTHORIZED_VOICE_NOTE_ACCESS'
+          ? 403
+          : msg === 'VOICE_NOTE_NOT_FOUND' || msg === 'VOICE_NOTE_AUDIO_MISSING'
+            ? 404
+            : 500;
+      return res.status(status).json({ success: false, error: msg });
+    }
+  });
+
+  app.delete("/api/anny/voice-notes/:noteId", requireAuth(), (req: AuthenticatedRequest, res) => {
+    try {
+      const noteId = String(req.params.noteId || '');
+      if (!isValidVoiceNoteId(noteId)) {
+        return res.status(400).json({ success: false, error: 'INVALID_VOICE_NOTE_ID' });
+      }
+      const deleted = voiceNoteService.deleteVoiceNote(noteId, req.authUser!.uid, req.authUser!.isAdmin);
+      if (!deleted) {
+        return res.status(404).json({ success: false, error: 'VOICE_NOTE_NOT_FOUND' });
+      }
+      return res.json({ success: true });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Failed to delete voice note');
+      const status = msg === 'FORBIDDEN_VOICE_NOTE_OWNERSHIP' ? 403 : 500;
+      return res.status(status).json({ success: false, error: msg });
     }
   });
 
@@ -2782,9 +3009,34 @@ async function startServer() {
       return res.status(400).json({ error: "Audio payload missing" });
     }
 
+    // Prioritize Local Speech-to-Text service (works even in OFFLINE_ONLY mode)
+    try {
+      const parsedAudio = parseBase64AudioPayload(audio, mimeType);
+      const localResult = await localSttService.transcribeAudioLocally({
+        audioBuffer: parsedAudio.buffer,
+        mimeType: parsedAudio.mimeType,
+        extension: parsedAudio.extension,
+        language: typeof language === 'string' ? language : 'auto',
+      });
+      if (localResult.transcribed && localResult.text) {
+        return res.json({
+          text: localResult.text,
+          modelUsed: localResult.modelUsed || localResult.engine,
+          provider: `Local STT (${localResult.engine})`,
+          durationSec: localResult.durationSec,
+        });
+      }
+    } catch (localSttErr: any) {
+      if (String(localSttErr?.message || '').startsWith('UNSUPPORTED_AUDIO_MIME_TYPE') || localSttErr?.message === 'INVALID_AUDIO_BASE64') {
+        return res.status(400).json({ error: localSttErr.message });
+      }
+    }
+
     const execPolicy = providerRegistryService.getExecutionPolicy();
     if (execPolicy.mode === 'OFFLINE_ONLY') {
-      return res.status(503).json({ error: "OFFLINE_ONLY mode active: cloud speech-to-text is disabled." });
+      return res.status(503).json({
+        error: "OFFLINE_ONLY mode active and no local STT service (LOCAL_STT_URL / WHISPER_CPP_URL / whisper-cli) is configured.",
+      });
     }
 
     const cleanAudioBase64 = audio.includes(',') ? audio.split(',').pop() || '' : audio;

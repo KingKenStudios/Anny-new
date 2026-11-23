@@ -707,7 +707,7 @@ export function buildIsolatedPreviewSrcDoc(params: {
 ${cdnScripts}
   <style>
     *, *::before, *::after { box-sizing: border-box; }
-    html, body, #root { margin: 0; padding: 0; min-height: 100vh; width: 100%; background: #020617; color: #f8fafc; font-family: Inter, system-ui, -apple-system, sans-serif; }
+    html, body, #root { margin: 0; padding: 0; min-height: 100vh; width: 100%; background: #ffffff; color: #0f172a; font-family: Inter, system-ui, -apple-system, sans-serif; }
   </style>
 ${compiledCssTag}
 ${inlineVendorTag}
@@ -933,6 +933,28 @@ ${inlineVendorTag}
         return React.createElement('span', Object.assign({ className: (props && props.className) || 'font-sans' }, props), props && props.children);
       };
 
+      var iconPathMap = {
+        Search: [React.createElement('circle', { key: 'c', cx: 11, cy: 11, r: 8 }), React.createElement('path', { key: 'p', d: 'm21 21-4.3-4.3' })],
+        Menu: [React.createElement('line', { key: '1', x1: 4, x2: 20, y1: 12, y2: 12 }), React.createElement('line', { key: '2', x1: 4, x2: 20, y1: 6, y2: 6 }), React.createElement('line', { key: '3', x1: 4, x2: 20, y1: 18, y2: 18 })],
+        X: [React.createElement('path', { key: '1', d: 'M18 6 6 18' }), React.createElement('path', { key: '2', d: 'm6 6 12 12' })],
+        ShoppingCart: [React.createElement('circle', { key: '1', cx: 8, cy: 21, r: 1 }), React.createElement('circle', { key: '2', cx: 19, cy: 21, r: 1 }), React.createElement('path', { key: '3', d: 'M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12' })],
+        ShoppingBag: [React.createElement('path', { key: '1', d: 'M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z' }), React.createElement('path', { key: '2', d: 'M3 6h18' }), React.createElement('path', { key: '3', d: 'M16 10a4 4 0 0 1-8 0' })],
+        Check: [React.createElement('path', { key: '1', d: 'M20 6 9 17l-5-5' })],
+        CheckCircle: [React.createElement('path', { key: '1', d: 'M22 11.08V12a10 10 0 1 1-5.93-9.14' }), React.createElement('path', { key: '2', d: 'm9 11 3 3L22 4' })],
+        ArrowRight: [React.createElement('path', { key: '1', d: 'M5 12h14' }), React.createElement('path', { key: '2', d: 'm12 5 7 7-7 7' })],
+        ChevronRight: [React.createElement('path', { key: '1', d: 'm9 18 6-6-6-6' })],
+        ChevronDown: [React.createElement('path', { key: '1', d: 'm6 9 6 6 6-6' })],
+        Star: [React.createElement('polygon', { key: '1', points: '12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2' })],
+        Heart: [React.createElement('path', { key: '1', d: 'M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z' })],
+        Plus: [React.createElement('path', { key: '1', d: 'M5 12h14' }), React.createElement('path', { key: '2', d: 'M12 5v14' })],
+        Minus: [React.createElement('path', { key: '1', d: 'M5 12h14' })],
+        Trash2: [React.createElement('path', { key: '1', d: 'M3 6h18' }), React.createElement('path', { key: '2', d: 'M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6' }), React.createElement('path', { key: '3', d: 'M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2' })],
+        User: [React.createElement('path', { key: '1', d: 'M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2' }), React.createElement('circle', { key: '2', cx: 12, cy: 7, r: 4 })],
+        Mail: [React.createElement('rect', { key: '1', width: 20, height: 16, x: 2, y: 4, rx: 2 }), React.createElement('path', { key: '2', d: 'm22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7' })],
+        Phone: [React.createElement('path', { key: '1', d: 'M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z' })],
+        MapPin: [React.createElement('path', { key: '1', d: 'M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z' }), React.createElement('circle', { key: '2', cx: 12, cy: 10, r: 3 })]
+      };
+
       var LucideProxy = new Proxy({}, {
         get: function(_t, prop) {
           if (prop === '__esModule') return true;
@@ -940,11 +962,15 @@ ${inlineVendorTag}
           return function(props) {
             var size = (props && props.size) || 18;
             var cls = (props && props.className) || '';
+            var iconChildren = iconPathMap[String(prop)] || [
+              React.createElement('circle', { key: 'c', cx: 12, cy: 12, r: 9 }),
+              React.createElement('path', { key: 'p', d: 'M12 8v4l3 3' })
+            ];
             return React.createElement('svg', {
               width: size, height: size, viewBox: '0 0 24 24', fill: 'none',
               stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
               className: cls, 'data-lucide-icon': String(prop)
-            }, React.createElement('circle', { cx: 12, cy: 12, r: 9 }));
+            }, iconChildren);
           };
         }
       });
@@ -1257,6 +1283,9 @@ export function bundleVFSForIsolatedPreview(
     const rawPath = rawNode.path.trim();
     if (!rawPath) continue;
     const normalizedPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+    if (normalizedPath === '/__anny_react_vendor.js' || normalizedPath === '/__anny_compiled_tailwind.css') {
+      continue;
+    }
     if (!isValidVfsSnapshotFilePath(normalizedPath)) {
       throw new Error(`Invalid or unsafe VFS file path rejected: "${rawPath}"`);
     }
@@ -1411,7 +1440,7 @@ export function bundleVFSForIsolatedPreview(
 let cachedReactVendorScript: string | null = null;
 let pendingReactVendorPromise: Promise<string> | null = null;
 
-async function loadOfflineReactVendorScript(baseOrigin?: string): Promise<string> {
+export async function loadOfflineReactVendorScript(baseOrigin?: string): Promise<string> {
   if (cachedReactVendorScript) return cachedReactVendorScript;
   if (pendingReactVendorPromise) return pendingReactVendorPromise;
   const origin =
@@ -1449,6 +1478,7 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
   const [currentMessage, setCurrentMessage] = useState('Preparing build...');
   const [isolatedPreviewVfs, setIsolatedPreviewVfs] = useState<any | null>(null);
   const [reactVendorJs, setReactVendorJs] = useState<string>(cachedReactVendorScript || '');
+  const [vendorLoadAttempted, setVendorLoadAttempted] = useState<boolean>(Boolean(cachedReactVendorScript));
   const sandboxIframeRef = React.useRef<HTMLIFrameElement>(null);
   const handshakeStateRef = React.useRef<{
     projectId: string;
@@ -1460,6 +1490,7 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
     const parentOrigin = resolveParentTargetOrigin();
     void loadOfflineReactVendorScript(parentOrigin).then((js) => {
       if (js) setReactVendorJs(js);
+      setVendorLoadAttempted(true);
     });
   }, []);
 
@@ -1542,6 +1573,11 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
       }
 
       currentHandshake.lastAcceptedSeq = validation.snapshotSeq;
+      if (typeof validation.files['/__anny_react_vendor.js'] === 'string' && validation.files['/__anny_react_vendor.js']) {
+        cachedReactVendorScript = validation.files['/__anny_react_vendor.js'];
+        setReactVendorJs(validation.files['/__anny_react_vendor.js']);
+        setVendorLoadAttempted(true);
+      }
       const previewVfs = createIsolatedPreviewVFS(currentHandshake.projectId, validation.files);
       setIsolatedPreviewVfs(previewVfs);
       setVfsVersion((prev) => prev + 1);
@@ -1691,11 +1727,13 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
           loaded: Boolean(appCode),
           isolatedSandbox: true
         };
-        postPreviewMessageToParent({
-          type: Boolean(appCode) ? 'PREVIEW_READY' : 'PREVIEW_WAITING',
-          projectId: activeProjId,
-          path: foundPath
-        });
+        if (!appCode) {
+          postPreviewMessageToParent({
+            type: 'PREVIEW_WAITING',
+            projectId: activeProjId,
+            path: foundPath
+          });
+        }
       }
 
       // Check for HTML static file
@@ -1721,6 +1759,18 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
 
       setActivePath(foundPath);
 
+      const vfsEmbeddedVendor =
+        typeof vfs.exists === 'function' && vfs.exists('/__anny_react_vendor.js')
+          ? vfs.readFile('/__anny_react_vendor.js')
+          : '';
+      const resolvedVendorScript =
+        vfsEmbeddedVendor || reactVendorJs || cachedReactVendorScript || '';
+
+      // Wait briefly if vendor script is still fetching from parent origin so we never render an unmounted blank shell
+      if (!resolvedVendorScript && !vendorLoadAttempted) {
+        return;
+      }
+
       try {
         setHtmlContent(null);
         const compiledFileCss =
@@ -1730,7 +1780,7 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
         const bundle = bundleVFSForIsolatedPreview(vfs, {
           projectId: activeProjId,
           parentOrigin,
-          inlineReactVendorScript: reactVendorJs || cachedReactVendorScript || undefined,
+          inlineReactVendorScript: resolvedVendorScript || undefined,
           compiledCss: compiledFileCss || undefined
         });
         setIsolatedSrcDoc(bundle.srcDoc);
@@ -1823,7 +1873,7 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
       cancelled = true;
       invalidatePreviewSessionAuthorizations(sessionId);
     };
-  }, [vfsVersion, projectId, isBuilding, isolatedPreviewVfs, reactVendorJs]);
+  }, [vfsVersion, projectId, isBuilding, isolatedPreviewVfs, reactVendorJs, vendorLoadAttempted]);
 
   /* legacy compiler block replaced */
 

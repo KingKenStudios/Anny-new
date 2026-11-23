@@ -197,3 +197,71 @@ export default function App() {
   assert.ok(result.srcDoc.includes('PREVIEW_NAVIGATION'));
   assert.ok(result.srcDoc.includes('PREVIEW_NAVIGATE_COMMAND'));
 });
+
+test('verifyGeneratedProject and synthesizeAppFiles catch mismatched JSX tags even when braces are balanced and repair them automatically', async () => {
+  const { verifyGeneratedProject } = await import('../core/generatedProjectValidator');
+  const { synthesizeAppFiles } = await import('../core/realAppCodeSynthesizer');
+
+  // Notice braces are balanced ({ count === } count), but JSX has stray } and mismatched <div>...</main>
+  const malformedBalancedBraceJsx = `import React, { useState } from 'react';
+export default function App() {
+  const [count, setCount] = useState(0);
+  const helper = { a: 1 };
+  return (<div className="app"><header>Title}</header><div className="body"><button onClick={() => { setCount(count + 1)}>Click</button></main></div>);
+}`;
+
+  const baseFiles: Record<string, string> = {
+    '/package.json': JSON.stringify({
+      name: 'jsx-validation-test',
+      version: '1.0.0',
+      dependencies: { react: '^18.2.0', 'react-dom': '^18.2.0' },
+      scripts: { dev: 'vite', build: 'vite build' },
+    }),
+    '/index.html': '<!DOCTYPE html><html><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
+    '/src/main.tsx': `import React from 'react'; import ReactDOM from 'react-dom/client'; import App from './App'; ReactDOM.createRoot(document.getElementById('root')!).render(<App />);`,
+    '/src/styles.css': '@media (max-width: 768px) { .app { padding: 12px; } }',
+    '/src/App.tsx': malformedBalancedBraceJsx,
+  };
+
+  const report = verifyGeneratedProject(baseFiles);
+  assert.equal(report.passed, false);
+  assert.ok(report.errors.some((e) => e.includes('JSX') || e.includes('compile error')));
+
+  // Now verify synthesizeAppFiles triggers its repair loop when first pass has malformed JSX
+  let attempts = 0;
+  const plan = await synthesizeAppFiles('Create a modern counter web application', {}, {
+    maxRepairAttempts: 2,
+    chatExecutor: async () => {
+      attempts++;
+      if (attempts === 1) {
+        return {
+          content: JSON.stringify({
+            files: baseFiles,
+            summary: 'Initial draft with JSX typo',
+          }),
+          provider: 'test',
+          model: 'test',
+        };
+      }
+      return {
+        content: JSON.stringify({
+          files: {
+            ...baseFiles,
+            '/src/App.tsx': `import React, { useState } from 'react';
+export default function App() {
+  const [count, setCount] = useState(0);
+  return (<div className="app"><header>Title</header><main className="body"><button onClick={() => setCount(count + 1)}>Count: {count}</button></main></div>);
+}`,
+          },
+          summary: 'Repaired JSX structure',
+        }),
+        provider: 'test',
+        model: 'test',
+      };
+    },
+  });
+
+  assert.equal(plan.repairAttempts, 1);
+  assert.equal(plan.verification?.passed, true);
+});
+

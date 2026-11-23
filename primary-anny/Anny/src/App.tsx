@@ -98,7 +98,10 @@ export function AnnyMainApp() {
     if (id) {
       safeStorage.setItem(activeKey, id);
       const sessionObj = chatHistory.find(c => c.id === id);
-      WorkspaceManager.getInstance().switchWorkspace(id, sessionObj?.title || 'Session Workspace');
+      const activeWsId = WorkspaceManager.getInstance().getActiveProjectId();
+      if (!activeWsId || !activeWsId.startsWith('proj_')) {
+        WorkspaceManager.getInstance().switchWorkspace(id, sessionObj?.title || 'Session Workspace');
+      }
     } else {
       safeStorage.removeItem(activeKey);
     }

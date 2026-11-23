@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { calculateAutoTextareaHeight, shouldSubmitOnKeyDown } from './composerUtils';
+import { VoiceNoteRecorderBar, VoiceNoteAttachmentCard } from './VoiceNoteRecorder';
 
 export interface ComposerAttachedFile {
   id: string;
@@ -22,6 +23,15 @@ export interface ComposerAttachedFile {
   size: number;
   type: string;
   previewUrl?: string;
+  isVoiceNote?: boolean;
+  voiceNoteId?: string;
+  audioUrl?: string;
+  durationSec?: number | null;
+  transcript?: string;
+  transcriptionEngine?: string;
+  transcribed?: boolean;
+  localSttGuidance?: string | null;
+  textContent?: string;
 }
 
 export interface AnnyPromptComposerProps {
@@ -45,6 +55,20 @@ export interface AnnyPromptComposerProps {
   onToggleVoiceInput: () => void;
   onStopSpeechRecognition: () => void;
   onStopMediaRecording: (cancel: boolean) => void;
+  isRecordingVoiceNote?: boolean;
+  isVoiceNotePaused?: boolean;
+  isProcessingVoiceNote?: boolean;
+  voiceNoteElapsedSec?: number;
+  voiceNoteAnalyser?: AnalyserNode | null;
+  voiceNoteError?: string | null;
+  retryingVoiceNoteId?: string | null;
+  onStartVoiceNote?: () => void;
+  onPauseResumeVoiceNote?: () => void;
+  onStopVoiceNote?: () => void;
+  onCancelVoiceNote?: () => void;
+  onDismissVoiceNoteError?: () => void;
+  onRetryVoiceNoteStt?: (attachmentId: string, voiceNoteId: string) => void;
+  onInsertVoiceNoteTranscript?: (transcript: string) => void;
   onAttachFilesClick: () => void;
   isWebSearchEnabled: boolean;
   onToggleWebSearch: () => void;
@@ -80,6 +104,20 @@ export const AnnyPromptComposer: React.FC<AnnyPromptComposerProps> = ({
   onToggleVoiceInput,
   onStopSpeechRecognition,
   onStopMediaRecording,
+  isRecordingVoiceNote = false,
+  isVoiceNotePaused = false,
+  isProcessingVoiceNote = false,
+  voiceNoteElapsedSec = 0,
+  voiceNoteAnalyser = null,
+  voiceNoteError = null,
+  retryingVoiceNoteId = null,
+  onStartVoiceNote,
+  onPauseResumeVoiceNote,
+  onStopVoiceNote,
+  onCancelVoiceNote,
+  onDismissVoiceNoteError,
+  onRetryVoiceNoteStt,
+  onInsertVoiceNoteTranscript,
   onAttachFilesClick,
   isWebSearchEnabled,
   onToggleWebSearch,
@@ -282,32 +320,71 @@ export const AnnyPromptComposer: React.FC<AnnyPromptComposerProps> = ({
               </button>
             </div>
           )}
-          {attachedFiles.map((f) => (
-            <div
-              key={f.id}
-              className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border font-mono text-[11px] ${
-                isLight
-                  ? 'bg-white border-slate-300 text-slate-800'
-                  : 'bg-indigo-950/80 border-indigo-500/40 text-cyan-300'
-              }`}
-            >
-              {f.previewUrl ? (
-                <img src={f.previewUrl} alt={f.name} className="w-4 h-4 object-cover rounded shrink-0" />
-              ) : (
-                <FileText className="w-3 h-3 text-cyan-500 shrink-0" />
-              )}
-              <span className="truncate max-w-[140px]">{f.name}</span>
-              <button
-                type="button"
-                onClick={() => onRemoveAttachedFile(f.id)}
-                aria-label={`Remove attached file ${f.name}`}
-                className="opacity-70 hover:opacity-100 ml-1 font-bold rounded hover:bg-white/10 px-1 cursor-pointer"
+          {attachedFiles.map((f) =>
+            f.isVoiceNote ? (
+              <VoiceNoteAttachmentCard
+                key={f.id}
+                name={f.name}
+                audioUrl={f.audioUrl}
+                durationSec={f.durationSec}
+                transcript={f.transcript}
+                transcriptionEngine={f.transcriptionEngine}
+                transcribed={f.transcribed}
+                guidance={f.localSttGuidance}
+                theme={theme}
+                editable
+                isRetryingStt={retryingVoiceNoteId === f.id}
+                onRemove={() => onRemoveAttachedFile(f.id)}
+                onRetryStt={
+                  f.voiceNoteId && onRetryVoiceNoteStt
+                    ? () => onRetryVoiceNoteStt(f.id, f.voiceNoteId!)
+                    : undefined
+                }
+                onInsertTranscript={onInsertVoiceNoteTranscript}
+              />
+            ) : (
+              <div
+                key={f.id}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border font-mono text-[11px] ${
+                  isLight
+                    ? 'bg-white border-slate-300 text-slate-800'
+                    : 'bg-indigo-950/80 border-indigo-500/40 text-cyan-300'
+                }`}
               >
-                ×
-              </button>
-            </div>
-          ))}
+                {f.previewUrl ? (
+                  <img src={f.previewUrl} alt={f.name} className="w-4 h-4 object-cover rounded shrink-0" />
+                ) : (
+                  <FileText className="w-3 h-3 text-cyan-500 shrink-0" />
+                )}
+                <span className="truncate max-w-[140px]">{f.name}</span>
+                <button
+                  type="button"
+                  onClick={() => onRemoveAttachedFile(f.id)}
+                  aria-label={`Remove attached file ${f.name}`}
+                  className="opacity-70 hover:opacity-100 ml-1 font-bold rounded hover:bg-white/10 px-1 cursor-pointer"
+                >
+                  ×
+                </button>
+              </div>
+            )
+          )}
         </div>
+      )}
+
+      {(isRecordingVoiceNote || isProcessingVoiceNote || voiceNoteError) && (
+        <VoiceNoteRecorderBar
+          isRecording={isRecordingVoiceNote}
+          isPaused={isVoiceNotePaused}
+          isProcessing={isProcessingVoiceNote}
+          elapsedSec={voiceNoteElapsedSec}
+          analyser={voiceNoteAnalyser}
+          error={voiceNoteError}
+          theme={theme}
+          onPauseResume={() => onPauseResumeVoiceNote?.()}
+          onStopAndAttach={() => onStopVoiceNote?.()}
+          onCancel={() => onCancelVoiceNote?.()}
+          onDismissError={onDismissVoiceNoteError}
+        />
       )}
 
       {(isListening || isRecordingAudio || isTranscribingAudio) && (
@@ -472,19 +549,27 @@ export const AnnyPromptComposer: React.FC<AnnyPromptComposerProps> = ({
 
         <button
           type="button"
-          onClick={onToggleVoiceInput}
-          disabled={isTranscribingAudio}
-          aria-label={isListening || isRecordingAudio ? 'Stop voice dictation' : 'Start voice dictation'}
-          title={isListening || isRecordingAudio ? 'Stop voice capture' : 'Voice dictation'}
-          className={`min-h-[44px] min-w-[44px] sm:min-h-[36px] sm:min-w-[36px] rounded-xl flex items-center justify-center shrink-0 transition-all cursor-pointer ${
-            isListening || isRecordingAudio
+          onClick={() => {
+            if (onStartVoiceNote) {
+              if (isRecordingVoiceNote) onStopVoiceNote?.();
+              else onStartVoiceNote();
+            } else {
+              onToggleVoiceInput();
+            }
+          }}
+          disabled={isTranscribingAudio || isProcessingVoiceNote}
+          aria-label={isRecordingVoiceNote || isListening || isRecordingAudio ? 'Stop recording voice note' : 'Record Voice Note'}
+          title={isRecordingVoiceNote || isListening || isRecordingAudio ? 'Stop recording voice note' : 'Record Voice Note'}
+          data-testid="record-voice-note-btn"
+          className={`min-h-[44px] min-w-[44px] sm:min-h-[36px] sm:min-w-[36px] rounded-xl flex items-center justify-center shrink-0 transition-all cursor-pointer disabled:opacity-50 ${
+            isRecordingVoiceNote || isListening || isRecordingAudio
               ? 'bg-rose-500/25 text-rose-300 border border-rose-500/60 shadow-[0_0_12px_rgba(239,68,68,0.45)]'
               : isLight
               ? 'bg-slate-100 hover:bg-slate-200 text-cyan-700 border border-slate-300'
               : 'bg-white/5 hover:bg-white/10 text-cyan-300 border border-white/10'
           }`}
         >
-          {isListening || isRecordingAudio ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+          {isRecordingVoiceNote || isListening || isRecordingAudio ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
         </button>
 
         <button

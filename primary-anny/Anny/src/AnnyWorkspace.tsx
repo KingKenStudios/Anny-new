@@ -20,8 +20,11 @@ import type { LightboxImageItem } from "./components/ImageLightboxViewer";
 import type { BuildStageItem } from "./components/AnnyBuildPreviewOverlay";
 import { MobileLogoMenu } from './MobileLogoMenu';
 import { ExecutionStreamView } from './components/chat/ExecutionStreamView';
-import { AnnyPromptComposer } from './components/chat/AnnyPromptComposer';
+import { AnnyPromptComposer, type ComposerAttachedFile } from './components/chat/AnnyPromptComposer';
+import { VoiceNoteAttachmentCard, formatVoiceDuration } from './components/chat/VoiceNoteRecorder';
 import { resolveDraftAfterFailedSend } from './components/chat/composerUtils';
+import { ChatProjectBuildCard } from './components/chat/ChatProjectBuildCard';
+import { projectPreviewController, type ProjectBuildMetadata } from './services/projectPreviewController';
 import {
   Sparkles,
   Command,
@@ -470,6 +473,22 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   const basePromptRef = useRef<string>('');
   const cancelAudioRef = useRef<boolean>(false);
 
+  // Voice Note Recording & Local STT Attachment States
+  const [isRecordingVoiceNote, setIsRecordingVoiceNote] = useState(false);
+  const [isVoiceNotePaused, setIsVoiceNotePaused] = useState(false);
+  const [isProcessingVoiceNote, setIsProcessingVoiceNote] = useState(false);
+  const [voiceNoteElapsedSec, setVoiceNoteElapsedSec] = useState(0);
+  const [voiceNoteAnalyser, setVoiceNoteAnalyser] = useState<AnalyserNode | null>(null);
+  const [voiceNoteError, setVoiceNoteError] = useState<string | null>(null);
+  const [retryingVoiceNoteId, setRetryingVoiceNoteId] = useState<string | null>(null);
+  const voiceNoteRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceNoteStreamRef = useRef<MediaStream | null>(null);
+  const voiceNoteChunksRef = useRef<Blob[]>([]);
+  const voiceNoteAudioCtxRef = useRef<AudioContext | null>(null);
+  const voiceNoteTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const voiceNoteCancelRef = useRef<boolean>(false);
+  const voiceNoteElapsedRef = useRef<number>(0);
+
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speechTranscriptRef = useRef('');
   const isSpeechOutputRef = useRef(false);
@@ -750,6 +769,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       // Release SpeechRecognition and MediaRecorder so Live Vision Voice owns the mic cleanly
       stopSpeechRecognition();
       stopMediaRecording(true);
+      stopVoiceNoteRecording(true);
     };
     window.addEventListener('anny:speech-start', handleSpeechStart as EventListener);
     window.addEventListener('anny:speech-end', handleSpeechEnd as EventListener);
@@ -762,8 +782,285 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       clearVoiceSilenceTimer();
       stopSpeechRecognition();
       stopMediaRecording(true);
+      stopVoiceNoteRecording(true);
     };
   }, []);
+
+  const cleanupVoiceNoteResources = () => {
+    if (voiceNoteTimerRef.current) {
+      clearInterval(voiceNoteTimerRef.current);
+      voiceNoteTimerRef.current = null;
+    }
+    if (voiceNoteStreamRef.current) {
+      voiceNoteStreamRef.current.getTracks().forEach((t) => {
+        try { t.stop(); } catch {}
+      });
+      voiceNoteStreamRef.current = null;
+    }
+    if (voiceNoteAudioCtxRef.current) {
+      try { void voiceNoteAudioCtxRef.current.close(); } catch {}
+      voiceNoteAudioCtxRef.current = null;
+    }
+    setVoiceNoteAnalyser(null);
+  };
+
+  const stopVoiceNoteRecording = (cancel = false) => {
+    voiceNoteCancelRef.current = cancel;
+    const rec = voiceNoteRecorderRef.current;
+    if (rec && rec.state !== 'inactive') {
+      try { rec.stop(); } catch {}
+    } else {
+      cleanupVoiceNoteResources();
+      setIsRecordingVoiceNote(false);
+      setIsVoiceNotePaused(false);
+      if (cancel) {
+        setVoiceNoteElapsedSec(0);
+        voiceNoteElapsedRef.current = 0;
+      }
+    }
+  };
+
+  const pauseResumeVoiceNoteRecording = () => {
+    const rec = voiceNoteRecorderRef.current;
+    if (!rec) return;
+    if (rec.state === 'recording' && typeof rec.pause === 'function') {
+      rec.pause();
+      setIsVoiceNotePaused(true);
+    } else if (rec.state === 'paused' && typeof rec.resume === 'function') {
+      rec.resume();
+      setIsVoiceNotePaused(false);
+    }
+  };
+
+  const startVoiceNoteRecording = async () => {
+    if (isRecordingVoiceNote || isProcessingVoiceNote) return;
+    setVoiceNoteError(null);
+
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      const msg = 'Microphone audio recording is not supported in this browser.';
+      setVoiceNoteError(msg);
+      showNotice(msg, 'warning');
+      return;
+    }
+
+    // Release active dictation / TTS cleanly before capturing a voice note
+    stopSpeechRecognition();
+    stopMediaRecording(true);
+    if (annyVoiceService.isSpeaking()) {
+      annyVoiceService.stop();
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      voiceNoteStreamRef.current = stream;
+      voiceNoteChunksRef.current = [];
+      voiceNoteCancelRef.current = false;
+      voiceNoteElapsedRef.current = 0;
+      setVoiceNoteElapsedSec(0);
+      setIsVoiceNotePaused(false);
+
+      // Attach Web Audio AnalyserNode for live amplitude visualization
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          const ctx = new AudioCtx();
+          const source = ctx.createMediaStreamSource(stream);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 128;
+          source.connect(analyser);
+          voiceNoteAudioCtxRef.current = ctx;
+          setVoiceNoteAnalyser(analyser);
+        }
+      } catch {
+        // Waveform visualizer is progressive enhancement only
+      }
+
+      const preferredTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+      const chosenMime = preferredTypes.find((t) => MediaRecorder.isTypeSupported?.(t)) || '';
+      const recorder = chosenMime ? new MediaRecorder(stream, { mimeType: chosenMime }) : new MediaRecorder(stream);
+      voiceNoteRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data && event.data.size > 0) {
+          voiceNoteChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        setIsRecordingVoiceNote(false);
+        setIsVoiceNotePaused(false);
+        const recordedSec = voiceNoteElapsedRef.current;
+        cleanupVoiceNoteResources();
+        voiceNoteRecorderRef.current = null;
+
+        if (voiceNoteCancelRef.current || voiceNoteChunksRef.current.length === 0) {
+          voiceNoteChunksRef.current = [];
+          setVoiceNoteElapsedSec(0);
+          voiceNoteElapsedRef.current = 0;
+          return;
+        }
+
+        const blobType = recorder.mimeType || chosenMime || 'audio/webm';
+        const audioBlob = new Blob(voiceNoteChunksRef.current, { type: blobType });
+        voiceNoteChunksRef.current = [];
+
+        if (audioBlob.size < 300) {
+          setVoiceNoteError('Voice note was too short. Please record for at least 1 second.');
+          return;
+        }
+
+        setIsProcessingVoiceNote(true);
+        try {
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(new Error('Failed to encode recorded audio.'));
+            reader.readAsDataURL(audioBlob);
+          });
+
+          const ext = blobType.includes('mp4') ? 'm4a' : blobType.includes('ogg') ? 'ogg' : blobType.includes('wav') ? 'wav' : 'webm';
+          const noteFileName = `voice-note-${new Date().toTimeString().slice(0, 8).replace(/:/g, '')}.${ext}`;
+          const activeSession = currentChatId || projectMetaState.projectId || 'workspace_session';
+
+          const res = await fetchWithAuth('/api/anny/voice-notes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              audio: dataUrl,
+              mimeType: blobType.split(';')[0],
+              sessionId: activeSession,
+              language: isSaharaEnabled ? 'pidgin' : 'auto',
+              name: noteFileName,
+              promptHint: prompt.trim().slice(0, 200) || undefined,
+            }),
+          });
+
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok || !payload?.voiceNote) {
+            throw new Error(payload?.error || `Failed to save voice note (HTTP ${res.status})`);
+          }
+
+          const vn = payload.voiceNote;
+          const stt = payload.localStt || {};
+          const duration = typeof vn.durationSec === 'number' && vn.durationSec > 0 ? vn.durationSec : recordedSec || null;
+          const transcript = String(stt.text || vn.transcript || '').trim();
+          const transcribed = Boolean(stt.transcribed && transcript);
+          const textContent = transcript
+            ? `[Voice Note Transcript (${formatVoiceDuration(duration)}) via ${stt.engine || 'local-stt'}]: ${transcript}`
+            : `[Voice Note Audio (${formatVoiceDuration(duration)}) attached to session]`;
+
+          const attachmentId = vn.id || `vn-${Date.now()}`;
+          setAttachedFiles((prev) => [
+            ...prev,
+            {
+              id: attachmentId,
+              name: vn.name || noteFileName,
+              size: vn.sizeBytes || audioBlob.size,
+              type: vn.mimeType || blobType.split(';')[0],
+              isVoiceNote: true,
+              voiceNoteId: vn.id,
+              audioUrl: vn.audioUrl || dataUrl,
+              durationSec: duration,
+              transcript,
+              transcriptionEngine: stt.engine || vn.transcriptionEngine || 'unavailable',
+              transcribed,
+              localSttGuidance: !transcribed ? (stt.guidance || stt.error || null) : null,
+              textContent,
+            },
+          ]);
+
+          showNotice(
+            transcribed
+              ? 'Voice note transcribed locally and attached to this chat session.'
+              : 'Voice note audio attached to this chat session (no local STT server active).',
+            transcribed ? 'success' : 'info'
+          );
+        } catch (err: any) {
+          const errText = err?.message || 'Unable to process recorded voice note.';
+          setVoiceNoteError(errText);
+          showNotice(errText, 'error');
+        } finally {
+          setIsProcessingVoiceNote(false);
+          setVoiceNoteElapsedSec(0);
+          voiceNoteElapsedRef.current = 0;
+        }
+      };
+
+      voiceNoteTimerRef.current = setInterval(() => {
+        if (voiceNoteRecorderRef.current?.state === 'recording') {
+          voiceNoteElapsedRef.current += 1;
+          setVoiceNoteElapsedSec(voiceNoteElapsedRef.current);
+        }
+      }, 1000);
+
+      recorder.start(250);
+      setIsRecordingVoiceNote(true);
+    } catch (micErr: any) {
+      cleanupVoiceNoteResources();
+      setIsRecordingVoiceNote(false);
+      const msg =
+        micErr?.name === 'NotAllowedError'
+          ? 'Microphone permission denied. Allow mic access in browser settings.'
+          : 'Microphone hardware is unavailable.';
+      setVoiceNoteError(msg);
+      showNotice(msg, 'error');
+    }
+  };
+
+  const handleRetryVoiceNoteStt = async (attachmentId: string, voiceNoteId: string) => {
+    if (!voiceNoteId) return;
+    setRetryingVoiceNoteId(attachmentId);
+    try {
+      const res = await fetchWithAuth(`/api/anny/voice-notes/${encodeURIComponent(voiceNoteId)}/transcribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language: isSaharaEnabled ? 'pidgin' : 'auto' }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.error || `Transcription retry failed (HTTP ${res.status})`);
+      const stt = payload.localStt || {};
+      const vn = payload.voiceNote || {};
+      const transcript = String(stt.text || vn.transcript || '').trim();
+      const transcribed = Boolean(stt.transcribed && transcript);
+
+      setAttachedFiles((prev) =>
+        prev.map((item) =>
+          item.id === attachmentId
+            ? {
+                ...item,
+                transcript,
+                transcriptionEngine: stt.engine || vn.transcriptionEngine || item.transcriptionEngine,
+                transcribed,
+                localSttGuidance: !transcribed ? (stt.guidance || stt.error || null) : null,
+                textContent: transcript
+                  ? `[Voice Note Transcript (${formatVoiceDuration(item.durationSec)}) via ${stt.engine || 'local-stt'}]: ${transcript}`
+                  : item.textContent,
+              }
+            : item
+        )
+      );
+      showNotice(
+        transcribed ? 'Voice note transcribed locally.' : (stt.guidance || 'Local STT service is still unavailable.'),
+        transcribed ? 'success' : 'info'
+      );
+    } catch (err: any) {
+      showNotice(err?.message || 'Unable to retry local speech-to-text.', 'error');
+    } finally {
+      setRetryingVoiceNoteId(null);
+    }
+  };
+
+  const handleInsertVoiceNoteTranscript = (transcript: string) => {
+    const clean = transcript.trim();
+    if (!clean) return;
+    setPrompt((prev) => (prev.trim() ? `${prev.trim()}\n${clean}` : clean));
+    showNotice('Voice note transcript added to prompt.', 'success');
+  };
+
+  useEffect(() => {
+    stopVoiceNoteRecording(true);
+    setVoiceNoteError(null);
+  }, [currentChatId]);
 
   const handleVisionCapture = (base64Image: string) => {
     if (base64Image) {
@@ -930,36 +1227,100 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     }
 
     const mgr = WorkspaceManager.getInstance();
-    const mappedProjectId = sessionProjectMapRef.current.get(currentChatId);
+    const persistedMeta = projectPreviewController.getSessionProjectMeta(currentChatId);
+    const mappedProjectId =
+      sessionProjectMapRef.current.get(currentChatId) ||
+      persistedMeta?.projectId;
     const activeProjId = mgr.getActiveProjectId();
     const currentFiles = mgr.getVFS().getAllFiles();
 
     if (mappedProjectId) {
+      sessionProjectMapRef.current.set(currentChatId, mappedProjectId);
       const targetName =
-        projectMetaState.projectId === mappedProjectId
-          ? projectMetaState.name
-          : parentChatHistory.find((c) => c.id === currentChatId)?.title || mappedProjectId;
+        persistedMeta?.name ||
+        (projectMetaState.projectId === mappedProjectId ? projectMetaState.name : '') ||
+        parentChatHistory.find((c) => c.id === currentChatId)?.title ||
+        mappedProjectId;
+      projectPreviewController.ensureProjectOwnershipRegistered(mappedProjectId, user?.uid);
       if (activeProjId !== mappedProjectId) {
         mgr.switchWorkspace(mappedProjectId, targetName, user?.uid || 'global', 'fullstack');
       }
-      const map = getVfsMap();
-      setVfsFiles(map);
-      if (Object.keys(map).length > 0) {
-        setIsSplitScreen(true);
+      let map = getVfsMap();
+      if (Object.keys(map).length === 0 && mappedProjectId.startsWith('proj_')) {
+        void projectPreviewController.restoreProjectForSession(currentChatId, messages).then((restored) => {
+          if (restored) {
+            setVfsFiles(getVfsMap());
+            setProjectMetaState((prev) => ({
+              ...prev,
+              projectId: restored.projectId,
+              name: restored.name || prev.name,
+              version: restored.version || prev.version,
+              previewUrl: restored.previewUrl || prev.previewUrl,
+            }));
+            setReloadKey((k) => k + 1);
+          }
+        });
+      } else {
+        setVfsFiles(map);
+        setProjectMetaState((prev) => ({
+          ...prev,
+          projectId: mappedProjectId,
+          name: targetName,
+          version: persistedMeta?.version || prev.version || 1,
+          previewUrl: persistedMeta?.previewUrl || prev.previewUrl,
+        }));
+        if (Object.keys(map).length > 0) {
+          setIsSplitScreen(true);
+        }
       }
       prevChatIdRef.current = currentChatId;
       return;
     }
 
-    // If currentChatId was assigned immediately after starting a build from an empty session,
+    // Check if any message in the current thread has a saved projectBuild metadata
+    const sessionObj = parentChatHistory.find((c) => c.id === currentChatId);
+    const threadMessages = messages.length > 0 ? messages : sessionObj?.messages || [];
+    const lastBuildMsg = [...threadMessages].reverse().find((m: any) => m?.projectBuild?.projectId && m.projectBuild.status !== 'failed');
+    if (lastBuildMsg?.projectBuild?.projectId) {
+      const msgBuild = lastBuildMsg.projectBuild as ProjectBuildMetadata;
+      sessionProjectMapRef.current.set(currentChatId, msgBuild.projectId);
+      projectPreviewController.setSessionProjectMeta(currentChatId, msgBuild);
+      void projectPreviewController.restoreProjectForSession(currentChatId, threadMessages).then((restored) => {
+        if (restored) {
+          setVfsFiles(getVfsMap());
+          setProjectMetaState({
+            projectId: restored.projectId,
+            name: restored.name || 'Generated Website',
+            version: restored.version || 1,
+            previewUrl: restored.previewUrl || null,
+            lastSavedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            isSaving: false,
+          });
+          setReloadKey((k) => k + 1);
+        }
+      });
+      prevChatIdRef.current = currentChatId;
+      return;
+    }
+
+    // If currentChatId was assigned immediately after starting or finishing a build from an empty session,
     // bind the newly created proj_* workspace instead of resetting it!
+    const currentEffectiveProjId =
+      projectMetaState.projectId && projectMetaState.projectId.startsWith('proj_')
+        ? projectMetaState.projectId
+        : activeProjId && activeProjId.startsWith('proj_')
+          ? activeProjId
+          : '';
     if (
-      !prevChatIdRef.current &&
-      activeProjId &&
-      activeProjId.startsWith('proj_') &&
-      currentFiles.length > 0
+      (!prevChatIdRef.current || isSubmittingRef.current) &&
+      currentEffectiveProjId
     ) {
-      sessionProjectMapRef.current.set(currentChatId, activeProjId);
+      sessionProjectMapRef.current.set(currentChatId, currentEffectiveProjId);
+      projectPreviewController.ensureProjectOwnershipRegistered(currentEffectiveProjId, user?.uid);
+      if (mgr.getActiveProjectId() !== currentEffectiveProjId) {
+        mgr.switchWorkspace(currentEffectiveProjId, projectMetaState.name || 'Generated Website', user?.uid || 'global', 'fullstack');
+      }
+      setVfsFiles(getVfsMap());
       prevChatIdRef.current = currentChatId;
       return;
     }
@@ -971,7 +1332,6 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       return;
     }
 
-    const sessionObj = parentChatHistory.find((c) => c.id === currentChatId);
     mgr.switchWorkspace(currentChatId, sessionObj?.title || `Session ${currentChatId}`);
     setIsSplitScreen(false);
     setIsVisualEditor(false);
@@ -991,17 +1351,15 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   useEffect(() => {
     if (!activeLoadedProject?.projectId) return;
     const { projectId, name, version, files, previewUrl } = activeLoadedProject;
-    const mgr = WorkspaceManager.getInstance();
-    mgr.switchWorkspace(projectId, name || projectId, user?.uid || 'global', 'fullstack');
-    const vfs = mgr.getVFS();
-    if (files && typeof files === 'object' && Object.keys(files).length > 0) {
-      vfs.clearAll();
-      for (const [rawPath, content] of Object.entries(files)) {
-        const normPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
-        vfs._unsafe_writeFile(normPath, String(content ?? ''));
-      }
-      vfs.saveToStorage();
-    }
+    projectPreviewController.activateProject({
+      projectId,
+      name: name || projectId,
+      version: version || 1,
+      files,
+      previewUrl,
+      sessionId: currentChatId,
+      ownerUserId: user?.uid,
+    });
     safeStorage.setItem('anny_current_project_id', projectId);
     if (currentChatId) {
       sessionProjectMapRef.current.set(currentChatId, projectId);
@@ -1065,7 +1423,11 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       codeSnippet?: string;
       steps?: string[];
       sources?: Array<{ title: string; url: string }>;
-      attachedFiles?: Array<{ id: string; name: string; size: number; type: string; data?: string; textContent?: string; previewUrl?: string }>;
+      attachedFiles?: Array<
+        ComposerAttachedFile & {
+          data?: string;
+        }
+      >;
       isGeneratingImage?: boolean;
       imagePrompt?: string;
       imageProgress?: number;
@@ -1079,6 +1441,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       >;
       generatedVideo?: VideoJobRecord;
       generatedAudio?: CreativeAudioResult;
+      projectBuild?: ProjectBuildMetadata;
     }>
   >([]);
   const [generatingSessions, setGeneratingSessions] = useState<Set<string>>(new Set());
@@ -1136,7 +1499,35 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     } else if (messages && messages.length > 0) {
       // Sync local chatHistory with parent messages if available
       setChatHistory(messages);
-      setVfsFiles(getVfsMap());
+      const lastBuildMsg = [...messages]
+        .reverse()
+        .find((m: any) => m?.projectBuild?.projectId && m.projectBuild.status !== 'failed');
+      if (lastBuildMsg?.projectBuild?.projectId) {
+        const msgBuild = lastBuildMsg.projectBuild as ProjectBuildMetadata;
+        if (currentChatId) {
+          sessionProjectMapRef.current.set(currentChatId, msgBuild.projectId);
+          projectPreviewController.setSessionProjectMeta(currentChatId, msgBuild);
+        }
+        if (WorkspaceManager.getInstance().getActiveProjectId() !== msgBuild.projectId) {
+          void projectPreviewController.restoreProjectForSession(currentChatId, messages).then((restored) => {
+            if (restored) {
+              setVfsFiles(getVfsMap());
+              setProjectMetaState((prev) => ({
+                ...prev,
+                projectId: restored.projectId,
+                name: restored.name || prev.name,
+                version: restored.version || prev.version,
+                previewUrl: restored.previewUrl || prev.previewUrl,
+              }));
+              setReloadKey((k) => k + 1);
+            }
+          });
+        } else {
+          setVfsFiles(getVfsMap());
+        }
+      } else {
+        setVfsFiles(getVfsMap());
+      }
     }
   }, [messages]);
 
@@ -1155,15 +1546,11 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   }, [vfsFiles]);
 
   const [attachedFiles, setAttachedFiles] = useState<
-    Array<{
-      id: string;
-      name: string;
-      size: number;
-      type: string;
-      data?: string;
-      textContent?: string;
-      previewUrl?: string;
-    }>
+    Array<
+      ComposerAttachedFile & {
+        data?: string;
+      }
+    >
   >([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1540,10 +1927,19 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     isSubmittingRef.current = true;
     setActivePopover('none');
 
-    const query = messageText.trim() || (capturedVisionImmediate ? 'Analyze the attached camera/screen snapshot' : 'Analyze attached file(s)');
+    const firstVoiceNoteWithText = attachedFiles.find((f) => f.isVoiceNote && f.transcript?.trim());
+    const anyVoiceNote = attachedFiles.find((f) => f.isVoiceNote);
+    const query =
+      messageText.trim() ||
+      firstVoiceNoteWithText?.transcript?.trim() ||
+      (anyVoiceNote
+        ? `Listen and respond to the attached voice note (${formatVoiceDuration(anyVoiceNote.durationSec)})`
+        : capturedVisionImmediate
+          ? 'Analyze the attached camera/screen snapshot'
+          : 'Analyze attached file(s)');
 
     const userAttachedForBubble = [
-      ...attachedFiles,
+      ...attachedFiles.map(({ data: _omitRawData, ...rest }) => rest),
       ...(capturedVisionImmediate
         ? [
             {
@@ -2222,6 +2618,8 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       const responseFileCount =
         orchRes.files && typeof orchRes.files === 'object' ? Object.keys(orchRes.files).length : 0;
 
+      let messageProjectBuild: ProjectBuildMetadata | undefined = undefined;
+
       if (isBuildRequest || responseFileCount > 0) {
         const isSuccess = orchRes.success !== false && responseFileCount > 0 && orchRes.verificationStatus !== 'FAILED';
         if (orchRes.verification) {
@@ -2235,6 +2633,29 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           const resolvedProjectName =
             (typeof orchRes.project?.name === 'string' && orchRes.project.name) ||
             generateRealProjectTitle(query);
+          const resolvedVersion =
+            Number(orchRes.project?.version) || (isExplicitUpdate ? projectMetaState.version + 1 : 1);
+          const resolvedProjectType =
+            (typeof orchRes.project?.projectType === 'string' && orchRes.project.projectType) || 'website';
+          const resolvedPreviewUrl =
+            typeof orchRes.preview?.previewUrl === 'string' ? orchRes.preview.previewUrl : undefined;
+          const resolvedPreviewId =
+            typeof orchRes.preview?.previewId === 'string' ? orchRes.preview.previewId : undefined;
+
+          projectPreviewController.activateProject({
+            projectId: resolvedProjectId,
+            name: resolvedProjectName,
+            version: resolvedVersion,
+            projectType: resolvedProjectType,
+            files: orchRes.files,
+            previewUrl: resolvedPreviewUrl,
+            previewId: resolvedPreviewId,
+            sessionId: currentChatId,
+            ownerUserId: user?.uid,
+            verificationScore: orchRes.verification?.score,
+            buildStatus: 'READY',
+          });
+
           const mgr = WorkspaceManager.getInstance();
           if (resolvedProjectId && mgr.getActiveProjectId() !== resolvedProjectId) {
             mgr.switchWorkspace(resolvedProjectId, resolvedProjectName, user?.uid || 'global', 'fullstack');
@@ -2264,11 +2685,25 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           setProjectMetaState({
             projectId: resolvedProjectId,
             name: resolvedProjectName,
-            version: Number(orchRes.project?.version) || (isExplicitUpdate ? projectMetaState.version + 1 : 1),
-            previewUrl: typeof orchRes.preview?.previewUrl === 'string' ? orchRes.preview.previewUrl : null,
+            version: resolvedVersion,
+            previewUrl: resolvedPreviewUrl || null,
             lastSavedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             isSaving: false,
           });
+
+          messageProjectBuild = {
+            projectId: resolvedProjectId,
+            name: resolvedProjectName,
+            version: resolvedVersion,
+            projectType: resolvedProjectType,
+            fileCount: Object.keys(updatedMap).length,
+            status: 'ready',
+            previewUrl: resolvedPreviewUrl,
+            previewId: resolvedPreviewId,
+            verificationScore: orchRes.verification?.score,
+            isIncrementalEdit: isExplicitUpdate,
+            updatedAt: new Date().toISOString(),
+          };
 
           setIsSplitScreen(true);
           setPreviewTab('preview');
@@ -2308,6 +2743,16 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
             error: failureDetail,
             diagnostics: Array.isArray(orchRes.diagnostics) ? orchRes.diagnostics : [],
           });
+          messageProjectBuild = {
+            projectId: projectId || 'failed_build',
+            name: generateRealProjectTitle(query),
+            version: projectMetaState.version || 1,
+            projectType: 'website',
+            fileCount: 0,
+            status: 'failed',
+            error: failureDetail,
+            updatedAt: new Date().toISOString(),
+          };
           executionStreamManager.failExecution(`BUILD_FAILED: ${failureDetail}`);
         }
       }
@@ -2319,6 +2764,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         content: fullText,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         ...(Array.isArray(orchRes.sources) && orchRes.sources.length > 0 ? { sources: orchRes.sources } : {}),
+        ...(messageProjectBuild ? { projectBuild: messageProjectBuild } : {}),
       };
 
       setChatHistory((prev) => {
@@ -2351,11 +2797,24 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         }
         executionStreamManager.failExecution(err.message || 'Pipeline failed');
         showNotice('Message could not be sent — your prompt draft was preserved.', 'error');
+        const failedProjectBuild: ProjectBuildMetadata | undefined = isBuildRequest
+          ? {
+              projectId: projectMetaState.projectId || 'failed_build',
+              name: projectMetaState.name || generateRealProjectTitle(query),
+              version: projectMetaState.version || 1,
+              projectType: 'website',
+              fileCount: 0,
+              status: 'failed',
+              error: err?.message || 'Project generation failed before completion.',
+              updatedAt: new Date().toISOString(),
+            }
+          : undefined;
         const errBotMsg = {
           id: (Date.now() + 1).toString(),
           role: 'assistant' as const,
           content: formatNaturalConversation(`I could not complete that request. ${err?.message || 'The requested operation failed before completion.'}`),
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          ...(failedProjectBuild ? { projectBuild: failedProjectBuild } : {}),
         };
         setChatHistory((prev) => {
           const cleanPrev = prev.filter((m: any) => !isSynthesisOrPlaceholderContent(m.content));
@@ -2415,17 +2874,141 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     },
   ];
 
+  const activateBuildFromCard = async (build: ProjectBuildMetadata) => {
+    if (!build?.projectId || build.status === 'failed') return;
+    const mgr = WorkspaceManager.getInstance();
+    projectPreviewController.ensureProjectOwnershipRegistered(build.projectId, user?.uid);
+    if (mgr.getActiveProjectId() !== build.projectId) {
+      mgr.switchWorkspace(build.projectId, build.name || build.projectId, user?.uid || 'global', 'fullstack');
+    }
+    let currentMap = getVfsMap();
+    if (Object.keys(currentMap).length === 0 && build.projectId.startsWith('proj_')) {
+      const restored = await projectPreviewController.restoreProjectForSession(currentChatId, messages);
+      if (restored) {
+        currentMap = getVfsMap();
+      }
+    }
+    setVfsFiles(currentMap);
+    const preferredFile =
+      currentMap['/src/App.tsx'] !== undefined
+        ? '/src/App.tsx'
+        : Object.keys(currentMap)[0] || activeCodeFile;
+    if (preferredFile) {
+      setActiveCodeFile(preferredFile);
+      setOpenTabs((prev) => Array.from(new Set([preferredFile, ...prev.filter((p) => currentMap[p] !== undefined)])));
+    }
+    setProjectMetaState((prev) => ({
+      ...prev,
+      projectId: build.projectId,
+      name: build.name || prev.name,
+      version: build.version || prev.version || 1,
+      previewUrl: build.previewUrl || prev.previewUrl,
+    }));
+  };
+
+  const handleShareBuildCard = async (build: ProjectBuildMetadata): Promise<string | undefined> => {
+    await activateBuildFromCard(build);
+    const cleanFiles: Record<string, string> = {};
+    const allFiles = getVfsMap();
+    for (const [k, v] of Object.entries(allFiles)) {
+      if (!k.startsWith('/__anny_')) {
+        cleanFiles[k] = v;
+      }
+    }
+    try {
+      const res = await fetchWithAuth('/api/preview/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: build.projectId,
+          name: build.name,
+          files: cleanFiles,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      const urlCandidate =
+        data?.session?.previewUrl ||
+        data?.preview?.previewUrl ||
+        build.previewUrl ||
+        projectMetaState.previewUrl;
+      if (typeof urlCandidate === 'string' && urlCandidate.startsWith('/api/preview/sessions/')) {
+        const fullUrl =
+          typeof window !== 'undefined' ? `${window.location.origin}${urlCandidate}` : urlCandidate;
+        try {
+          await navigator.clipboard?.writeText(fullUrl);
+        } catch {
+          // ignore clipboard restriction
+        }
+        const link = document.createElement('a');
+        link.href = urlCandidate;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showNotice(`Opened standalone Share preview for ${build.name} (v${build.version}).`, 'success');
+        return fullUrl;
+      }
+      throw new Error(data?.error || 'Could not start standalone preview session.');
+    } catch (err: any) {
+      showNotice(err?.message || 'Unable to share project preview.', 'error');
+      return undefined;
+    }
+  };
+
+  const resolveMessageProjectBuild = (msg: any, isLatestAssistantMsg: boolean): ProjectBuildMetadata | null => {
+    if (msg?.projectBuild?.projectId) {
+      // Keep the card's version and file count synced if it refers to the currently active project
+      if (
+        msg.projectBuild.projectId === projectMetaState.projectId &&
+        msg.projectBuild.status !== 'failed'
+      ) {
+        return {
+          ...msg.projectBuild,
+          name: projectMetaState.name || msg.projectBuild.name,
+          version: Math.max(Number(msg.projectBuild.version) || 1, Number(projectMetaState.version) || 1),
+          fileCount: Object.keys(vfsFiles).filter((k) => !k.startsWith('/__anny_')).length || msg.projectBuild.fileCount,
+          previewUrl: projectMetaState.previewUrl || msg.projectBuild.previewUrl,
+        };
+      }
+      return msg.projectBuild as ProjectBuildMetadata;
+    }
+    // Fallback for legacy/restored sessions that have an active built app on the latest assistant message
+    if (isLatestAssistantMsg && hasBuiltApp && projectMetaState.projectId) {
+      return {
+        projectId: projectMetaState.projectId,
+        name: projectMetaState.name || 'Generated Website',
+        version: projectMetaState.version || 1,
+        projectType: 'website',
+        fileCount: Object.keys(vfsFiles).filter((k) => !k.startsWith('/__anny_')).length,
+        status: 'ready',
+        previewUrl: projectMetaState.previewUrl || undefined,
+        verificationScore: buildVerification?.score,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    return null;
+  };
+
   if (isVisualEditor) {
+    const activeEditorSessionId =
+      projectMetaState.projectId && projectMetaState.projectId.startsWith('proj_')
+        ? projectMetaState.projectId
+        : WorkspaceManager.getInstance().getActiveProjectId() || currentChatId || undefined;
     return (
       <AnnyProfessionalEditor
         userEmail={userEmail}
         userName={userName}
-        sessionId={currentChatId || undefined}
+        sessionId={activeEditorSessionId}
         onBackToWorkspace={() => {
           setIsVisualEditor(false);
           setIsSplitScreen(false);
         }}
-        onBackToSplitView={() => setIsVisualEditor(false)}
+        onBackToSplitView={() => {
+          setIsVisualEditor(false);
+          setIsSplitScreen(true);
+          setPreviewTab('preview');
+        }}
       />
     );
   }
@@ -2586,25 +3169,35 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
               {/* Chat Scrollable Area */}
               <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs font-sans">
                 {/* Real Conversation Messages */}
-                {((messages.length > 0 ? messages : chatHistory).length > 0
-                  ? (messages.length > 0 ? messages : chatHistory)
-                  : [
-                      {
-                        id: 'init-user',
-                        role: 'user',
-                        content: 'Generate a modern e-commerce platform with product listing, cart, checkout and user dashboard.',
-                        timestamp: '10:42 AM',
-                      },
-                      {
-                        id: 'init-bot',
-                        role: 'assistant',
-                        content: "I'll create a modern e-commerce platform with all the essential features you requested.",
-                        timestamp: '10:42 AM',
-                      },
-                    ]
-                )
-                  .filter((msg: any) => !isSynthesisOrPlaceholderContent(msg.content))
-                  .map((msg: any) => (
+                {(() => {
+                  const splitMessages = (
+                    (messages.length > 0 ? messages : chatHistory).length > 0
+                      ? messages.length > 0
+                        ? messages
+                        : chatHistory
+                      : [
+                          {
+                            id: 'init-user',
+                            role: 'user',
+                            content: 'Generate a modern e-commerce platform with product listing, cart, checkout and user dashboard.',
+                            timestamp: '10:42 AM',
+                          },
+                          {
+                            id: 'init-bot',
+                            role: 'assistant',
+                            content: "I'll create a modern e-commerce platform with all the essential features you requested.",
+                            timestamp: '10:42 AM',
+                          },
+                        ]
+                  ).filter((msg: any) => !isSynthesisOrPlaceholderContent(msg.content));
+                  const lastAssistantId = [...splitMessages].reverse().find((m: any) => m.role === 'assistant')?.id;
+
+                  return splitMessages.map((msg: any) => {
+                    const resolvedBuild =
+                      msg.role === 'assistant'
+                        ? resolveMessageProjectBuild(msg, msg.id === lastAssistantId)
+                        : null;
+                    return (
                   <div
                     key={msg.id}
                     className={`flex flex-col space-y-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
@@ -2640,19 +3233,32 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                     >
                       {msg.attachedFiles && msg.attachedFiles.length > 0 && (
                         <div className="flex flex-wrap gap-1.5 mb-2 pb-2 border-b border-white/10">
-                          {msg.attachedFiles.map((f: any, idx: number) => (
-                            <div
-                              key={idx}
-                              className="px-2 py-1 bg-white/5 border border-white/10 rounded-lg flex items-center gap-1.5 text-[10px] text-cyan-300 font-mono"
-                            >
-                              {f.previewUrl ? (
-                                <img src={f.previewUrl} alt={f.name} className="w-5 h-5 object-cover rounded shrink-0" />
-                              ) : (
-                                <FileText className="w-3 h-3 text-cyan-400 shrink-0" />
-                              )}
-                              <span className="truncate max-w-[120px]">{f.name}</span>
-                            </div>
-                          ))}
+                          {msg.attachedFiles.map((f: any, idx: number) =>
+                            f.isVoiceNote ? (
+                              <VoiceNoteAttachmentCard
+                                key={f.id || idx}
+                                name={f.name}
+                                audioUrl={f.audioUrl}
+                                durationSec={f.durationSec}
+                                transcript={f.transcript}
+                                transcriptionEngine={f.transcriptionEngine}
+                                transcribed={f.transcribed}
+                                theme={themeMode}
+                              />
+                            ) : (
+                              <div
+                                key={idx}
+                                className="px-2 py-1 bg-white/5 border border-white/10 rounded-lg flex items-center gap-1.5 text-[10px] text-cyan-300 font-mono"
+                              >
+                                {f.previewUrl ? (
+                                  <img src={f.previewUrl} alt={f.name} className="w-5 h-5 object-cover rounded shrink-0" />
+                                ) : (
+                                  <FileText className="w-3 h-3 text-cyan-400 shrink-0" />
+                                )}
+                                <span className="truncate max-w-[120px]">{f.name}</span>
+                              </div>
+                            )
+                          )}
                         </div>
                       )}
                       <p className="whitespace-pre-wrap">{msg.content || ''}</p>
@@ -2704,6 +3310,45 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                       {msg.generatedVideo && <VerifiedVideoCard job={msg.generatedVideo} />}
                       {msg.generatedAudio && <VerifiedAudioCard audio={msg.generatedAudio} />}
 
+                      {resolvedBuild && (
+                        <ChatProjectBuildCard
+                          build={resolvedBuild}
+                          isActiveProject={projectMetaState.projectId === resolvedBuild.projectId}
+                          onOpenPreview={(b) => {
+                            void activateBuildFromCard(b).then(() => {
+                              setIsSplitScreen(true);
+                              setPreviewTab('preview');
+                              setMobileSplitView('preview');
+                              setIsFullscreenPreview(false);
+                              setReloadKey((k) => k + 1);
+                            });
+                          }}
+                          onOpenEditor={(b) => {
+                            void activateBuildFromCard(b).then(() => {
+                              setIsVisualEditor(true);
+                            });
+                          }}
+                          onViewCode={(b) => {
+                            void activateBuildFromCard(b).then(() => {
+                              setIsSplitScreen(true);
+                              setPreviewTab('code');
+                              setMobileSplitView('preview');
+                              setIsFullscreenPreview(false);
+                            });
+                          }}
+                          onOpenFullscreen={(b) => {
+                            void activateBuildFromCard(b).then(() => {
+                              setIsSplitScreen(true);
+                              setPreviewTab('preview');
+                              setMobileSplitView('preview');
+                              setIsFullscreenPreview(true);
+                            });
+                          }}
+                          onShareProject={(b) => handleShareBuildCard(b)}
+                          onRetryBuild={lastBuildPrompt ? () => handleSend(lastBuildPrompt) : undefined}
+                        />
+                      )}
+
                       {/* Action Icons for Split View */}
                       <div className={`flex items-center gap-3 mt-3 pt-2 border-t border-white/5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         {msg.role === 'user' ? (
@@ -2741,27 +3386,14 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                             >
                               <Volume2 className="w-3.5 h-3.5" />
                             </button>
-                            {hasBuiltApp && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setIsSplitScreen(true);
-                                  setPreviewTab('preview');
-                                  setMobileSplitView('preview');
-                                }}
-                                className="ml-auto px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/35 hover:bg-cyan-500/25 text-cyan-300 text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_10px_rgba(6,182,212,0.15)] hover:scale-105 active:scale-95"
-                                title="Launch Live Preview"
-                              >
-                                <Globe className="w-3 h-3 text-cyan-400 animate-pulse" />
-                                <span>Launch Preview</span>
-                              </button>
-                            )}
                           </>
                         )}
                       </div>
                     </div>
                   </div>
-                ))}
+                    );
+                  });
+                })()}
 
                 {/* Real-time Execution Stream View directly above Chat Input */}
                 <ExecutionStreamView className="my-2" />
@@ -2965,6 +3597,20 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                   onToggleVoiceInput={startListening}
                   onStopSpeechRecognition={stopSpeechRecognition}
                   onStopMediaRecording={stopMediaRecording}
+                  isRecordingVoiceNote={isRecordingVoiceNote}
+                  isVoiceNotePaused={isVoiceNotePaused}
+                  isProcessingVoiceNote={isProcessingVoiceNote}
+                  voiceNoteElapsedSec={voiceNoteElapsedSec}
+                  voiceNoteAnalyser={voiceNoteAnalyser}
+                  voiceNoteError={voiceNoteError}
+                  retryingVoiceNoteId={retryingVoiceNoteId}
+                  onStartVoiceNote={startVoiceNoteRecording}
+                  onPauseResumeVoiceNote={pauseResumeVoiceNoteRecording}
+                  onStopVoiceNote={() => stopVoiceNoteRecording(false)}
+                  onCancelVoiceNote={() => stopVoiceNoteRecording(true)}
+                  onDismissVoiceNoteError={() => setVoiceNoteError(null)}
+                  onRetryVoiceNoteStt={handleRetryVoiceNoteStt}
+                  onInsertVoiceNoteTranscript={handleInsertVoiceNoteTranscript}
                   onAttachFilesClick={() => fileInputRef.current?.click()}
                   isWebSearchEnabled={isWebSearchEnabled}
                   onToggleWebSearch={() => {
@@ -3192,7 +3838,11 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                         buildDiagnostics={buildFailureInfo?.diagnostics}
                         onRetryBuild={lastBuildPrompt ? () => handleSend(lastBuildPrompt) : undefined}
                         setRightTab={setPreviewTab}
-                        activeProjectId={WorkspaceManager.getInstance().getActiveProjectId() || activeProj?.id || 'anny-project'}
+                        activeProjectId={
+                          projectMetaState.projectId && projectMetaState.projectId.startsWith('proj_')
+                            ? projectMetaState.projectId
+                            : WorkspaceManager.getInstance().getActiveProjectId() || activeProj?.id || 'anny-project'
+                        }
                         reloadKey={reloadKey}
                         previewRuntimeReady={hasBuiltApp && !isGenerating && !buildFailureInfo}
                         onOpenVisualEdit={() => setIsVisualEditor(true)}
@@ -3588,9 +4238,21 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
               ) : (
                 /* CHAT CONVERSATION THREAD */
                 <div className="flex-1 space-y-5 py-2 w-full">
-                  {(messages.length > 0 ? messages : chatHistory)
-                    .filter((msg: any) => !isSynthesisOrPlaceholderContent(msg.content))
-                    .map((msg: any) => (
+                  {(() => {
+                    const visibleStandardMessages = (messages.length > 0 ? messages : chatHistory).filter(
+                      (msg: any) => !isSynthesisOrPlaceholderContent(msg.content)
+                    );
+                    const lastStandardAssistantMsg = [...visibleStandardMessages]
+                      .reverse()
+                      .find((m: any) => m.role === 'assistant');
+                    const lastStandardAssistantId = lastStandardAssistantMsg?.id;
+
+                    return visibleStandardMessages.map((msg: any) => {
+                      const resolvedBuild =
+                        msg.role === 'assistant'
+                          ? resolveMessageProjectBuild(msg, msg.id === lastStandardAssistantId)
+                          : null;
+                      return (
                     <div
                       key={msg.id}
                       className={`flex flex-col space-y-1.5 w-full ${
@@ -3627,23 +4289,36 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                       >
                         {msg.attachedFiles && msg.attachedFiles.length > 0 && (
                           <div className="flex flex-wrap gap-2 mb-2.5 pb-2.5 border-b border-white/10">
-                            {msg.attachedFiles.map((f: any, idx: number) => (
-                              <div
-                                key={idx}
-                                className="px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-xl flex items-center gap-2 text-[11px] text-cyan-200 font-mono"
-                              >
-                                {f.previewUrl ? (
-                                  <img
-                                    src={f.previewUrl}
-                                    alt={f.name}
-                                    className="w-8 h-8 object-cover rounded-lg border border-white/15 shrink-0"
-                                  />
-                                ) : (
-                                  <FileText className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                                )}
-                                <span className="truncate max-w-[160px]">{f.name}</span>
-                              </div>
-                            ))}
+                            {msg.attachedFiles.map((f: any, idx: number) =>
+                              f.isVoiceNote ? (
+                                <VoiceNoteAttachmentCard
+                                  key={f.id || idx}
+                                  name={f.name}
+                                  audioUrl={f.audioUrl}
+                                  durationSec={f.durationSec}
+                                  transcript={f.transcript}
+                                  transcriptionEngine={f.transcriptionEngine}
+                                  transcribed={f.transcribed}
+                                  theme={themeMode}
+                                />
+                              ) : (
+                                <div
+                                  key={idx}
+                                  className="px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-xl flex items-center gap-2 text-[11px] text-cyan-200 font-mono"
+                                >
+                                  {f.previewUrl ? (
+                                    <img
+                                      src={f.previewUrl}
+                                      alt={f.name}
+                                      className="w-8 h-8 object-cover rounded-lg border border-white/15 shrink-0"
+                                    />
+                                  ) : (
+                                    <FileText className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                                  )}
+                                  <span className="truncate max-w-[160px]">{f.name}</span>
+                                </div>
+                              )
+                            )}
                           </div>
                         )}
                         <div className="whitespace-pre-wrap">
@@ -3665,6 +4340,50 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                               </a>
                             ))}
                           </div>
+                        )}
+
+                        {/* Permanent Website / Application Build Action Panel */}
+                        {resolvedBuild && (
+                          <ChatProjectBuildCard
+                            build={resolvedBuild}
+                            isActiveProject={projectMetaState.projectId === resolvedBuild.projectId}
+                            onOpenPreview={(b) => {
+                              void activateBuildFromCard(b).then(() => {
+                                setIsSplitScreen(true);
+                                setPreviewTab('preview');
+                                setMobileSplitView('preview');
+                                setIsFullscreenPreview(false);
+                                setReloadKey((k) => k + 1);
+                              });
+                            }}
+                            onOpenEditor={(b) => {
+                              void activateBuildFromCard(b).then(() => {
+                                setIsVisualEditor(true);
+                              });
+                            }}
+                            onViewCode={(b) => {
+                              void activateBuildFromCard(b).then(() => {
+                                setIsSplitScreen(true);
+                                setPreviewTab('code');
+                                setMobileSplitView('preview');
+                                setIsFullscreenPreview(false);
+                              });
+                            }}
+                            onOpenFullscreen={(b) => {
+                              void activateBuildFromCard(b).then(() => {
+                                setIsSplitScreen(true);
+                                setPreviewTab('preview');
+                                setMobileSplitView('preview');
+                                setIsFullscreenPreview(true);
+                              });
+                            }}
+                            onShareProject={(b) => handleShareBuildCard(b)}
+                            onRetryBuild={
+                              lastBuildPrompt
+                                ? () => void handleSend(lastBuildPrompt)
+                                : undefined
+                            }
+                          />
                         )}
 
                         {/* Image Generation Loading Animation */}
@@ -3831,7 +4550,9 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                         </div>
                       </div>
                     </div>
-                  ))}
+                      );
+                    });
+                  })()}
 
                   {/* Google AI Studio Style Loading Details Indicator at BOTTOM of Chat Thread */}
                   <AnimatePresence>
@@ -4055,6 +4776,20 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
               onToggleVoiceInput={startListening}
               onStopSpeechRecognition={stopSpeechRecognition}
               onStopMediaRecording={stopMediaRecording}
+              isRecordingVoiceNote={isRecordingVoiceNote}
+              isVoiceNotePaused={isVoiceNotePaused}
+              isProcessingVoiceNote={isProcessingVoiceNote}
+              voiceNoteElapsedSec={voiceNoteElapsedSec}
+              voiceNoteAnalyser={voiceNoteAnalyser}
+              voiceNoteError={voiceNoteError}
+              retryingVoiceNoteId={retryingVoiceNoteId}
+              onStartVoiceNote={startVoiceNoteRecording}
+              onPauseResumeVoiceNote={pauseResumeVoiceNoteRecording}
+              onStopVoiceNote={() => stopVoiceNoteRecording(false)}
+              onCancelVoiceNote={() => stopVoiceNoteRecording(true)}
+              onDismissVoiceNoteError={() => setVoiceNoteError(null)}
+              onRetryVoiceNoteStt={handleRetryVoiceNoteStt}
+              onInsertVoiceNoteTranscript={handleInsertVoiceNoteTranscript}
               onAttachFilesClick={() => fileInputRef.current?.click()}
               isWebSearchEnabled={isWebSearchEnabled}
               onToggleWebSearch={() => {

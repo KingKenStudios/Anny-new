@@ -348,16 +348,36 @@ export class PreviewRuntimeService {
             ? 'jsx'
             : 'js';
 
-      const transformed = esbuild.transformSync(safeContent, {
-        loader,
-        format: 'cjs',
-        jsx: 'transform',
-        jsxFactory: 'React.createElement',
-        jsxFragment: 'React.Fragment',
-        target: 'es2020',
-        sourcefile: filePath,
-      });
-      transpiledModules[filePath] = transformed.code;
+      try {
+        const transformed = esbuild.transformSync(safeContent, {
+          loader,
+          format: 'cjs',
+          jsx: 'transform',
+          jsxFactory: 'React.createElement',
+          jsxFragment: 'React.Fragment',
+          target: 'es2020',
+          sourcefile: filePath,
+          logLevel: 'silent',
+        });
+        transpiledModules[filePath] = transformed.code;
+      } catch (transformErr: any) {
+        const errItems: Array<{ text?: string; location?: { line?: number; column?: number } }> =
+          Array.isArray(transformErr?.errors) ? transformErr.errors : [];
+        const formattedDetails =
+          errItems.length > 0
+            ? errItems
+                .slice(0, 3)
+                .map((item) => {
+                  const loc = item.location ? ` (${item.location.line}:${item.location.column})` : '';
+                  return `${filePath}${loc} -> ${item.text || 'syntax error'}`;
+                })
+                .join(' | ')
+            : String(transformErr?.message || 'Compilation failed')
+                .replace(/\bERROR:\s*/gi, '')
+                .replace(/\r?\n/g, ' | ')
+                .slice(0, 260);
+        throw new Error(`PREVIEW_COMPILE_DIAGNOSTIC: ${formattedDetails}`);
+      }
     }
 
     // Validate reachable local imports

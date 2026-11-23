@@ -15,6 +15,8 @@ import {
   Wrench,
   CheckCircle2,
   Code2,
+  Share2,
+  Check,
 } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
 import { AnnyBuildPreviewOverlay, type BuildStageItem } from '../AnnyBuildPreviewOverlay';
@@ -26,12 +28,14 @@ import {
   buildValidatedVfsSnapshotPayload,
   isValidPreviewFrameMessage,
   generatePreviewHandshakeId,
+  loadOfflineReactVendorScript,
 } from '../StandalonePreviewRunner';
 import {
   authorizeProjectForPreviewSnapshot,
   invalidatePreviewSessionAuthorizations,
   migrateLegacyLocalProjectOwnership,
 } from '../../services/projectOwnershipService';
+import { projectPreviewController } from '../../services/projectPreviewController';
 
 export interface WorkspacePreviewContainerProps {
   isPreviewFullScreen: boolean;
@@ -121,6 +125,7 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
     lineno?: number;
   } | null>(null);
   const [isOpeningTab, setIsOpeningTab] = useState<boolean>(false);
+  const [shareCopied, setShareCopied] = useState<boolean>(false);
   const compiledCssCacheRef = useRef<{ hash: string; css: string } | null>(null);
 
   // Target viewport dimensions
@@ -236,34 +241,41 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
       setAuthDenialState(null);
       setRuntimeErrorState(null);
       const rawFiles = readAuthorizedProjectVfsSnapshot(authResult.context);
-      let snapshotFiles = rawFiles;
+      let snapshotFiles = { ...rawFiles };
 
       if (Object.keys(rawFiles).length > 0) {
         const hash = hashFilesSnapshot(rawFiles);
-        if (compiledCssCacheRef.current?.hash !== hash) {
-          try {
-            const cssRes = await fetchWithAuth('/api/preview/runtime/compile-css', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ files: rawFiles }),
-            });
-            if (cssRes.ok) {
-              const cssData = await cssRes.json().catch(() => null);
-              if (cssData?.success && typeof cssData.css === 'string') {
-                compiledCssCacheRef.current = { hash, css: cssData.css };
+        const [vendorJs] = await Promise.all([
+          loadOfflineReactVendorScript(typeof window !== 'undefined' ? window.location.origin : ''),
+          (async () => {
+            if (compiledCssCacheRef.current?.hash !== hash) {
+              try {
+                const cssRes = await fetchWithAuth('/api/preview/runtime/compile-css', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ files: rawFiles }),
+                });
+                if (cssRes.ok) {
+                  const cssData = await cssRes.json().catch(() => null);
+                  if (cssData?.success && typeof cssData.css === 'string') {
+                    compiledCssCacheRef.current = { hash, css: cssData.css };
+                  }
+                }
+              } catch {
+                // Non-fatal: iframe still has base CSS + utility fallbacks
               }
             }
-          } catch {
-            // Non-fatal: iframe still has base CSS + utility fallbacks
-          }
-        }
+          })(),
+        ]);
+
         if (authEpochRef.current !== effectEpoch) return;
         if (iframeRef.current?.contentWindow !== expectedWindow) return;
+
         if (compiledCssCacheRef.current?.hash === hash && compiledCssCacheRef.current.css) {
-          snapshotFiles = {
-            ...rawFiles,
-            '/__anny_compiled_tailwind.css': compiledCssCacheRef.current.css,
-          };
+          snapshotFiles['/__anny_compiled_tailwind.css'] = compiledCssCacheRef.current.css;
+        }
+        if (vendorJs) {
+          snapshotFiles['/__anny_react_vendor.js'] = vendorJs;
         }
       }
 
@@ -315,11 +327,18 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
       if (msgType === 'PREVIEW_READY' && data.projectId === sanitizedAuthorizedId) {
         setRuntimeVerified(true);
         setRuntimeErrorState(null);
+        projectPreviewController.setPreviewRunning();
       }
 
       if (msgType === 'PREVIEW_NAVIGATION') {
-        if (typeof data.route === 'string' && data.route.trim()) {
-          setCurrentRoute(data.route.trim());
+        const navPath =
+          typeof data.path === 'string' && data.path.trim()
+            ? data.path.trim()
+            : typeof data.route === 'string' && data.route.trim()
+              ? data.route.trim()
+              : '';
+        if (navPath) {
+          setCurrentRoute(navPath);
         }
         if (typeof data.canGoBack === 'boolean') {
           setCanGoBack(data.canGoBack);
@@ -331,14 +350,16 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
 
       if (msgType === 'PREVIEW_RUNTIME_ERROR') {
         setRuntimeVerified(false);
+        const errMsg =
+          typeof data.message === 'string' && data.message.trim()
+            ? data.message.trim()
+            : 'Runtime error inside preview application.';
         setRuntimeErrorState({
-          message:
-            typeof data.message === 'string' && data.message.trim()
-              ? data.message.trim()
-              : 'Runtime error inside preview application.',
+          message: errMsg,
           filename: typeof data.filename === 'string' ? data.filename : undefined,
           lineno: typeof data.lineno === 'number' ? data.lineno : undefined,
         });
+        projectPreviewController.setRuntimeError(errMsg);
       }
     };
 
@@ -382,11 +403,16 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
     win.postMessage({ type: 'PREVIEW_NAVIGATE_COMMAND', action }, '*');
   };
 
-  const handleOpenInNewTab = async () => {
-    if (isOpeningTab) return;
+  const resolveStandalonePreviewUrl = async (): Promise<string> => {
     const filesMap: Record<string, string> = {};
     try {
-      const vfsFiles = WorkspaceManager.getInstance().getVFS().getAllFiles();
+      const mgr = WorkspaceManager.getInstance();
+      const projectVfs = mgr.getWorkspaceVFS(sanitizedAuthorizedId);
+      projectVfs.reloadFromStorage();
+      let vfsFiles = projectVfs.getAllFiles();
+      if (vfsFiles.length === 0) {
+        vfsFiles = mgr.getVFS().getAllFiles();
+      }
       vfsFiles.forEach((f) => {
         filesMap[f.path] = f.content;
       });
@@ -395,35 +421,40 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
     }
 
     if (Object.keys(filesMap).length === 0) {
-      onOpenNewTabError?.('Generate or load a project first before opening it in a new tab.');
-      return;
+      throw new Error('Generate or load a project first before opening or sharing it.');
     }
 
+    let targetUrl = '';
+    const res = await fetchWithAuth('/api/preview/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: sanitizedAuthorizedId,
+        name: projectName || sanitizedAuthorizedId,
+        files: filesMap,
+      }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.success) {
+      const urlCandidate = data.session?.previewUrl || data.preview?.previewUrl;
+      if (typeof urlCandidate === 'string' && urlCandidate.startsWith('/api/preview/sessions/')) {
+        targetUrl = urlCandidate;
+      }
+    }
+    if (!targetUrl && previewSessionUrl && previewSessionUrl.startsWith('/api/preview/sessions/')) {
+      targetUrl = previewSessionUrl;
+    }
+    if (!targetUrl || !targetUrl.startsWith('/api/preview/sessions/')) {
+      throw new Error(data?.error || `Unable to start isolated preview session (HTTP ${res.status})`);
+    }
+    return targetUrl;
+  };
+
+  const handleOpenInNewTab = async () => {
+    if (isOpeningTab) return;
     setIsOpeningTab(true);
     try {
-      let targetUrl = '';
-      const res = await fetchWithAuth('/api/preview/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: sanitizedAuthorizedId,
-          name: projectName || sanitizedAuthorizedId,
-          files: filesMap,
-        }),
-      });
-      const data = await res.json().catch(() => null);
-      if (res.ok && data?.success && typeof data.preview?.previewUrl === 'string') {
-        targetUrl = data.preview.previewUrl;
-      } else if (previewSessionUrl && previewSessionUrl.startsWith('/api/preview/sessions/')) {
-        targetUrl = previewSessionUrl;
-      } else {
-        throw new Error(data?.error || `Unable to start isolated preview session (HTTP ${res.status})`);
-      }
-
-      if (!targetUrl.startsWith('/api/preview/sessions/')) {
-        throw new Error('Preview URL did not match a valid sandboxed session route.');
-      }
-
+      const targetUrl = await resolveStandalonePreviewUrl();
       const link = document.createElement('a');
       link.href = targetUrl;
       link.target = '_blank';
@@ -433,6 +464,36 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
       document.body.removeChild(link);
     } catch (err: any) {
       onOpenNewTabError?.(err?.message || 'Unable to open standalone preview tab.');
+    } finally {
+      setIsOpeningTab(false);
+    }
+  };
+
+  const handleShareProject = async () => {
+    if (isOpeningTab) return;
+    setIsOpeningTab(true);
+    try {
+      const targetUrl = await resolveStandalonePreviewUrl();
+      const fullShareUrl =
+        typeof window !== 'undefined' && targetUrl.startsWith('/')
+          ? `${window.location.origin}${targetUrl}`
+          : targetUrl;
+      try {
+        await navigator.clipboard?.writeText(fullShareUrl);
+      } catch {
+        // clipboard may be restricted in some iframe environments
+      }
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 3000);
+      const link = document.createElement('a');
+      link.href = targetUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err: any) {
+      onOpenNewTabError?.(err?.message || 'Unable to create share link.');
     } finally {
       setIsOpeningTab(false);
     }
@@ -591,6 +652,20 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
             </select>
           )}
 
+          {/* Share Project */}
+          {hasExistingProject && (
+            <button
+              type="button"
+              onClick={() => void handleShareProject()}
+              disabled={isOpeningTab || buildState === 'in_progress'}
+              className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-200 font-semibold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-45 whitespace-nowrap shrink-0"
+              title="Open and copy standalone shareable preview link"
+            >
+              {shareCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Share2 className="w-3 h-3 text-emerald-400" />}
+              <span className="hidden sm:inline">{shareCopied ? 'Shared!' : 'Share'}</span>
+            </button>
+          )}
+
           {/* Open in New Tab */}
           {hasExistingProject && (
             <button
@@ -613,7 +688,7 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
               className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[11px] flex items-center gap-1 shadow-md transition-all cursor-pointer whitespace-nowrap shrink-0"
             >
               <Pencil className="w-3 h-3" />
-              <span className="hidden sm:inline">Visual Edit</span>
+              <span className="hidden sm:inline">Open Editor</span>
             </button>
           )}
 

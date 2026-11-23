@@ -22,6 +22,7 @@ import { ImageControls } from './editor/components/ImageControls';
 import { AssetLibrary } from './editor/components/AssetLibrary';
 import { AssetUploadService } from '../services/assetUploadService';
 import { ProjectImageExporter, ExportOptions } from './editor/services/ProjectImageExporter';
+import { projectPreviewController } from '../services/projectPreviewController';
 
 // CANONICAL ANNY PROFESSIONAL EDITOR
 // DO NOT REDESIGN OR REPLACE. REPAIR ONLY.
@@ -275,7 +276,29 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
     const [isSaving, setIsSaving] = useState(false);
     const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved');
     const [vfsFiles, setVfsFiles] = useState<string[]>([]);
-    
+    const [vfsFileMap, setVfsFileMap] = useState<Record<string, string>>({});
+    const [editorViewMode, setEditorViewMode] = useState<'canvas' | 'code'>('canvas');
+    const [activeCodeFilePath, setActiveCodeFilePath] = useState<string>('/src/App.tsx');
+    const [newFilePathInput, setNewFilePathInput] = useState<string>('');
+    const [isCreatingNewFile, setIsCreatingNewFile] = useState<boolean>(false);
+    const [hasUnsavedCodeChanges, setHasUnsavedCodeChanges] = useState<boolean>(false);
+    const [canvasReloadKey, setCanvasReloadKey] = useState<number>(0);
+
+    // Resolve authoritative project ID from sessionId, projectPreviewController, or WorkspaceManager
+    const controllerSnapshot = projectPreviewController.getState();
+    const effectiveProjectId =
+        sessionId && sessionId.startsWith('proj_')
+            ? sessionId
+            : controllerSnapshot.activeProjectId && controllerSnapshot.activeProjectId.startsWith('proj_')
+              ? controllerSnapshot.activeProjectId
+              : WorkspaceManager.getInstance().getActiveProjectId() || sessionId || 'default-session';
+    const [projectTitle, setProjectTitle] = useState<string>(
+        controllerSnapshot.projectName || `Project ${effectiveProjectId}`
+    );
+    const [projectVersion, setProjectVersion] = useState<number>(
+        controllerSnapshot.version || 1
+    );
+
     // Color Picker state
     const [currentColor, setCurrentColor] = useState('#8B5CF6');
     const [rgbVals, setRgbVals] = useState({ r: 139, g: 92, b: 246 });
@@ -534,33 +557,83 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
 
     useEffect(() => {
         const wsManager = WorkspaceManager.getInstance();
-        if (sessionId) {
-            wsManager.switchWorkspace(sessionId, `Session ${sessionId}`);
+        if (effectiveProjectId) {
+            projectPreviewController.ensureProjectOwnershipRegistered(effectiveProjectId);
+            wsManager.switchWorkspace(effectiveProjectId, projectTitle || `Project ${effectiveProjectId}`);
         }
-        const vfs = wsManager.getVFS();
+        const vfs = wsManager.getWorkspaceVFS(effectiveProjectId);
         vfs.reloadFromStorage();
-        setVfsFiles(vfs.getAllFiles().map(f => f.path));
+
+        const syncFromVfs = () => {
+            const all = vfs.getAllFiles();
+            const paths = all.map(f => f.path).filter(p => !p.startsWith('/__anny_'));
+            const map: Record<string, string> = {};
+            for (const f of all) {
+                if (!f.path.startsWith('/__anny_')) {
+                    map[f.path] = f.content;
+                }
+            }
+            setVfsFiles(paths);
+            setVfsFileMap(map);
+            setActiveCodeFilePath(prev => {
+                if (prev && map[prev] !== undefined) return prev;
+                if (map['/src/App.tsx'] !== undefined) return '/src/App.tsx';
+                if (map['/App.tsx'] !== undefined) return '/App.tsx';
+                return paths[0] || '/src/App.tsx';
+            });
+        };
+
+        syncFromVfs();
+
+        // If VFS is empty for a proj_* ID, attempt restoration via projectPreviewController
+        if (vfs.getAllFiles().length === 0 && effectiveProjectId.startsWith('proj_')) {
+            void projectPreviewController
+                .restoreProjectForSession({
+                    projectId: effectiveProjectId,
+                    name: projectTitle,
+                    version: projectVersion,
+                    projectType: 'website',
+                    fileCount: 0,
+                    status: 'ready',
+                    updatedAt: new Date().toISOString(),
+                })
+                .then((restored) => {
+                    if (restored) {
+                        syncFromVfs();
+                        setProjectTitle(projectPreviewController.getState().projectName || projectTitle);
+                        setProjectVersion(projectPreviewController.getState().version || projectVersion);
+                    }
+                });
+        }
+
+        const unsubController = projectPreviewController.subscribe((st) => {
+            if (st.activeProjectId === effectiveProjectId) {
+                if (st.projectName) setProjectTitle(st.projectName);
+                if (st.version) setProjectVersion(st.version);
+            }
+        });
 
         const unsubVfs = vfs.watch(() => {
-            setVfsFiles(vfs.getAllFiles().map(f => f.path));
+            syncFromVfs();
         });
 
         const handleVfsChangedEvent = (e?: any) => {
             const eventProjectId = e?.detail?.projectId;
-            if (sessionId && eventProjectId && sessionId !== eventProjectId) {
+            if (effectiveProjectId && eventProjectId && effectiveProjectId !== eventProjectId) {
                 return; // Ignore VFS changes from background sessions
             }
-            setVfsFiles(vfs.getAllFiles().map(f => f.path));
+            syncFromVfs();
             setSaveStatus('saving');
         };
 
         window.addEventListener('anny_vfs_changed', handleVfsChangedEvent);
 
         return () => {
+            unsubController();
             unsubVfs();
             window.removeEventListener('anny_vfs_changed', handleVfsChangedEvent);
         };
-    }, [sessionId]);
+    }, [effectiveProjectId]);
 
     useEffect(() => {
         // Clear selection when switching to tools where transform handles don't make sense
@@ -745,16 +818,16 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
         };
     }, [selectedElement, activeTool, previousTool, copiedElement, showToolFlyout]);
 
-    // Auto-save effect
+    // Auto-save effect to local VFS storage
     useEffect(() => {
         setSaveStatus('saving');
         const timer = setTimeout(async () => {
             try {
                 const wsManager = WorkspaceManager.getInstance();
-                const files = wsManager.getVFS().getAllFiles();
-                localStorage.setItem(`anny_session_${sessionId}`, JSON.stringify(files));
+                const files = wsManager.getWorkspaceVFS(effectiveProjectId).getAllFiles();
+                localStorage.setItem(`anny_session_${effectiveProjectId}`, JSON.stringify(files));
                 
-                await setDoc(doc(db, 'sessions', sessionId), {
+                await setDoc(doc(db, 'sessions', effectiveProjectId), {
                     userId: auth.currentUser?.uid || 'anonymous',
                     files,
                     updatedAt: new Date().toISOString()
@@ -767,19 +840,40 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
             }
         }, 1500);
         return () => clearTimeout(timer);
-    }, [vfsFiles, sessionId]);
+    }, [vfsFiles, effectiveProjectId]);
 
     const handleSave = async () => {
         setIsSaving(true);
+        setSaveStatus('saving');
         try {
             const wsManager = WorkspaceManager.getInstance();
-            const files = wsManager.getVFS().getAllFiles();
-            localStorage.setItem(`anny_session_${sessionId}`, JSON.stringify(files));
-            
+            const vfs = wsManager.getWorkspaceVFS(effectiveProjectId);
+            const filesList = vfs.getAllFiles();
+            const filesRecord: Record<string, string> = {};
+            for (const f of filesList) {
+                if (!f.path.startsWith('/__anny_')) {
+                    filesRecord[f.path] = f.content;
+                }
+            }
+            localStorage.setItem(`anny_session_${effectiveProjectId}`, JSON.stringify(filesList));
+
+            const saveRes = await projectPreviewController.saveActiveProjectFiles({
+                projectId: effectiveProjectId,
+                files: filesRecord,
+                summary: `Saved project edits in Anny Editorial Studio (${Object.keys(filesRecord).length} files)`,
+            });
+
+            if (saveRes.version) {
+                setProjectVersion(saveRes.version);
+            }
+            setHasUnsavedCodeChanges(false);
+            setCanvasReloadKey(prev => prev + 1);
+
             try {
-                await setDoc(doc(db, 'sessions', sessionId), {
+                await setDoc(doc(db, 'sessions', effectiveProjectId), {
                     userId: auth.currentUser?.uid || 'anonymous',
-                    files,
+                    files: filesList,
+                    version: saveRes.version,
                     updatedAt: new Date().toISOString()
                 }, { merge: true });
             } catch (e) {
@@ -787,13 +881,70 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
             }
 
             setSaveStatus('saved');
-            setActionHistory(prev => ['Project Saved to LocalStorage & Cloud', ...prev]);
+            setEditorSuccess(`Saved ${projectTitle} (v${saveRes.version}) to VFS & Server`);
+            setActionHistory(prev => [`Saved ${projectTitle} (v${saveRes.version}) to VFS & Server`, ...prev]);
         } catch (e) {
             console.error("Save error:", e);
             setSaveStatus('error');
         } finally {
             setIsSaving(false);
         }
+    };
+
+    const handleEditorCodeChange = (filePath: string, newContent: string) => {
+        const wsManager = WorkspaceManager.getInstance();
+        const vfs = wsManager.getWorkspaceVFS(effectiveProjectId);
+        vfs._unsafe_writeFile(filePath, newContent, false);
+        setVfsFileMap(prev => ({ ...prev, [filePath]: newContent }));
+        setHasUnsavedCodeChanges(true);
+        setSaveStatus('saving');
+        projectPreviewController.markUnsavedChanges(true);
+    };
+
+    const handleEditorCreateFile = () => {
+        const raw = newFilePathInput.trim();
+        if (!raw) return;
+        const normalizedPath = raw.startsWith('/') ? raw : `/src/${raw}`;
+        const wsManager = WorkspaceManager.getInstance();
+        const vfs = wsManager.getWorkspaceVFS(effectiveProjectId);
+        const defaultContent = normalizedPath.endsWith('.tsx')
+            ? `import React from 'react';\n\nexport default function Component() {\n  return <div className="p-4">New Component</div>;\n}\n`
+            : normalizedPath.endsWith('.css')
+              ? `/* Styles for ${normalizedPath} */\n`
+              : `// ${normalizedPath}\n`;
+        vfs._unsafe_writeFile(normalizedPath, defaultContent, false);
+        setVfsFileMap(prev => ({ ...prev, [normalizedPath]: defaultContent }));
+        setVfsFiles(prev => (prev.includes(normalizedPath) ? prev : [...prev, normalizedPath]));
+        setActiveCodeFilePath(normalizedPath);
+        setNewFilePathInput('');
+        setIsCreatingNewFile(false);
+        setHasUnsavedCodeChanges(true);
+        projectPreviewController.markUnsavedChanges(true);
+        setActionHistory(prev => [`Created file ${normalizedPath}`, ...prev]);
+    };
+
+    const handleEditorDeleteFile = (filePath: string) => {
+        if (filePath === '/src/App.tsx' || filePath === '/package.json') {
+            setEditorError(`Cannot delete protected entrypoint file ${filePath}`);
+            return;
+        }
+        const wsManager = WorkspaceManager.getInstance();
+        const vfs = wsManager.getWorkspaceVFS(effectiveProjectId);
+        if (typeof (vfs as any)._unsafe_delete === 'function') {
+            (vfs as any)._unsafe_delete(filePath);
+        }
+        setVfsFileMap(prev => {
+            const next = { ...prev };
+            delete next[filePath];
+            return next;
+        });
+        setVfsFiles(prev => prev.filter(p => p !== filePath));
+        if (activeCodeFilePath === filePath) {
+            setActiveCodeFilePath('/src/App.tsx');
+        }
+        setHasUnsavedCodeChanges(true);
+        projectPreviewController.markUnsavedChanges(true);
+        setActionHistory(prev => [`Deleted file ${filePath}`, ...prev]);
     };
 
     const hexToRgb = (hex: string) => {
@@ -1041,22 +1192,76 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
 
             {/* TOP ACTIONS BAR (Vite/Save/Viewport) */}
             <div className="h-12 bg-[#0c0e17] border-b border-white/10 flex items-center justify-between px-4 shrink-0 z-20">
-                <div className="flex items-center gap-6">
+                <div className="flex items-center gap-3">
+                    {onBackToSplitView && (
+                        <button 
+                            onClick={onBackToSplitView}
+                            data-testid="editor-back-to-preview"
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-400/30 text-indigo-200 hover:text-white transition-colors cursor-pointer"
+                            title="Return to Live Split Preview"
+                        >
+                            <ArrowLeft className="w-3.5 h-3.5" />
+                            <span className="text-[11px] font-bold uppercase tracking-wider">Back to Preview</span>
+                        </button>
+                    )}
+
                     <button 
-                        onClick={onBack || onBackToWorkspace || onBackToSplitView}
-                        className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors"
+                        onClick={onBackToWorkspace || onBack || onBackToSplitView}
+                        data-testid="editor-back-to-chat"
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                        title="Return to Chat Conversation"
                     >
-                        <ArrowLeft className="w-4 h-4" />
-                        <span className="text-xs font-bold uppercase tracking-widest">Back</span>
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                        <span className="text-[11px] font-bold uppercase tracking-wider">Back to Chat</span>
                     </button>
 
                     <div className="flex items-center gap-2 px-3 py-1 bg-white/5 rounded-full border border-white/10">
                         <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                        <span className="text-[10px] font-bold text-slate-300">SESSION: {sessionId.toUpperCase()}</span>
+                        <span className="text-[10px] font-bold text-slate-200 truncate max-w-[180px]" title={effectiveProjectId}>
+                            {projectTitle}
+                        </span>
+                        <span className="px-1.5 py-0.2 rounded bg-purple-500/20 border border-purple-400/30 text-[9px] font-mono text-purple-300">
+                            v{projectVersion}
+                        </span>
+                        <span className="text-[9px] font-mono text-slate-400">
+                            ({vfsFiles.length} files)
+                        </span>
+                    </div>
+
+                    {/* Canvas vs Code & Files Mode Switcher */}
+                    <div className="flex items-center gap-1 bg-[#121524] p-0.5 rounded-lg border border-white/10 text-xs">
+                        <button
+                            type="button"
+                            onClick={() => setEditorViewMode('canvas')}
+                            data-testid="editor-mode-canvas"
+                            className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                                editorViewMode === 'canvas'
+                                    ? 'bg-purple-600 text-white shadow'
+                                    : 'text-slate-400 hover:text-white'
+                            }`}
+                        >
+                            Visual Canvas
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setEditorViewMode('code')}
+                            data-testid="editor-mode-code"
+                            className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                                editorViewMode === 'code'
+                                    ? 'bg-indigo-600 text-white shadow'
+                                    : 'text-slate-400 hover:text-white'
+                            }`}
+                        >
+                            <FileText className="w-3 h-3" />
+                            <span>Code &amp; Files</span>
+                            {hasUnsavedCodeChanges && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                            )}
+                        </button>
                     </div>
 
                     {/* Quick Undo/Redo */}
-                    <div className="flex items-center gap-1 border-l border-white/10 pl-4 ml-2">
+                    <div className="flex items-center gap-1 border-l border-white/10 pl-3">
                         <button 
                             onClick={() => {
                                 const success = RealProjectSourcePatcher.undo();
@@ -1086,7 +1291,7 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
                         <button
                             key={w}
                             onClick={() => setViewportWidth(w)}
-                            className={`px-2.5 py-0.5 rounded-md text-[11px] font-medium transition-all ${viewportWidth === w ? 'bg-purple-600 text-white font-bold shadow' : 'text-slate-400 hover:text-white'}`}
+                            className={`px-2.5 py-0.5 rounded-md text-[11px] font-medium transition-all cursor-pointer ${viewportWidth === w ? 'bg-purple-600 text-white font-bold shadow' : 'text-slate-400 hover:text-white'}`}
                         >
                             {w === '1920px' ? 'Desktop' : w === '768px' ? 'Tablet' : w === '375px' ? 'Mobile' : 'Fluid'}
                         </button>
@@ -1095,10 +1300,36 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
 
                 {/* Right Actions */}
                 <div className="flex items-center gap-2">
-                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded flex items-center gap-1 ${saveStatus === 'saved' ? 'text-emerald-400 bg-emerald-500/10' : 'text-amber-400 bg-amber-500/10'}`}>
-                        <div className={`w-1.5 h-1.5 rounded-full ${saveStatus === 'saved' ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
-                        {saveStatus === 'saved' ? 'LIVE VFS SYNC' : 'SAVING...'}
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded flex items-center gap-1 ${
+                        hasUnsavedCodeChanges
+                            ? 'text-amber-300 bg-amber-500/15 border border-amber-400/30'
+                            : saveStatus === 'saved'
+                              ? 'text-emerald-400 bg-emerald-500/10'
+                              : 'text-amber-400 bg-amber-500/10'
+                    }`}>
+                        <div className={`w-1.5 h-1.5 rounded-full ${
+                            hasUnsavedCodeChanges
+                                ? 'bg-amber-400 animate-pulse'
+                                : saveStatus === 'saved'
+                                  ? 'bg-emerald-400'
+                                  : 'bg-amber-400 animate-pulse'
+                        }`} />
+                        {hasUnsavedCodeChanges ? 'UNSAVED EDITS' : saveStatus === 'saved' ? 'LIVE VFS SYNC' : 'SAVING...'}
                     </span>
+
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setCanvasReloadKey(prev => prev + 1);
+                            window.dispatchEvent(new CustomEvent('anny_vfs_changed', { detail: { projectId: effectiveProjectId } }));
+                            setActionHistory(prev => ['Refreshed Live Preview Canvas', ...prev]);
+                        }}
+                        className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 font-bold text-xs rounded shadow transition-all flex items-center gap-1.5 cursor-pointer"
+                        title="Rebuild and Refresh Live Preview"
+                    >
+                        <RotateCcw className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Rebuild Preview</span>
+                    </button>
 
                     <button 
                         onClick={() => {
@@ -1107,7 +1338,7 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
                             }
                         }}
                         disabled={!!uploadProgress}
-                        className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs rounded shadow transition-all flex items-center gap-1.5 disabled:opacity-50"
+                        className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs rounded shadow transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                     >
                         {uploadProgress ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
@@ -1119,10 +1350,11 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
                     <button 
                         onClick={handleSave}
                         disabled={isSaving}
-                        className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded shadow transition-all flex items-center gap-1.5 disabled:opacity-50"
+                        data-testid="editor-save-project"
+                        className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded shadow transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                     >
                         <Save className="w-3.5 h-3.5" />
-                        {isSaving ? 'Saving...' : 'Save Session'}
+                        {isSaving ? 'Saving...' : `Save Project (v${projectVersion})`}
                     </button>
                 </div>
             </div>
@@ -1273,7 +1505,146 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
                     </div>
                 </div>
 
-                {/* CANVAS CENTER STAGE */}
+                {/* CANVAS OR CODE & FILES CENTER STAGE */}
+                {editorViewMode === 'code' ? (
+                    <div className="flex-1 bg-[#050711] flex overflow-hidden min-w-0" data-testid="editor-code-view">
+                        {/* Project File Tree Sidebar */}
+                        <div className="w-64 bg-[#090c1a] border-r border-white/10 flex flex-col shrink-0">
+                            <div className="p-3 border-b border-white/10 flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <FolderOpen className="w-4 h-4 text-indigo-400" />
+                                    <span className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                                        Project Files ({vfsFiles.length})
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsCreatingNewFile(prev => !prev)}
+                                    className="px-2 py-1 rounded bg-indigo-600/20 hover:bg-indigo-600/35 border border-indigo-400/30 text-indigo-200 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                                    title="Create New File"
+                                >
+                                    <Plus className="w-3 h-3" />
+                                    <span>New File</span>
+                                </button>
+                            </div>
+
+                            {isCreatingNewFile && (
+                                <div className="p-2.5 border-b border-white/10 bg-[#0d1126] space-y-2">
+                                    <input
+                                        type="text"
+                                        value={newFilePathInput}
+                                        onChange={e => setNewFilePathInput(e.target.value)}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Enter') handleEditorCreateFile();
+                                            if (e.key === 'Escape') setIsCreatingNewFile(false);
+                                        }}
+                                        placeholder="/src/components/NewSection.tsx"
+                                        className="w-full px-2.5 py-1.5 rounded bg-black/50 border border-white/15 text-xs text-white font-mono outline-none focus:border-indigo-400"
+                                    />
+                                    <div className="flex items-center justify-end gap-1.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsCreatingNewFile(false)}
+                                            className="px-2 py-1 rounded text-[10px] text-slate-400 hover:text-white cursor-pointer"
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleEditorCreateFile}
+                                            className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold cursor-pointer"
+                                        >
+                                            Create
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
+                                {vfsFiles.map(filePath => {
+                                    const isSelected = filePath === activeCodeFilePath;
+                                    const isProtected = filePath === '/src/App.tsx' || filePath === '/package.json';
+                                    return (
+                                        <div
+                                            key={filePath}
+                                            className={`group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-mono transition-colors cursor-pointer ${
+                                                isSelected
+                                                    ? 'bg-indigo-600/25 border border-indigo-400/40 text-white font-bold'
+                                                    : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+                                            }`}
+                                            onClick={() => setActiveCodeFilePath(filePath)}
+                                        >
+                                            <span className="truncate flex items-center gap-2" title={filePath}>
+                                                <FileText className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                                                <span className="truncate">{filePath}</span>
+                                            </span>
+                                            {!isProtected && (
+                                                <button
+                                                    type="button"
+                                                    onClick={e => {
+                                                        e.stopPropagation();
+                                                        handleEditorDeleteFile(filePath);
+                                                    }}
+                                                    className="opacity-0 group-hover:opacity-100 p-1 hover:text-rose-400 transition-opacity cursor-pointer"
+                                                    title={`Delete ${filePath}`}
+                                                >
+                                                    <Trash2 className="w-3 h-3" />
+                                                </button>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Source Code Editor & Live Side-by-Side Preview */}
+                        <div className="flex-1 flex flex-col min-w-0">
+                            <div className="h-10 bg-[#0b0e1f] border-b border-white/10 px-4 flex items-center justify-between">
+                                <div className="flex items-center gap-2 font-mono text-xs text-cyan-300">
+                                    <FileText className="w-3.5 h-3.5" />
+                                    <span>{activeCodeFilePath}</span>
+                                    {hasUnsavedCodeChanges && (
+                                        <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-400/30 text-[10px] text-amber-300">
+                                            Modified
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={handleSave}
+                                        disabled={isSaving}
+                                        className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                    >
+                                        <Save className="w-3.5 h-3.5" />
+                                        <span>Save &amp; Sync Preview</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="flex-1 grid grid-cols-1 xl:grid-cols-2 min-h-0 overflow-hidden">
+                                <textarea
+                                    value={vfsFileMap[activeCodeFilePath] ?? ''}
+                                    onChange={e => handleEditorCodeChange(activeCodeFilePath, e.target.value)}
+                                    spellCheck={false}
+                                    data-testid="editor-code-textarea"
+                                    className="w-full h-full bg-[#050711] text-slate-100 font-mono text-xs p-4 outline-none resize-none border-r border-white/10 leading-relaxed custom-scrollbar"
+                                />
+                                <div className="w-full h-full bg-white overflow-hidden relative flex flex-col">
+                                    <div className="h-7 bg-[#0c0e17] border-b border-white/10 px-3 flex items-center justify-between text-[10px] font-mono text-slate-300 shrink-0">
+                                        <span>LIVE INTERACTIVE PREVIEW ({effectiveProjectId} • v{projectVersion})</span>
+                                        <span className="text-emerald-400">REAL-TIME VFS</span>
+                                    </div>
+                                    <div className="flex-1 relative overflow-auto">
+                                        <DynamicVFSAppRunner
+                                            key={`code-runner-${effectiveProjectId}-${canvasReloadKey}`}
+                                            projectId={effectiveProjectId}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                ) : (
                 <div 
                     className="flex-1 bg-[#05060a] overflow-auto p-8 relative flex flex-col items-start justify-start select-none"
                     style={{ cursor: activeTool === 'hand' || activeSubTool === 'hand' ? 'grab' : 'default' }}
@@ -1315,10 +1686,14 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
                             />
 
                             {/* LIVE RUNTIME RENDERER */}
-                            <DynamicVFSAppRunner />
+                            <DynamicVFSAppRunner
+                                key={`canvas-runner-${effectiveProjectId}-${canvasReloadKey}`}
+                                projectId={effectiveProjectId}
+                            />
                         </div>
                     </div>
                 </div>
+                )}
 
                 {/* RIGHT DOCK: 13 Photoshop Tabs Across 3 Panels - Entire Dock Vertically Scrollable */}
                 <div className="w-80 bg-[#0c0e17] border-l border-white/10 flex flex-col shrink-0 z-30 h-full min-h-0 overflow-y-auto custom-scrollbar p-0">
