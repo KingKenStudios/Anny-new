@@ -886,9 +886,9 @@ async function startServer() {
   app.post("/api/admin/logout", async (req: AuthenticatedRequest, res) => {
     const authHeader = String(req.headers.authorization || '');
     const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
-    if (bearer) authSecurityPlatform.revokeSession(bearer);
+    if (bearer) await authSecurityPlatform.revokeSessionPersistent(bearer);
     const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : '';
-    if (refreshToken) authSecurityPlatform.revokeRefreshToken(refreshToken);
+    if (refreshToken) await authSecurityPlatform.revokeRefreshTokenPersistent(refreshToken);
     const cookieHeader = String(req.headers.cookie || '');
     const match = cookieHeader.match(new RegExp(`${ADMIN_COOKIE_NAME}=([^;]+)`));
     if (match?.[1]) {
