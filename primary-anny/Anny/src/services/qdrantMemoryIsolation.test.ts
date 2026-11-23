@@ -51,7 +51,7 @@ test('conversation memory is session-scoped and never fabricates embeddings', as
     );
 
     await assert.rejects(
-      () => qdrantPlatform.search('conversation_memory', 'query', 3, undefined, sessionA),
+      () => qdrantPlatform.search('conversation_memory', 'query', 3, undefined, sessionA, 'owner-a'),
       /EMBEDDING_PROVIDER_UNAVAILABLE/
     );
   } finally {
