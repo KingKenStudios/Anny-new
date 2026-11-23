@@ -25,6 +25,7 @@ import { VoiceNoteAttachmentCard, formatVoiceDuration } from './components/chat/
 import { resolveDraftAfterFailedSend } from './components/chat/composerUtils';
 import { ChatProjectBuildCard } from './components/chat/ChatProjectBuildCard';
 import { projectPreviewController, resolveBestProjectId, type ProjectBuildMetadata } from './services/projectPreviewController';
+import { projectSaveOrchestrator } from './services/projectSaveOrchestrator';
 import {
   Sparkles,
   Command,
@@ -1659,94 +1660,54 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       const targetProjectId = explicitProjectId || getCanonicalProjectId();
       if (!targetProjectId || targetProjectId === 'ws_default_1') return;
 
-      if (projectSavingRef.current.has(targetProjectId)) {
-        projectDirtyRef.current.set(targetProjectId, true);
+      setProjectSaveStatuses((prev) => ({
+        ...prev,
+        [targetProjectId]: {
+          ...(prev[targetProjectId] || { isDirty: false, lastSavedAt: null, version: 1 }),
+          isSaving: true,
+          saveError: null,
+        },
+      }));
+
+      const result = await projectSaveOrchestrator.saveProjectFiles(
+        targetProjectId,
+        projectMetaState.name || 'Generated Website'
+      );
+
+      if (result.success) {
+        const savedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const newVersion = result.version || 1;
         setProjectSaveStatuses((prev) => ({
           ...prev,
           [targetProjectId]: {
-            ...(prev[targetProjectId] || { isSaving: false, isDirty: false, saveError: null, lastSavedAt: null, version: 1 }),
-            isDirty: true,
+            isSaving: false,
+            isDirty: projectSaveOrchestrator.isDirty(targetProjectId),
+            saveError: null,
+            lastSavedAt: savedTime,
+            version: newVersion,
           },
         }));
-        return;
-      }
-      projectSavingRef.current.add(targetProjectId);
 
-      try {
-        do {
-          projectDirtyRef.current.set(targetProjectId, false);
-          const vfsFilesMap = projectPreviewController.extractFilesFromVFS(targetProjectId);
-
-          const cleanFiles: Record<string, string> = {};
-          for (const [k, v] of Object.entries(vfsFilesMap) as [string, string][]) {
-            if (!k.startsWith('/__anny_')) {
-              cleanFiles[k] = v;
-            }
-          }
-
-          const knownMeta = projectPreviewController.getProjectMetaById(targetProjectId);
-          const targetProjectName = (projectMetaState.projectId === targetProjectId ? projectMetaState.name : null) || knownMeta?.name || targetProjectId;
-
-          setProjectSaveStatuses((prev) => ({
+        if (result.previewUrl && getCanonicalProjectId() === targetProjectId) {
+          setProjectMetaState((prev) => ({
             ...prev,
-            [targetProjectId]: {
-              ...(prev[targetProjectId] || { isDirty: false, lastSavedAt: null, version: 1 }),
-              isSaving: true,
-              saveError: null,
-            },
+            previewUrl: result.previewUrl!,
+            version: newVersion,
           }));
-
-          const res = await fetchWithAuth(`/api/anny/projects/${encodeURIComponent(targetProjectId)}/files`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ files: cleanFiles, name: targetProjectName }),
-          });
-          const data = await res.json().catch(() => null);
-
-          if (res.ok && data?.success) {
-            const newVersion = data.project?.version || (projectSaveStatuses[targetProjectId]?.version || 1) + 1;
-            const savedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-            setProjectSaveStatuses((prev) => ({
-              ...prev,
-              [targetProjectId]: {
-                isSaving: false,
-                isDirty: projectDirtyRef.current.get(targetProjectId) || false,
-                saveError: null,
-                lastSavedAt: savedTime,
-                version: newVersion,
-              },
-            }));
-
-            if (data.preview?.previewUrl && getCanonicalProjectId() === targetProjectId) {
-              setProjectMetaState((prev) => ({
-                ...prev,
-                previewUrl: data.preview.previewUrl,
-                version: newVersion,
-              }));
-            }
-          } else {
-            const errorMsg = data?.error || `HTTP ${res.status}`;
-            throw new Error(errorMsg);
-          }
-        } while (projectDirtyRef.current.get(targetProjectId));
-      } catch (err: any) {
-        const errorMsg = err?.message || 'Failed to save project files';
-        projectDirtyRef.current.set(targetProjectId, true);
+        }
+      } else {
         setProjectSaveStatuses((prev) => ({
           ...prev,
           [targetProjectId]: {
             ...(prev[targetProjectId] || { lastSavedAt: null, version: 1 }),
             isSaving: false,
             isDirty: true,
-            saveError: errorMsg,
+            saveError: result.error || 'Failed to save project files',
           },
         }));
-      } finally {
-        projectSavingRef.current.delete(targetProjectId);
       }
     },
-    [currentChatId, projectMetaState.name, projectSaveStatuses]
+    [currentChatId, projectMetaState.name]
   );
 
   const triggerProjectPersist = () => {

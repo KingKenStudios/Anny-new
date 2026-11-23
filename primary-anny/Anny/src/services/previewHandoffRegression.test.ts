@@ -7,6 +7,7 @@ import { projectPreviewController, hasApplicationEntryPoint } from './projectPre
 import { WorkspaceManager } from '../core/workspaceManager';
 import { safeStorage } from '../lib/storage';
 import { projectPersistenceService } from './projectPersistenceService';
+import { projectSaveOrchestrator } from './projectSaveOrchestrator';
 
 test('ANNY Preview Handoff & Project Restoration Regression Tests (A - I)', async (t) => {
   await t.test('A: identifies application entry point correctly for React and HTML apps', () => {
@@ -240,6 +241,59 @@ test('ANNY Preview Handoff & Project Restoration Regression Tests (A - I)', asyn
     assert.equal(finalB?.files['/src/B.tsx'], 'v2_b');
     assert.equal(finalA?.files['/src/B.tsx'], undefined);
     assert.equal(finalB?.files['/src/A.tsx'], undefined);
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  await t.test('L: production save orchestration concurrency and route isolation', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'anny-orch-test-'));
+    const storeFile = path.join(tmpDir, 'projects.json');
+    projectPersistenceService.setPersistencePathForTests(storeFile);
+
+    const projA = 'proj_orch_a';
+    const projB = 'proj_orch_b';
+
+    const mgr = WorkspaceManager.getInstance();
+    mgr.switchWorkspace(projA, 'Project A');
+    mgr.getWorkspaceVFS(projA)._unsafe_writeFile('/src/A.tsx', 'A-v1');
+
+    mgr.switchWorkspace(projB, 'Project B');
+    mgr.getWorkspaceVFS(projB)._unsafe_writeFile('/src/B.tsx', 'B-v1');
+
+    let resolveFetchA: (res: any) => void = () => {};
+    const fetchPromiseA = new Promise((res) => { resolveFetchA = res; });
+
+    const mockFetch = async (url: string, init?: RequestInit) => {
+      if (url.includes(projA)) {
+        await fetchPromiseA;
+      }
+      const body = JSON.parse(init?.body as string || '{}');
+      const targetId = url.includes(projA) ? projA : projB;
+      const updated = await projectPersistenceService.updateProjectFiles(
+        targetId,
+        'user_1',
+        body.files
+      );
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, project: updated }),
+      };
+    };
+
+    const saveA = projectSaveOrchestrator.saveProjectFiles(projA, 'Project A', mockFetch as any);
+    const saveB = projectSaveOrchestrator.saveProjectFiles(projB, 'Project B', mockFetch as any);
+
+    resolveFetchA(true);
+    await Promise.all([saveA, saveB]);
+
+    const finalA = await projectPersistenceService.getProjectById(projA);
+    const finalB = await projectPersistenceService.getProjectById(projB);
+
+    assert.ok(finalA);
+    assert.ok(finalB);
+    assert.equal(finalA?.files['/src/A.tsx'], 'A-v1');
+    assert.equal(finalB?.files['/src/B.tsx'], 'B-v1');
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
