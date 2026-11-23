@@ -266,6 +266,7 @@ export class ProjectPersistenceService {
     try {
       const dir = path.dirname(this.storePath);
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      try { fs.chmodSync(dir, 0o700); } catch {}
       const tmpPath = `${this.storePath}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString('hex')}.tmp`;
       const payload = JSON.stringify(
         {
