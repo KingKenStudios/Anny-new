@@ -619,6 +619,7 @@ export class ProjectPersistenceService {
         }
         return null;
       } catch (err: any) {
+        if (String(err?.message || '').includes('PROJECT_DISK_PERSISTENCE_FAILED')) throw err;
         console.warn('[ProjectPersistence] Postgres getProjectById warning:', err?.message || err);
       }
     }
