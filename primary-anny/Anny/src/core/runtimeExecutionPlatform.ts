@@ -210,7 +210,7 @@ export class RuntimeExecutionPlatform {
     } else {
       p.state = 'failed';
       p.metrics.healthStatus = 'critical';
-      this.addLog('error', 'compiler', `Compilation failed with ${compilation.errors.length} error(s).`, 1, projectId);
+      this.addLog('error', 'compiler', `Workspace structure check failed with ${compilation.errors.length} error(s).`, 1, projectId);
       compilation.errors.forEach(err => {
         this.addLog('error', 'compiler', `[${err.file}] ${err.message}`, 1, projectId);
       });
@@ -230,7 +230,7 @@ export class RuntimeExecutionPlatform {
 
     p.state = 'recovering';
     p.restartCount += 1;
-    this.addLog('warn', 'recovery', `🤖 [AUTONOMOUS RECOVERY] Analyzing ${errors.length} compilation crash logs for project '${p.name}'...`, 0, projectId);
+    this.addLog('warn', 'recovery', `🤖 [AUTONOMOUS RECOVERY] Analyzing ${errors.length} workspace structure validation issue(s) for project '${p.name}'...`, 0, projectId);
     this.notify();
 
     setTimeout(() => {
@@ -252,7 +252,7 @@ export class RuntimeExecutionPlatform {
         }
       });
 
-      this.addLog('info', 'recovery', `Re-evaluating compilation after autonomous code patch...`, 0, projectId);
+      this.addLog('info', 'recovery', `Re-running the lightweight structure check after the transaction-backed heuristic repair...`, 0, projectId);
       this.compileAndLaunch(projectId, context);
     }, 1200);
   }
