@@ -52,7 +52,7 @@ export class OllamaDiscoveryService {
       config.ollamaBaseUrl,
       'http://127.0.0.1:11434',
       'http://localhost:11434'
-    ])).filter(Boolean).map(endpoint => endpoint.replace(/\\/+$/, ''));
+    ])).filter(Boolean).map(endpoint => endpoint.replace(/\/+$/, ''));
 
     for (const endpoint of candidateEndpoints) {
       const startTime = Date.now();
