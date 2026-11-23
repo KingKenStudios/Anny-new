@@ -1338,6 +1338,10 @@ async function startServer() {
       }
 
       const normalizedResponse = formatNaturalConversation(kernelOutput.response || pipelineLog?.coding?.summary || 'Request completed.');
+      const mediaSummary = websiteMediaResult && (websiteMediaResult.generated.length || websiteMediaResult.warnings.length)
+        ? `\\n\\nWebsite media: ${websiteMediaResult.generated.length} asset(s) generated${websiteMediaResult.warnings.length ? `; ${websiteMediaResult.warnings.join(' ')}` : '.'}`
+        : '';
+      const responseWithMediaSummary = normalizedResponse + mediaSummary;
       const groundingSources = Array.isArray((kernelOutput as any)?.groundingSources)
         ? (kernelOutput as any).groundingSources
         : [];
@@ -1356,7 +1360,7 @@ async function startServer() {
         evaluation: pipelineLog?.evaluation,
         modelsExecuted: pipelineLog?.modelsExecuted,
         distinctModelCount: pipelineLog?.distinctModelCount,
-        response: normalizedResponse,
+        response: responseWithMediaSummary,
         sources: groundingSources,
         verificationStatus: kernelOutput.verificationStatus,
         project: persistedProjectRecord
