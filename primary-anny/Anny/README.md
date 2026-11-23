@@ -109,3 +109,15 @@ ANNY discovers the active Ollama endpoint from `OLLAMA_BASE_URL` and local loopb
 - CPU-based local inference has a longer default request timeout to accommodate first-load model initialization.
 - Explicitly selecting Ollama or enabling offline-only mode never silently falls back to a cloud provider.
 - A local inference failure invalidates the cached discovery so the next request can re-probe the endpoint.
+
+
+## Runtime adapter reality status
+
+The current Universal Execution Adapter Engine contains adapter metadata and placeholder lifecycle simulations, not real process-spawning/build adapters. It does not currently compile projects through those adapters, launch operating-system processes, expose verified preview endpoints, or connect Docker/Kubernetes/ROS 2/PLC/SCADA hardware.
+
+- Placeholder builds return `success: false` and explicitly state that no build ran.
+- Placeholder run state reports `SIMULATED`, PID `0`, and no preview URL.
+- Health is degraded or awaiting dependency rather than healthy.
+- Adapter selection does not launch a process when a real build adapter is unavailable.
+
+Use the separate verified workspace compilation/preview pipeline where it is actually available; do not treat these placeholder adapter results as a real deployment or runtime test.
