@@ -118,12 +118,12 @@ class FakeProjectPool {
       return { rows: [], rowCount: 0 };
     }
     if (/SELECT \* FROM anny_projects/.test(sql)) {
-      if (/WHERE project_id = \\$1/.test(sql)) {
+      if (/WHERE project_id = \$1/.test(sql)) {
         const row = this.rows.get(params[0]);
         return { rows: row ? [{ ...row }] : [], rowCount: row ? 1 : 0 };
       }
       const rows = [...this.rows.values()].filter(row =>
-        !/WHERE owner_user_id = \\$1/.test(sql) || row.owner_user_id === params[0]
+        !/WHERE owner_user_id = \$1/.test(sql) || row.owner_user_id === params[0]
       );
       return { rows: rows.map(row => ({ ...row })), rowCount: rows.length };
     }
