@@ -15,7 +15,8 @@ export function resolveOllamaModel(
     throw new Error('OFFLINE_UNAVAILABLE: Ollama is reachable but no local models are installed.');
   }
 
-  const requested = String(requestedModel || '').trim();
+  const rawRequested = String(requestedModel || '').trim();
+  const requested = rawRequested.replace(/^ollama:/i, '');
   const autoSelect = !requested || ['none', 'ollama', 'ollama-local', 'local', 'auto'].includes(requested.toLowerCase());
   if (autoSelect) return discoveredModels[0].name;
 
