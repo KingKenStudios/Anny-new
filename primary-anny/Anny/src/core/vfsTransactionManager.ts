@@ -35,10 +35,14 @@ class VFSTransactionManager {
 
   public async begin(projectId: string, sessionId: string, organizationId: string = 'global'): Promise<string> {
     const ws = WorkspaceManager.getInstance().getCurrentWorkspace();
-    
-    // STRICT SECURITY BOUNDARY ENFORCEMENT
-    if (ws && ws.id === projectId && ws.organizationId !== organizationId && organizationId !== 'global' && ws.organizationId !== 'global') {
-      throw new Error(`SECURITY_VIOLATION: Organization '${organizationId}' is not authorized to mutate project '${projectId}' (owned by '${ws.organizationId}').`);
+
+    // Mutations must target the currently active project and exact organization
+    // scope. "global" is a namespace, not a privilege escalation bypass.
+    if (!ws || ws.id !== projectId) {
+      throw new Error('PROJECT_CONTEXT_REQUIRED: VFS write transactions may only mutate the active workspace project.');
+    }
+    if (ws.organizationId !== organizationId) {
+      throw new Error(`SECURITY_VIOLATION: Organization '${organizationId}' is not authorized to mutate project '${projectId}' (active owner scope '${ws.organizationId}').`);
     }
 
     if (!await this.acquireLock(projectId)) {
