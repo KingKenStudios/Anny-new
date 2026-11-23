@@ -27,7 +27,7 @@ export interface OllamaDiscoveryResult {
 
 export function isOllamaChatModel(modelName: string): boolean {
   const name = String(modelName || '').toLowerCase();
-  return Boolean(name) && !/(embed|embedding|rerank|reranker|whisper|asr|clip)/.test(name);
+  return Boolean(name) && !/(embed|embedding|rerank|reranker|whisper|asr|clip|tts|text-to-speech|speech)/.test(name);
 }
 
 export class OllamaDiscoveryService {
