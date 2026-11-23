@@ -79,6 +79,7 @@ export function sanitizeProjectFilesMap(rawFiles: unknown): Record<string, strin
     const segments = normalized.split('/').filter(Boolean);
     if (segments.length === 0) continue;
     if (segments.some((s) => s === '.' || s === '..' || /^\.env(\.|$)/i.test(s))) continue;
+    if (segments.slice(0, -1).some((s) => /\.(?:json|jsonc|webmanifest)$/i.test(s))) continue;
     clean[normalized] = rawVal;
   }
   return clean;

@@ -39,7 +39,7 @@ export const AdvancedSettingsAndProfile: React.FC<AdvancedSettingsAndProfileProp
   const [activeTab, setActiveTab] = useState<'profile' | 'models' | 'security' | 'api' | 'appearance' | 'data'>('profile');
 
   // Profile state
-  const [displayName, setDisplayName] = useState(user?.displayName || (isGuest ? 'Guest Operator' : 'Kehinde Anny'));
+  const [displayName, setDisplayName] = useState(user?.displayName || (isGuest ? 'Guest Operator' : 'Akinwumi Kehinde'));
   const [photoURL, setPhotoURL] = useState(user?.photoURL || '/logo.png');
   const [roleTitle, setRoleTitle] = useState('Chief AI Architect / Lead Engineer');
   const [bio, setBio] = useState('Building universal offline-first AI ecosystem, robotics, and SCADA automation.');
@@ -71,7 +71,7 @@ export const AdvancedSettingsAndProfile: React.FC<AdvancedSettingsAndProfileProp
 
   useEffect(() => {
     if (user) {
-      setDisplayName(user.displayName || 'Kehinde Anny');
+      setDisplayName(user.displayName || 'Akinwumi Kehinde');
       setPhotoURL(user.photoURL || '/logo.png');
 
       const unsub = onSnapshot(doc(db, 'users', user.uid), (userDoc) => {
@@ -311,7 +311,7 @@ export const AdvancedSettingsAndProfile: React.FC<AdvancedSettingsAndProfileProp
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
                       className="w-full px-3.5 py-2.5 rounded-xl bg-black/50 border border-white/10 text-sm text-white outline-none focus:border-purple-500 transition-all"
-                      placeholder="e.g. Kehinde Anny"
+                      placeholder="e.g. Akinwumi Kehinde"
                     />
                   </div>
 

@@ -14,6 +14,11 @@ import { AnnySettingsView } from './views/AnnySettingsView';
 import { KingKenStudiosView } from './views/KingKenStudiosView';
 import { EngineeringSafetyView } from './views/EngineeringSafetyView';
 import { AnnyMediaArchStudioView } from './views/AnnyMediaArchStudioView';
+import { AnnyLanguagesView } from './views/AnnyLanguagesView';
+import { AnnyAiosControlView } from './views/AnnyAiosControlView';
+import { AnnyOrganizationsView } from './views/AnnyOrganizationsView';
+import { AnnyPortableRuntimeView } from './views/AnnyPortableRuntimeView';
+import { AnnyMasterIntelligenceAuditView } from './views/AnnyMasterIntelligenceAuditView';
 import CybersecurityCommand from './components/CybersecurityCommand';
 import { AnnySlideMenu } from './AnnySlideMenu';
 import { AnnyMenuStateProvider } from './MobileLogoMenu';
@@ -63,8 +68,8 @@ export const AnnyApp: React.FC<AnnyAppProps> = (props) => {
     user,
     userRole,
     isGuest,
-    userEmail = 'amazonpromo234@gmail.com',
-    userName = 'Akin Kehinde',
+    userEmail = 'akinwumigroup@gmail.com',
+    userName = 'Akinwumi Kehinde',
     userId = '',
     activeSubTab = 'anny',
     onToggleMobileMenu,
@@ -273,6 +278,36 @@ export const AnnyApp: React.FC<AnnyAppProps> = (props) => {
       return <CybersecurityCommand onToggleMobileMenu={handleToggleMenu} />;
     }
 
+    if (currentTab === 'languages' || currentTab === 'anny-languages' || currentTab === 'universal-languages') {
+      return (
+        <AnnyLanguagesView
+          onToggleMobileMenu={handleToggleMenu}
+          onSelectLanguagePrompt={handleOpenChatWithPrompt}
+        />
+      );
+    }
+
+    if (currentTab === 'aios-control' || currentTab === 'aios') {
+      return (
+        <AnnyAiosControlView
+          onToggleMobileMenu={handleToggleMenu}
+          onSelectTab={handleTabChange}
+        />
+      );
+    }
+
+    if (currentTab === 'organizations' || currentTab === 'orgs') {
+      return <AnnyOrganizationsView onToggleMobileMenu={handleToggleMenu} />;
+    }
+
+    if (currentTab === 'portable-runtime' || currentTab === 'portable') {
+      return <AnnyPortableRuntimeView onToggleMobileMenu={handleToggleMenu} />;
+    }
+
+    if (currentTab === 'master-audit' || currentTab === 'audit' || currentTab === 'capabilities' || currentTab === 'reality-verification') {
+      return <AnnyMasterIntelligenceAuditView onToggleMobileMenu={handleToggleMenu} />;
+    }
+
     if (currentTab === 'integrations' || currentTab === 'anny-integrations') {
       return <AnnyIntegrationsView onToggleMobileMenu={handleToggleMenu} />;
     }
@@ -309,6 +344,11 @@ export const AnnyApp: React.FC<AnnyAppProps> = (props) => {
     if (currentTab === 'engineering-safety' || currentTab === 'safety') return 'engineering-safety';
     if (currentTab === 'media-arch-studio' || currentTab === 'architecture' || currentTab === 'broadcast' || currentTab === 'distribution') return 'media-arch-studio';
     if (currentTab === 'watchdog' || currentTab === 'cybersecurity') return 'watchdog';
+    if (currentTab === 'languages' || currentTab === 'anny-languages' || currentTab === 'universal-languages') return 'languages';
+    if (currentTab === 'aios-control' || currentTab === 'aios') return 'aios-control';
+    if (currentTab === 'organizations' || currentTab === 'orgs') return 'organizations';
+    if (currentTab === 'portable-runtime' || currentTab === 'portable') return 'portable-runtime';
+    if (currentTab === 'master-audit' || currentTab === 'audit' || currentTab === 'capabilities' || currentTab === 'reality-verification') return 'master-audit';
     if (currentTab === 'integrations' || currentTab === 'anny-integrations') return 'integrations';
     if (currentTab === 'settings' || currentTab === 'anny-settings') return 'settings';
     return 'chats';

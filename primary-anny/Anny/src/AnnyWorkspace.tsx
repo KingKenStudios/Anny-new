@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { safeStorage } from './lib/storage';
 import { fetchWithAuth } from './lib/apiUtils';
-import { generateRealProjectTitle } from './lib/projectTitleUtils';
+import { generateRealProjectTitle, isGenericPlaceholderProjectTitle } from './lib/projectTitleUtils';
 import { systemBus } from './core/systemBus';
 import {
   isSynthesisOrPlaceholderContent,
@@ -378,8 +378,8 @@ interface AnnyWorkspaceProps {
 
 export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   user,
-  userEmail = 'amazonpromo234@gmail.com',
-  userName = 'Akin Kehinde',
+  userEmail = 'akinwumigroup@gmail.com',
+  userName = 'Akinwumi Kehinde',
   initialPrompt,
   onToggleMobileMenu,
   handleLogout,
@@ -416,7 +416,9 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() =>
     safeStorage.getItem('anny_theme') === 'light' ? 'light' : 'dark'
   );
-  const [currentTime, setCurrentTime] = useState('08:14 PM');
+  const [currentTime, setCurrentTime] = useState(() =>
+    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  );
 
   useEffect(() => {
     if (typeof selectedNeuralEngine === 'string' && selectedNeuralEngine.trim()) {
@@ -1119,6 +1121,11 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   const [lastBuildPrompt, setLastBuildPrompt] = useState<string>('');
   const [buildFailureInfo, setBuildFailureInfo] = useState<{ error: string; diagnostics: string[] } | null>(null);
   const [buildStages, setBuildStages] = useState<BuildStageItem[]>([]);
+  const [liveBuildProgress, setLiveBuildProgress] = useState<{
+    progressPct: number;
+    message: string;
+    files: string[];
+  } | null>(null);
   const [buildVerification, setBuildVerification] = useState<any>(null);
   const [currentlySpeakingId, setCurrentlySpeakingId] = useState<string | null>(null);
   const isSubmittingRef = useRef(false);
@@ -1134,15 +1141,25 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     lastSavedAt: string | null;
     isSaving: boolean;
     saveError?: string | null;
-  }>(() => ({
-    projectId: WorkspaceManager.getInstance().getActiveProjectId(),
-    name: WorkspaceManager.getInstance().getActiveProjectName(),
-    version: 1,
-    previewUrl: null,
-    lastSavedAt: null,
-    isSaving: false,
-    saveError: null,
-  }));
+  }>(() => {
+    const rawName = WorkspaceManager.getInstance().getActiveProjectName();
+    return {
+      projectId: WorkspaceManager.getInstance().getActiveProjectId(),
+      name: isGenericPlaceholderProjectTitle(rawName) ? 'Anny Workspace' : rawName,
+      version: 1,
+      previewUrl: null,
+      lastSavedAt: null,
+      isSaving: false,
+      saveError: null,
+    };
+  });
+
+  useEffect(() => {
+    const storedName = safeStorage.getItem('anny_current_project_name');
+    if (storedName && isGenericPlaceholderProjectTitle(storedName)) {
+      safeStorage.removeItem('anny_current_project_name');
+    }
+  }, []);
 
   const [projectSaveStatuses, setProjectSaveStatuses] = useState<Record<string, {
     isSaving: boolean;
@@ -1161,8 +1178,6 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     setCurrentlySpeakingId(id);
     annyVoiceService.speakSpeakerButton(text, () => setCurrentlySpeakingId(null));
   };
-  const [cartCount, setCartCount] = useState(3);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const getVfsMap = (): Record<string, string> => {
     try {
       const bestProjId = resolveBestProjectId(currentChatId, projectMetaState.projectId);
@@ -1301,7 +1316,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           setVfsFiles(getVfsMap());
           setProjectMetaState({
             projectId: restored.projectId,
-            name: restored.name || 'Generated Website',
+            name: (restored.name && !isGenericPlaceholderProjectTitle(restored.name)) ? restored.name : (sessionObj?.title || 'Active Project'),
             version: restored.version || 1,
             previewUrl: restored.previewUrl || null,
             lastSavedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -1329,7 +1344,12 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       sessionProjectMapRef.current.set(currentChatId, currentEffectiveProjId);
       projectPreviewController.ensureProjectOwnershipRegistered(currentEffectiveProjId, user?.uid);
       if (mgr.getActiveProjectId() !== currentEffectiveProjId) {
-        mgr.switchWorkspace(currentEffectiveProjId, projectMetaState.name || 'Generated Website', user?.uid || 'global', 'fullstack');
+        mgr.switchWorkspace(
+          currentEffectiveProjId,
+          (projectMetaState.name && !isGenericPlaceholderProjectTitle(projectMetaState.name)) ? projectMetaState.name : 'Active Project',
+          user?.uid || 'global',
+          'fullstack'
+        );
       }
       setVfsFiles(getVfsMap());
       prevChatIdRef.current = currentChatId;
@@ -1671,7 +1691,9 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
 
       const result = await projectSaveOrchestrator.saveProjectFiles(
         targetProjectId,
-        projectMetaState.name || 'Generated Website'
+        (projectMetaState.name && !isGenericPlaceholderProjectTitle(projectMetaState.name))
+          ? projectMetaState.name
+          : 'Active Project'
       );
 
       if (result.success) {
@@ -2554,6 +2576,14 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       onUpdateMessages(cleanHistory);
     }
 
+    let statusPollTimer: ReturnType<typeof setInterval> | null = null;
+    const stopStatusPolling = () => {
+      if (statusPollTimer) {
+        clearInterval(statusPollTimer);
+        statusPollTimer = null;
+      }
+    };
+
     try {
       const execId = 'ANNY_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
       const isExplicitUpdate = projectModification && vfsHasCode;
@@ -2561,42 +2591,146 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         (currentChatId ? sessionProjectMapRef.current.get(currentChatId) : undefined) ||
         safeStorage.getItem('anny_current_project_id') ||
         WorkspaceManager.getInstance().getActiveProjectId();
+      const promptDerivedTitle = generateRealProjectTitle(query);
+      let activeBuildTitle = promptDerivedTitle;
+
       if (isBuildRequest && (!isExplicitUpdate || !projectId || !projectId.startsWith('proj_'))) {
-        const createdTitle = generateRealProjectTitle(query);
-        projectId = WorkspaceManager.getInstance().createProjectWorkspace(createdTitle, user?.uid || 'global', 'fullstack');
+        activeBuildTitle = promptDerivedTitle;
+        projectId = WorkspaceManager.getInstance().createProjectWorkspace(activeBuildTitle, user?.uid || 'global', 'fullstack');
         safeStorage.setItem('anny_current_project_id', projectId);
+        safeStorage.setItem('anny_current_project_name', activeBuildTitle);
         if (currentChatId) {
           sessionProjectMapRef.current.set(currentChatId, projectId);
         }
         setProjectMetaState({
           projectId,
-          name: createdTitle,
+          name: activeBuildTitle,
           version: 1,
           previewUrl: null,
           lastSavedAt: null,
           isSaving: false,
         });
       } else if (isBuildRequest && projectId) {
+        activeBuildTitle =
+          projectMetaState.name && !isGenericPlaceholderProjectTitle(projectMetaState.name)
+            ? projectMetaState.name
+            : promptDerivedTitle;
+        safeStorage.setItem('anny_current_project_name', activeBuildTitle);
         if (currentChatId) {
           sessionProjectMapRef.current.set(currentChatId, projectId);
         }
-        setProjectMetaState((prev) => ({ ...prev, projectId }));
+        setProjectMetaState((prev) => ({
+          ...prev,
+          projectId,
+          name: activeBuildTitle,
+        }));
       }
+
+      const buildStageDefinitions: Array<{ stage: BuildStageItem['stage']; label: string }> = [
+        { stage: 'understanding', label: '1. Understanding request' },
+        { stage: 'planning', label: '2. Planning' },
+        { stage: 'generating', label: '3. Generating files' },
+        { stage: 'validating', label: '4. Validating' },
+        { stage: 'installing', label: '5. Installing dependencies' },
+        { stage: 'starting_preview', label: '6. Starting preview' },
+        { stage: 'testing', label: '7. Testing' },
+        { stage: 'completed', label: '8. Completed' },
+      ];
+
+      const mapPipelineStages = (currentStage: string, status: string, detailMsg?: string): BuildStageItem[] => {
+        const activeIdx = Math.max(
+          0,
+          buildStageDefinitions.findIndex((d) => d.stage === currentStage)
+        );
+        return buildStageDefinitions.map((def, idx) => {
+          if (status === 'completed') {
+            return { stage: def.stage, label: def.label, status: 'completed' };
+          }
+          if (idx < activeIdx) {
+            return { stage: def.stage, label: def.label, status: 'completed' };
+          }
+          if (idx === activeIdx) {
+            return {
+              stage: def.stage,
+              label: def.label,
+              status: status === 'failed' ? 'failed' : 'in_progress',
+              detail: detailMsg,
+            };
+          }
+          return { stage: def.stage, label: def.label, status: 'pending' };
+        });
+      };
+
       if (isBuildRequest) {
         setLastBuildPrompt(query);
         setBuildFailureInfo(null);
-        setBuildStages([
-          { stage: 'understanding', label: '1. Understanding request', status: 'completed' },
-          { stage: 'planning', label: '2. Planning', status: 'in_progress' },
-          { stage: 'generating', label: '3. Generating files', status: 'pending' },
-          { stage: 'validating', label: '4. Validating', status: 'pending' },
-          { stage: 'installing', label: '5. Installing dependencies', status: 'pending' },
-          { stage: 'starting_preview', label: '6. Starting preview', status: 'pending' },
-          { stage: 'testing', label: '7. Testing', status: 'pending' },
-          { stage: 'completed', label: '8. Completed', status: 'pending' },
-        ]);
-        executionStreamManager.startExecution('Executing application generation pipeline...', execId);
-        executionStreamManager.setStage('analyzing', 'Planning project architecture and file manifest...');
+        setBuildStages(mapPipelineStages('understanding', 'running', `Understanding request for ${activeBuildTitle}...`));
+        setLiveBuildProgress({
+          progressPct: 8,
+          message: `Understanding request for ${activeBuildTitle}...`,
+          files: [],
+        });
+        executionStreamManager.startExecution(`Building ${activeBuildTitle}...`, execId);
+        executionStreamManager.setStage('analyzing', `Analyzing requirements for ${activeBuildTitle}...`);
+
+        let lastSyncedStageKey = '';
+        let pollInFlight = false;
+        const pollLivePipelineStatus = async () => {
+          if (pollInFlight) return;
+          pollInFlight = true;
+          try {
+            const statusRes = await fetchWithAuth(`/api/anny/pipeline/status/${encodeURIComponent(execId)}`, {
+              method: 'GET',
+            });
+            if (!statusRes.ok) return;
+            const live = await statusRes.json().catch(() => null);
+            if (!live || !live.success) return;
+
+            const liveStage = typeof live.stage === 'string' ? live.stage : 'planning';
+            const liveStatus = typeof live.status === 'string' ? live.status : 'running';
+            const liveMsg = typeof live.message === 'string' && live.message.trim()
+              ? live.message.trim()
+              : `Building ${activeBuildTitle}...`;
+            const livePct = typeof live.progressPct === 'number' ? live.progressPct : 15;
+            const liveFiles = Array.isArray(live.files) ? live.files.filter((f: unknown): f is string => typeof f === 'string') : [];
+
+            setBuildStages(mapPipelineStages(liveStage, liveStatus, liveMsg));
+            setLiveBuildProgress({
+              progressPct: livePct,
+              message: liveMsg,
+              files: liveFiles,
+            });
+
+            if (typeof live.projectName === 'string' && live.projectName.trim() && !isGenericPlaceholderProjectTitle(live.projectName)) {
+              const cleanLiveName = live.projectName.trim();
+              activeBuildTitle = cleanLiveName;
+              safeStorage.setItem('anny_current_project_name', cleanLiveName);
+              setProjectMetaState((prev) => (prev.name === cleanLiveName ? prev : { ...prev, name: cleanLiveName }));
+            }
+
+            const stageKey = `${liveStage}:${liveMsg}`;
+            if (stageKey !== lastSyncedStageKey) {
+              lastSyncedStageKey = stageKey;
+              const streamStage =
+                liveStage === 'understanding' ? 'analyzing'
+                : liveStage === 'planning' ? 'planning'
+                : liveStage === 'generating' ? 'editing'
+                : liveStage === 'validating' ? 'validation'
+                : liveStage === 'installing' ? 'build'
+                : liveStage === 'starting_preview' || liveStage === 'testing' ? 'runtime'
+                : 'finalization';
+              executionStreamManager.setStage(streamStage, liveMsg);
+            }
+          } catch {
+            // Non-fatal: pipeline POST response remains authoritative
+          } finally {
+            pollInFlight = false;
+          }
+        };
+
+        statusPollTimer = setInterval(() => {
+          void pollLivePipelineStatus();
+        }, 800);
       }
 
       const textAttachments = currentAttached
@@ -2637,15 +2771,13 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       const abortController = new AbortController();
       activeAbortRef.current = abortController;
 
-      const res = await fetchWithAuth("/api/anny/pipeline", { 
-        method: "POST", 
-        headers: { "Content-Type": "application/json" }, 
-        signal: abortController.signal,
-        body: JSON.stringify({ 
-          sessionId: currentChatId || projectId || "workspace_session", 
-          projectId,
-          prompt: query, 
-          history: updatedHistory, 
+      const buildPipelinePayload = (targetProjectId: string) =>
+        JSON.stringify({
+          sessionId: currentChatId || targetProjectId || "workspace_session",
+          projectId: isBuildRequest || includeCodeContext ? targetProjectId : "default_project",
+          projectName: isBuildRequest ? activeBuildTitle : undefined,
+          prompt: query,
+          history: updatedHistory,
           existingVfs: (isBuildRequest && isExplicitUpdate) || includeCodeContext ? getVfsMap() : {},
           images: effectiveVisualAttachments,
           files: textAttachments,
@@ -2663,11 +2795,41 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           ...(sourceUrl ? { url: sourceUrl } : {}),
           ...(liveVisionContext ? { visionContext: liveVisionContext } : {}),
           execId,
-          sourceContext: uploadedProjectContext || undefined
-        }) 
+          sourceContext: uploadedProjectContext || undefined,
+        });
+
+      let res = await fetchWithAuth("/api/anny/pipeline", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: abortController.signal,
+        body: buildPipelinePayload(projectId),
       });
 
-      const orchRes = await res.json().catch(() => ({}));
+      let orchRes = await res.json().catch(() => ({}));
+
+      // If a stale localStorage projectId belonged to a prior expired session, detach & retry once cleanly.
+      if (res.status === 403 && orchRes?.error === 'FORBIDDEN_PROJECT_OWNERSHIP') {
+        const freshProjectId = isBuildRequest
+          ? WorkspaceManager.getInstance().createProjectWorkspace(activeBuildTitle, user?.uid || 'global', 'fullstack')
+          : 'default_project';
+        projectId = freshProjectId;
+        if (isBuildRequest) {
+          safeStorage.setItem('anny_current_project_id', freshProjectId);
+          if (currentChatId) sessionProjectMapRef.current.set(currentChatId, freshProjectId);
+        } else {
+          safeStorage.removeItem('anny_current_project_id');
+        }
+        res = await fetchWithAuth("/api/anny/pipeline", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: abortController.signal,
+          body: buildPipelinePayload(freshProjectId),
+        });
+        orchRes = await res.json().catch(() => ({}));
+      }
+
+      stopStatusPolling();
+
       if (!res.ok || orchRes?.success === false) {
         const diagList: string[] = Array.isArray(orchRes?.diagnostics) ? orchRes.diagnostics : [];
         if (isBuildRequest) {
@@ -2694,12 +2856,19 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         }
 
         if (isSuccess) {
-          executionStreamManager.setStage('editing', 'Writing synthesized codebase files to workspace...');
           const resolvedProjectId =
             (typeof orchRes.project?.projectId === 'string' && orchRes.project.projectId) || projectId;
+          const candidateNames = [
+            orchRes.project?.name,
+            orchRes.manifest?.projectName,
+            activeBuildTitle,
+            promptDerivedTitle,
+          ];
           const resolvedProjectName =
-            (typeof orchRes.project?.name === 'string' && orchRes.project.name) ||
-            generateRealProjectTitle(query);
+            candidateNames.find(
+              (c): c is string =>
+                typeof c === 'string' && c.trim().length > 0 && !isGenericPlaceholderProjectTitle(c)
+            )?.trim() || promptDerivedTitle;
           const resolvedVersion =
             Number(orchRes.project?.version) || (isExplicitUpdate ? projectMetaState.version + 1 : 1);
           const resolvedProjectType =
@@ -2709,6 +2878,9 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           const resolvedPreviewId =
             typeof orchRes.preview?.previewId === 'string' ? orchRes.preview.previewId : undefined;
 
+          executionStreamManager.setStage('editing', `Activating ${resolvedProjectName} files in workspace...`);
+
+          // Single unified activation path: switches workspace, clears stale files, normalizes & writes files once, and persists VFS.
           projectPreviewController.activateProject({
             projectId: resolvedProjectId,
             name: resolvedProjectName,
@@ -2723,27 +2895,19 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
             buildStatus: 'READY',
           });
 
-          const mgr = WorkspaceManager.getInstance();
-          if (resolvedProjectId && mgr.getActiveProjectId() !== resolvedProjectId) {
-            mgr.switchWorkspace(resolvedProjectId, resolvedProjectName, user?.uid || 'global', 'fullstack');
-          }
-          const vfs = mgr.getVFS();
-          for (const [rawPath, content] of Object.entries(orchRes.files)) {
-            const normPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
-            vfs._unsafe_writeFile(normPath, content as string);
-          }
-          vfs.saveToStorage();
           safeStorage.setItem('anny_current_project_id', resolvedProjectId);
+          safeStorage.setItem('anny_current_project_name', resolvedProjectName);
           if (currentChatId) {
             sessionProjectMapRef.current.set(currentChatId, resolvedProjectId);
           }
 
           const updatedMap = getVfsMap();
+          const cleanUpdatedFiles = Object.keys(updatedMap).filter((k) => !k.startsWith('/__anny_'));
           setVfsFiles(updatedMap);
           const preferredCodeFile =
             updatedMap['/src/App.tsx'] !== undefined
               ? '/src/App.tsx'
-              : Object.keys(updatedMap)[0] || activeCodeFile;
+              : cleanUpdatedFiles[0] || activeCodeFile;
           if (preferredCodeFile) {
             setActiveCodeFile(preferredCodeFile);
             setOpenTabs((prev) => Array.from(new Set([preferredCodeFile, ...prev.filter((p) => updatedMap[p] !== undefined)])));
@@ -2763,7 +2927,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
             name: resolvedProjectName,
             version: resolvedVersion,
             projectType: resolvedProjectType,
-            fileCount: Object.keys(updatedMap).length,
+            fileCount: cleanUpdatedFiles.length,
             status: 'ready',
             previewUrl: resolvedPreviewUrl,
             previewId: resolvedPreviewId,
@@ -2791,19 +2955,15 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           }
 
           setBuildFailureInfo(null);
-          setBuildStages([
-            { stage: 'understanding', label: '1. Understanding request', status: 'completed' },
-            { stage: 'planning', label: '2. Planning', status: 'completed' },
-            { stage: 'generating', label: '3. Generating files', status: 'completed' },
-            { stage: 'validating', label: '4. Validating', status: 'completed' },
-            { stage: 'installing', label: '5. Installing dependencies', status: 'completed' },
-            { stage: 'starting_preview', label: '6. Starting preview', status: 'completed' },
-            { stage: 'testing', label: '7. Testing', status: 'completed' },
-            { stage: 'completed', label: '8. Completed', status: 'completed' },
-          ]);
+          setBuildStages(mapPipelineStages('completed', 'completed'));
+          setLiveBuildProgress({
+            progressPct: 100,
+            message: `${resolvedProjectName} ready (${cleanUpdatedFiles.length} files)`,
+            files: cleanUpdatedFiles,
+          });
           setReloadKey((k) => k + 1);
-          executionStreamManager.setStage('runtime', 'Opening verified application in preview...');
-          executionStreamManager.completeExecution('Application generation completed successfully. Application is ready and running in preview.');
+          executionStreamManager.setStage('runtime', `Opening ${resolvedProjectName} in live preview...`);
+          executionStreamManager.completeExecution(`${resolvedProjectName} built and verified (${cleanUpdatedFiles.length} files).`);
         } else if (isBuildRequest) {
           const failureDetail = orchRes.error || orchRes.summary || 'Build failed: Pipeline returned no valid files.';
           setBuildFailureInfo({
@@ -2812,7 +2972,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           });
           messageProjectBuild = {
             projectId: projectId || 'failed_build',
-            name: generateRealProjectTitle(query),
+            name: activeBuildTitle,
             version: projectMetaState.version || 1,
             projectType: 'website',
             fileCount: 0,
@@ -2851,23 +3011,29 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       }
       setIsGenerating(false);
     } catch (err: any) {
+      stopStatusPolling();
       const wasAborted = err?.name === 'AbortError';
       if (submittedDraft) {
         setPrompt((curr) => resolveDraftAfterFailedSend(curr, submittedDraft));
       }
       if (!wasAborted) {
-        console.error('ANNY Stream Error:', err);
+        const errMessage = err instanceof Error ? err.message : String(err || 'Pipeline request failed');
+        console.warn('ANNY Stream Notice:', errMessage);
         if (isBuildRequest) {
           setBuildFailureInfo((prev) =>
-            prev || { error: err?.message || 'Project generation failed.', diagnostics: [] }
+            prev || { error: errMessage || 'Project generation failed.', diagnostics: [] }
           );
         }
-        executionStreamManager.failExecution(err.message || 'Pipeline failed');
+        executionStreamManager.failExecution(errMessage || 'Pipeline failed');
         showNotice('Message could not be sent — your prompt draft was preserved.', 'error');
+        const failedTitle =
+          projectMetaState.name && !isGenericPlaceholderProjectTitle(projectMetaState.name)
+            ? projectMetaState.name
+            : generateRealProjectTitle(query);
         const failedProjectBuild: ProjectBuildMetadata | undefined = isBuildRequest
           ? {
               projectId: projectMetaState.projectId || 'failed_build',
-              name: projectMetaState.name || generateRealProjectTitle(query),
+              name: failedTitle,
               version: projectMetaState.version || 1,
               projectType: 'website',
               fileCount: 0,
@@ -2895,6 +3061,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         }
       }
     } finally {
+      stopStatusPolling();
       activeAbortRef.current = null;
       setIsGenerating(false);
       isSubmittingRef.current = false;
@@ -2906,40 +3073,6 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
   };
-
-  // Categories for the live preview
-  const categoriesList = [
-    {
-      id: 'electronics',
-      name: 'Electronics',
-      count: '120+ Products',
-      img: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400&q=80',
-    },
-    {
-      id: 'fashion',
-      name: 'Fashion',
-      count: '80+ Products',
-      img: 'https://images.unsplash.com/photo-1551028719-00167b16eac5?w=400&q=80',
-    },
-    {
-      id: 'home',
-      name: 'Home & Living',
-      count: '65+ Products',
-      img: 'https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=400&q=80',
-    },
-    {
-      id: 'beauty',
-      name: 'Beauty',
-      count: '45+ Products',
-      img: 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=400&q=80',
-    },
-    {
-      id: 'sports',
-      name: 'Sports',
-      count: '60+ Products',
-      img: 'https://images.unsplash.com/photo-1519861531473-9200262188bf?w=400&q=80',
-    },
-  ];
 
   const activateBuildFromCard = async (build: ProjectBuildMetadata) => {
     if (!build?.projectId || build.status === 'failed') return;
@@ -3044,7 +3177,9 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     if (isLatestAssistantMsg && hasBuiltApp && projectMetaState.projectId) {
       return {
         projectId: projectMetaState.projectId,
-        name: projectMetaState.name || 'Generated Website',
+        name: (projectMetaState.name && !isGenericPlaceholderProjectTitle(projectMetaState.name))
+          ? projectMetaState.name
+          : 'Active Project',
         version: projectMetaState.version || 1,
         projectType: 'website',
         fileCount: Object.keys(vfsFiles).filter((k) => !k.startsWith('/__anny_')).length,
@@ -3234,26 +3369,17 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
               <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs font-sans">
                 {/* Real Conversation Messages */}
                 {(() => {
-                  const splitMessages = (
-                    (messages.length > 0 ? messages : chatHistory).length > 0
-                      ? messages.length > 0
-                        ? messages
-                        : chatHistory
-                      : [
-                          {
-                            id: 'init-user',
-                            role: 'user',
-                            content: 'Generate a modern e-commerce platform with product listing, cart, checkout and user dashboard.',
-                            timestamp: '10:42 AM',
-                          },
-                          {
-                            id: 'init-bot',
-                            role: 'assistant',
-                            content: "I'll create a modern e-commerce platform with all the essential features you requested.",
-                            timestamp: '10:42 AM',
-                          },
-                        ]
-                  ).filter((msg: any) => !isSynthesisOrPlaceholderContent(msg.content));
+                  const rawSplitMessages = messages.length > 0 ? messages : chatHistory;
+                  const splitMessages = rawSplitMessages.filter(
+                    (msg: any) => !isSynthesisOrPlaceholderContent(msg.content)
+                  );
+                  if (splitMessages.length === 0) {
+                    return (
+                      <div className="rounded-2xl border border-white/10 bg-[#0b0e29]/60 p-4 text-xs text-slate-400 leading-relaxed">
+                        Describe the website or application you want ANNY to build or update below.
+                      </div>
+                    );
+                  }
                   const lastAssistantId = [...splitMessages].reverse().find((m: any) => m.role === 'assistant')?.id;
 
                   return splitMessages.map((msg: any) => {
@@ -3921,21 +4047,33 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                         hasExistingProject={hasBuiltApp}
                         deviceMode={deviceViewport}
                         setDeviceMode={setDeviceViewport}
-                        currentBuildPrompt={lastBuildPrompt || prompt || 'Synthesizing application...'}
+                        currentBuildPrompt={lastBuildPrompt || prompt || `Building ${projectMetaState.name || 'project'}...`}
                         liveBuildAction={
+                          liveBuildProgress?.message ||
                           activeProj?.currentStage ||
-                          (isGenerating ? 'Generating project files...' : buildFailureInfo ? 'Build failed' : 'Build Ready')
+                          (isGenerating
+                            ? `Building ${projectMetaState.name || 'project'}...`
+                            : buildFailureInfo
+                              ? 'Build failed'
+                              : `${projectMetaState.name || 'Project'} ready`)
                         }
                         buildProgressPct={
-                          typeof activeProj?.progressPct === 'number'
-                            ? activeProj.progressPct
-                            : isGenerating
-                              ? 45
-                              : buildFailureInfo
-                                ? 0
-                                : 100
+                          typeof liveBuildProgress?.progressPct === 'number'
+                            ? liveBuildProgress.progressPct
+                            : typeof activeProj?.progressPct === 'number'
+                              ? activeProj.progressPct
+                              : isGenerating
+                                ? 12
+                                : buildFailureInfo
+                                  ? 0
+                                  : 100
                         }
                         buildStages={buildStages}
+                        generatedFiles={
+                          liveBuildProgress?.files && liveBuildProgress.files.length > 0
+                            ? liveBuildProgress.files
+                            : Object.keys(vfsFiles).filter((k) => !k.startsWith('/__anny_'))
+                        }
                         buildError={buildFailureInfo?.error || activeProj?.errors?.[0]}
                         buildDiagnostics={buildFailureInfo?.diagnostics}
                         onRetryBuild={lastBuildPrompt ? () => handleSend(lastBuildPrompt) : undefined}

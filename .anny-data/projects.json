@@ -1,5 +1,96 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-23T00:34:54.390Z",
-  "projects": []
+  "updatedAt": "2026-11-23T10:01:03.003Z",
+  "projects": [
+    {
+      "id": "proj_mwt3gsxe_4ata6hv",
+      "projectId": "proj_mwt3gsxe_4ata6hv",
+      "project_id": "proj_mwt3gsxe_4ata6hv",
+      "ownerUserId": "guest_c9bfee58f098d235d6eb800f",
+      "userId": "guest_c9bfee58f098d235d6eb800f",
+      "sessionId": "afc4b9c3-4747-4575-86e5-daa7efe6439f",
+      "name": "king-ken-nation",
+      "description": "Professional portfolio and service platform for Akinwumi Kehinde, specializing in mechatronics and full-stack engineering.",
+      "projectType": "fullstack_web_app",
+      "category": "fullstack_web_app",
+      "model": "Anny Core",
+      "status": "Active",
+      "version": 2,
+      "buildStatus": "READY",
+      "previewStatus": "RUNNING",
+      "files": {
+        "/package.json": "{\n  \"name\": \"king-ken-nation\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"tsc && vite build\"\n  },\n  \"dependencies\": {\n    \"react\": \"^18.2.0\",\n    \"react-dom\": \"^18.2.0\",\n    \"lucide-react\": \"^0.344.0\"\n  },\n  \"devDependencies\": {\n    \"typescript\": \"^5.2.2\",\n    \"vite\": \"^5.0.0\",\n    \"@types/react\": \"^18.2.0\",\n    \"@types/react-dom\": \"^18.2.0\"\n  }\n}",
+        "/index.html": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>King Ken Nation | Akinwumi Kehinde</title>\n</head>\n<body>\n  <div id=\"root\"></div>\n  <script type=\"module\" src=\"/src/main.tsx\"></script>\n</body>\n</html>",
+        "/src/main.tsx": "import React from 'react';\nimport ReactDOM from 'react-dom/client';\nimport App from './App';\nimport './styles.css';\n\nReactDOM.createRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>\n);",
+        "/src/styles.css": ":root {\n  --navy: #0F172A;\n  --blue: #1D4ED8;\n  --amber: #D97706;\n  --steel: #F8FAFC;\n}\nbody { font-family: 'Inter', system-ui, sans-serif; background: var(--steel); color: var(--navy); margin: 0; }\n.nav { display: flex; justify-content: space-between; padding: 2rem; border-bottom: 2px solid #E2E8F0; }\n.hero { padding: 4rem 2rem; text-align: center; }\n.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; padding: 2rem; }\n.card { background: white; padding: 2rem; border: 1px solid #E2E8F0; border-radius: 8px; }\nbutton { background: var(--blue); color: white; padding: 0.75rem 1.5rem; border: none; border-radius: 4px; cursor: pointer; }",
+        "/src/App.tsx": "import React, { useState } from 'react';\nimport { Cpu, Code, Database, ChevronRight } from 'lucide-react';\n\nexport default function App() {\n  const [activeTab, setActiveTab] = useState('home');\n  return (\n    <div className=\"app\">\n      <nav className=\"nav\">\n        <h1 style={{ fontWeight: 800 }}>KING KEN NATION</h1>\n        <div className=\"menu\">Akinwumi Kehinde | Mechatronics & Full Stack</div>\n      </nav>\n      <header className=\"hero\">\n        <h2>Systems Engineer & Full Stack Architect</h2>\n        <p>Bridging the physical and digital worlds through precision engineering.</p>\n        <button onClick={() => alert('Contacting Akinwumi...')}>Request Consultation</button>\n      </header>\n      <section className=\"grid\">\n        <div className=\"card\">\n          <Cpu size={32} color=\"#D97706\" />\n          <h3>Mechatronics</h3>\n          <p>Robotic systems, PLC programming, and automated hardware integration.</p>\n        </div>\n        <div className=\"card\">\n          <Code size={32} color=\"#1D4ED8\" />\n          <h3>Full Stack Engineering</h3>\n          <p>Modern React, Node.js architecture, and scalable database design.</p>\n        </div>\n        <div className=\"card\">\n          <Database size={32} color=\"#0F172A\" />\n          <h3>IoT Systems</h3>\n          <p>End-to-end telemetry solutions for industrial operational efficiency.</p>\n        </div>\n      </section>\n    </div>\n  );\n}",
+        "/server/index.ts": "import { createServer } from 'http';\n\nconst server = createServer((req, res) => {\n  res.setHeader('Content-Type', 'application/json');\n  if (req.method === 'POST') {\n    res.end(JSON.stringify({ status: 'success', message: 'Inquiry received' }));\n  } else {\n    res.end(JSON.stringify({ name: 'King Ken Nation', engineer: 'Akinwumi Kehinde' }));\n  }\n});\nserver.listen(3000);"
+      },
+      "files_count": 6,
+      "manifest": {
+        "projectName": "king-ken-nation",
+        "projectType": "fullstack_web_app",
+        "description": "Professional portfolio and service platform for Akinwumi Kehinde, specializing in mechatronics and full-stack engineering.",
+        "entryPoint": "/src/main.tsx",
+        "dependencies": [
+          "react",
+          "react-dom",
+          "lucide-react"
+        ],
+        "buildInstructions": "npm install && npm run build",
+        "envVars": [
+          "PORT=3000"
+        ]
+      },
+      "buildLogs": [],
+      "lastError": null,
+      "createdAt": "2026-11-23T10:00:43.658Z",
+      "updatedAt": "2026-11-23T10:00:43.803Z",
+      "created_at": "2026-11-23T10:00:43.658Z",
+      "updated_at": "2026-11-23T10:00:43.803Z"
+    },
+    {
+      "id": "proj_mwt3ifpl_d60db4",
+      "projectId": "proj_mwt3ifpl_d60db4",
+      "project_id": "proj_mwt3ifpl_d60db4",
+      "ownerUserId": "guest_39913570bb9427f1c9da371c",
+      "userId": "guest_39913570bb9427f1c9da371c",
+      "name": "anny-solar-dashboard",
+      "description": "A precision industrial solar monitoring dashboard with real-time energy metrics, site performance telemetry, and system maintenance status.",
+      "projectType": "dashboard",
+      "category": "dashboard",
+      "model": "Anny Core",
+      "status": "Active",
+      "version": 2,
+      "buildStatus": "READY",
+      "previewStatus": "RUNNING",
+      "files": {
+        "/package.json": "{\"name\": \"anny-solar-dashboard\", \"version\": \"1.0.0\", \"dependencies\": {\"react\": \"^18.2.0\", \"react-dom\": \"^18.2.0\", \"lucide-react\": \"^0.344.0\"}, \"scripts\": {\"dev\": \"vite\", \"build\": \"tsc && vite build\"}}",
+        "/index.html": "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\" /><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" /><title>ANNY | Solar Energy Ops</title></head><body><div id=\"root\"></div><script type=\"module\" src=\"/src/main.tsx\"></script></body></html>",
+        "/src/main.tsx": "import React from 'react'; import ReactDOM from 'react-dom/client'; import App from './App'; import './styles.css'; ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);",
+        "/src/styles.css": ":root { --primary: #1D4ED8; --bg: #F8FAFC; --card: #FFFFFF; --text: #0F172A; --amber: #D97706; --border: #E2E8F0; } body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; } .dashboard { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; } .sidebar { background: #0F172A; color: white; padding: 2rem; } .card { background: var(--card); border: 1px solid var(--border); padding: 1.5rem; border-radius: 8px; } .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; } .badge { padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; } .badge-active { background: #DCFCE7; color: #166534; }",
+        "/src/App.tsx": "import React, { useState } from 'react'; import { Sun, Zap, Battery, Activity, ShieldCheck, Settings, AlertTriangle } from 'lucide-react'; const sites = [{ id: 1, name: 'Sector Alpha', output: '4.2 MW', health: 'Optimal' }, { id: 2, name: 'Sector Beta', output: '3.8 MW', health: 'Degraded' }]; export default function App() { return (<div className=\"dashboard\"><aside className=\"sidebar\"><h2>SOLAR.OPS</h2><nav><ul style={{listStyle: 'none', padding: 0}}><li><a href=\"#\">Overview</a></li><li><a href=\"#\">Analytics</a></li></ul></nav></aside><main style={{padding: '2rem'}}><header style={{display: 'flex', justifyContent: 'space-between', marginBottom: '2rem'}}><h1>Performance Overview</h1><button className=\"badge badge-active\">System Live</button></header><div className=\"grid\"><div className=\"card\"><h3>Total Output</h3><p style={{fontSize: '2rem', fontWeight: 'bold'}}>8.0 MW</p><Zap color=\"#D97706\"/></div><div className=\"card\"><h3>Grid Efficiency</h3><p style={{fontSize: '2rem', fontWeight: 'bold'}}>94.2%</p><Activity color=\"#1D4ED8\"/></div><div className=\"card\"><h3>Battery Status</h3><p style={{fontSize: '2rem', fontWeight: 'bold'}}>88%</p><Battery color=\"#1D4ED8\"/></div></div><section style={{marginTop: '2rem'}}><table style={{width: '100%', borderCollapse: 'collapse'}}><thead><tr style={{textAlign: 'left', borderBottom: '1px solid var(--border)'}}><th>Asset</th><th>Status</th><th>Output</th></tr></thead><tbody>{sites.map(s => (<tr key={s.id} style={{borderBottom: '1px solid var(--border)'}}><td>{s.name}</td><td>{s.health}</td><td>{s.output}</td></tr>))}</tbody></table></section></main></div>); }"
+      },
+      "files_count": 5,
+      "manifest": {
+        "projectName": "anny-solar-dashboard",
+        "projectType": "dashboard",
+        "description": "A precision industrial solar monitoring dashboard with real-time energy metrics, site performance telemetry, and system maintenance status.",
+        "entryPoint": "/src/main.tsx",
+        "dependencies": [
+          "react",
+          "react-dom",
+          "lucide-react"
+        ],
+        "buildInstructions": "npm install && npm run build",
+        "envVars": []
+      },
+      "buildLogs": [],
+      "lastError": null,
+      "createdAt": "2026-11-23T10:01:02.986Z",
+      "updatedAt": "2026-11-23T10:01:03.003Z",
+      "created_at": "2026-11-23T10:01:02.986Z",
+      "updated_at": "2026-11-23T10:01:03.003Z"
+    }
+  ]
 }

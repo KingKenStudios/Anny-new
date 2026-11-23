@@ -15,6 +15,7 @@ import { modelRouter } from './modelRouter';
 import { buildDomainPlatformBlueprint } from './platformBlueprintEngine';
 import type { ChatMessage, ChatOptions, ChatPart, ChatResponse } from '../services/aiProviderPlatform';
 import type { ProjectVerificationReport } from './generatedProjectValidator';
+import { generateRealProjectTitle, isGenericPlaceholderProjectTitle } from '../lib/projectTitleUtils';
 
 export type ProjectArchetype =
   | 'website'
@@ -203,6 +204,105 @@ export function classifyProjectRequest(prompt: string): ProjectRequestClassifica
   };
 }
 
+function isJsonLikeFilePath(filePath: string): boolean {
+  const clean = String(filePath || '').trim().replace(/^\/+|\/+$/g, '').toLowerCase();
+  const base = clean.split('/').pop() || '';
+  return (
+    /\.(?:json|jsonc|geojson|webmanifest|eslintrc|prettierrc|babelrc)$/i.test(base) ||
+    base === '.eslintrc' ||
+    base === '.prettierrc' ||
+    base === '.babelrc'
+  );
+}
+
+function hasFileExtensionSegment(segment: string): boolean {
+  const clean = String(segment || '').trim();
+  return /\.[a-z0-9]{1,10}$/i.test(clean) && !clean.startsWith('.');
+}
+
+function setNestedJsonValue(target: Record<string, any>, parts: string[], value: string): void {
+  let cursor: Record<string, any> = target;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i];
+    if (!key) continue;
+    if (!cursor[key] || typeof cursor[key] !== 'object' || Array.isArray(cursor[key])) {
+      cursor[key] = {};
+    }
+    cursor = cursor[key];
+  }
+  const leaf = parts[parts.length - 1];
+  if (leaf) {
+    cursor[leaf] = value;
+  }
+}
+
+/**
+ * Reconstructs any accidentally flattened JSON subpaths (e.g. /package.json/name,
+ * /package.json/scripts/dev) back into a valid JSON file string, and eliminates
+ * any file-vs-directory ancestor path collisions before VFS writes.
+ */
+export function pruneConflictingFilePaths(files: Record<string, string>): Record<string, string> {
+  const cleaned: Record<string, string> = {};
+  const flattenedJsonBuckets = new Map<string, Array<{ subParts: string[]; value: string }>>();
+
+  for (const [rawPath, content] of Object.entries(files || {})) {
+    const norm = normalizePath(rawPath);
+    if (!norm || norm === '/' || norm.includes('..')) continue;
+    const segments = norm.split('/').filter(Boolean);
+    const jsonParentIdx = segments.findIndex((seg, idx) => idx < segments.length - 1 && isJsonLikeFilePath(seg));
+    if (jsonParentIdx !== -1) {
+      const jsonFilePath = '/' + segments.slice(0, jsonParentIdx + 1).join('/');
+      const subParts = segments.slice(jsonParentIdx + 1);
+      const bucket = flattenedJsonBuckets.get(jsonFilePath) || [];
+      bucket.push({ subParts, value: content });
+      flattenedJsonBuckets.set(jsonFilePath, bucket);
+      continue;
+    }
+    cleaned[norm] = content;
+  }
+
+  // Reconstruct any JSON file that only existed as flattened subpaths
+  for (const [jsonFilePath, entries] of flattenedJsonBuckets.entries()) {
+    if (!cleaned[jsonFilePath]) {
+      const rebuilt: Record<string, any> = {};
+      for (const entry of entries) {
+        setNestedJsonValue(rebuilt, entry.subParts, entry.value);
+      }
+      if (Object.keys(rebuilt).length > 0) {
+        cleaned[jsonFilePath] = JSON.stringify(rebuilt, null, 2);
+      }
+    }
+  }
+
+  // Eliminate any remaining file-vs-directory ancestor collisions (e.g. /a/b AND /a/b/c)
+  const allPaths = Object.keys(cleaned);
+  const pathSet = new Set(allPaths);
+  const pathsToDrop = new Set<string>();
+
+  for (const p of allPaths) {
+    const segments = p.split('/').filter(Boolean);
+    let prefix = '';
+    for (let i = 0; i < segments.length - 1; i++) {
+      prefix += '/' + segments[i];
+      if (pathSet.has(prefix)) {
+        // If ancestor looks like a real file (has extension), drop the bogus child path;
+        // otherwise drop the bare directory-named entry.
+        if (hasFileExtensionSegment(segments[i])) {
+          pathsToDrop.add(p);
+        } else {
+          pathsToDrop.add(prefix);
+        }
+      }
+    }
+  }
+
+  for (const dropPath of pathsToDrop) {
+    delete cleaned[dropPath];
+  }
+
+  return cleaned;
+}
+
 function flattenNestedFileTree(
   node: Record<string, unknown>,
   prefix: string = '',
@@ -216,12 +316,22 @@ function flattenNestedFileTree(
       if (val.trim().length > 0 || nextPath === '/.gitkeep') {
         out[normalizePath(nextPath)] = val;
       }
-    } else if (val && typeof val === 'object' && !Array.isArray(val)) {
+    } else if (Array.isArray(val)) {
+      if (isJsonLikeFilePath(nextPath)) {
+        out[normalizePath(nextPath)] = JSON.stringify(val, null, 2);
+      }
+    } else if (val && typeof val === 'object') {
       const obj = val as Record<string, unknown>;
       if (typeof obj.content === 'string') {
         out[normalizePath(nextPath)] = obj.content;
       } else if (typeof obj.code === 'string') {
         out[normalizePath(nextPath)] = obj.code;
+      } else if (typeof obj.source === 'string') {
+        out[normalizePath(nextPath)] = obj.source;
+      } else if (isJsonLikeFilePath(nextPath)) {
+        // LLM emitted a JSON config file (e.g. /package.json or /tsconfig.json) as an object
+        // instead of an escaped JSON string — serialize it directly instead of flattening keys!
+        out[normalizePath(nextPath)] = JSON.stringify(obj, null, 2);
       } else {
         flattenNestedFileTree(obj, nextPath, out);
       }
@@ -241,13 +351,17 @@ export function sanitizeGeneratedFiles(rawFiles: unknown): Record<string, string
       const item = entry as Record<string, unknown>;
       const rawPath = item.path ?? item.filePath ?? item.filename ?? item.name;
       const rawContent = item.content ?? item.code ?? item.source ?? item.contents ?? item.body;
-      if (typeof rawPath !== 'string' || typeof rawContent !== 'string') continue;
+      if (typeof rawPath !== 'string') continue;
       const path = normalizePath(rawPath);
       if (!path || path === '/' || path.includes('..')) continue;
-      if (rawContent.trim().length === 0 && path !== '/.gitkeep') continue;
-      result[path] = rawContent;
+      if (typeof rawContent === 'string') {
+        if (rawContent.trim().length === 0 && path !== '/.gitkeep') continue;
+        result[path] = rawContent;
+      } else if (rawContent && typeof rawContent === 'object' && isJsonLikeFilePath(path)) {
+        result[path] = JSON.stringify(rawContent, null, 2);
+      }
     }
-    return result;
+    return pruneConflictingFilePaths(result);
   }
 
   if (typeof rawFiles !== 'object') return result;
@@ -258,18 +372,31 @@ export function sanitizeGeneratedFiles(rawFiles: unknown): Record<string, string
       if (!path || path === '/' || path.includes('..')) continue;
       if (rawContent.trim().length === 0 && path !== '/.gitkeep') continue;
       result[path] = rawContent;
-    } else if (rawContent && typeof rawContent === 'object' && !Array.isArray(rawContent)) {
-      // Nested directory tree or { content: "..." }
-      const nested = flattenNestedFileTree({ [rawPath]: rawContent });
-      for (const [np, nc] of Object.entries(nested)) {
-        if (np && np !== '/' && !np.includes('..')) {
-          result[np] = nc;
+    } else if (rawContent && typeof rawContent === 'object') {
+      const normPath = normalizePath(rawPath);
+      if (!normPath || normPath === '/' || normPath.includes('..')) continue;
+      if (isJsonLikeFilePath(normPath)) {
+        const obj = rawContent as Record<string, unknown>;
+        if (!Array.isArray(rawContent) && typeof obj.content === 'string') {
+          result[normPath] = obj.content;
+        } else if (!Array.isArray(rawContent) && typeof obj.code === 'string') {
+          result[normPath] = obj.code;
+        } else {
+          result[normPath] = JSON.stringify(rawContent, null, 2);
+        }
+      } else if (!Array.isArray(rawContent)) {
+        // Nested directory tree or { content: "..." }
+        const nested = flattenNestedFileTree({ [rawPath]: rawContent });
+        for (const [np, nc] of Object.entries(nested)) {
+          if (np && np !== '/' && !np.includes('..')) {
+            result[np] = nc;
+          }
         }
       }
     }
   }
 
-  return result;
+  return pruneConflictingFilePaths(result);
 }
 
 /**
@@ -576,8 +703,14 @@ function buildManifestMetadata(
     }
   }
 
+  const derivedPromptTitle = generateRealProjectTitle(prompt || '');
+  const resolvedName =
+    pkgName && !isGenericPlaceholderProjectTitle(pkgName)
+      ? pkgName
+      : derivedPromptTitle;
+
   return {
-    projectName: pkgName || String(prompt || 'anny-project').slice(0, 48),
+    projectName: resolvedName || 'Custom Application',
     projectType: classification.projectType,
     description: parsedMeta?.description || `Generated ${classification.label}`,
     entryPoint,
@@ -615,6 +748,13 @@ export async function synthesizeAppFiles(
     model?: string;
     maxRepairAttempts?: number;
     chatExecutor?: SynthesisChatExecutor;
+    onProgress?: (update: {
+      stage: 'understanding' | 'planning' | 'generating' | 'validating' | 'installing' | 'starting_preview' | 'testing' | 'completed' | 'failed';
+      message: string;
+      progressPct: number;
+      projectName?: string;
+      files?: string[];
+    }) => void;
   } = {}
 ): Promise<SynthesisPlan> {
   const generationId = options.generationId || createGenerationId();
@@ -622,11 +762,26 @@ export async function synthesizeAppFiles(
   const updateExisting = options.updateExisting === true;
   const maxRepairAttempts = typeof options.maxRepairAttempts === 'number' ? Math.max(0, options.maxRepairAttempts) : 2;
   const stages: string[] = [];
+  const emitProgress = (
+    stage: 'understanding' | 'planning' | 'generating' | 'validating' | 'installing' | 'starting_preview' | 'testing' | 'completed' | 'failed',
+    message: string,
+    progressPct: number,
+    extra?: { projectName?: string; files?: string[] }
+  ) => {
+    try {
+      options.onProgress?.({ stage, message, progressPct, ...extra });
+    } catch {
+      // never fail synthesis on progress hook error
+    }
+  };
+  const initialProjectName = generateRealProjectTitle(prompt);
 
   // STEP A: Understand the request
   stages.push('understanding_request');
+  emitProgress('understanding', `Understanding request for ${initialProjectName}...`, 10, { projectName: initialProjectName });
   const classification = classifyProjectRequest(prompt);
   stages.push('planning');
+  emitProgress('planning', `Planning ${classification.label} architecture for ${initialProjectName}...`, 22, { projectName: initialProjectName });
 
   const existingPaths = Object.keys(existingVfs).filter(Boolean);
   const existingContext = updateExisting
@@ -690,7 +845,8 @@ ARCHITECTURE & QUALITY REQUIREMENTS
    - Never put shell commands in package.json preinstall/postinstall scripts.
 
 OUTPUT CONTRACT (STRICT JSON ONLY)
-Return ONLY ONE valid JSON object (no markdown fences, no commentary outside JSON):
+Return ONLY ONE valid JSON object (no markdown fences, no commentary outside JSON).
+CRITICAL: Every value inside "files" (including "/package.json" and any other .json file) MUST be a single string containing the file's text, NEVER a nested JSON object.
 {
   "projectName": "short-kebab-or-title-name",
   "projectType": "${classification.projectType}",
@@ -700,7 +856,7 @@ Return ONLY ONE valid JSON object (no markdown fences, no commentary outside JSO
   "buildInstructions": "npm install && npm run build",
   "envVars": [],
   "files": {
-    "/package.json": "...",
+    "/package.json": "{\\"name\\":\\"app\\",\\"scripts\\":{\\"dev\\":\\"vite\\",\\"build\\":\\"vite build\\"}}",
     "/index.html": "...",
     "/src/main.tsx": "...",
     "/src/App.tsx": "...",
@@ -720,6 +876,7 @@ Return ONLY ONE valid JSON object (no markdown fences, no commentary outside JSO
 
   try {
     stages.push('generating_files');
+    emitProgress('generating', `Generating source files for ${initialProjectName}...`, 42, { projectName: initialProjectName });
     const validImages = (options.images || []).filter((img) => img && img.data);
     const userText = `${contextMessage}\n\nImplement this request now:\n${prompt}`;
     const userContent: string | ChatPart[] =
@@ -758,6 +915,17 @@ Return ONLY ONE valid JSON object (no markdown fences, no commentary outside JSO
 
     // STEP D: Validate generated project
     stages.push('validating');
+    const extractedFilePaths = Object.keys(currentFiles);
+    const provisionalName =
+      (currentManifest?.projectName && !isGenericPlaceholderProjectTitle(currentManifest.projectName)
+        ? currentManifest.projectName
+        : initialProjectName);
+    emitProgress(
+      'validating',
+      `Validating ${extractedFilePaths.length} generated file(s) for ${provisionalName}...`,
+      68,
+      { projectName: provisionalName, files: extractedFilePaths }
+    );
     let verification =
       Object.keys(currentFiles).length > 0
         ? verifyGeneratedProject(currentFiles, {
@@ -782,6 +950,12 @@ Return ONLY ONE valid JSON object (no markdown fences, no commentary outside JSO
     while (!verification.passed && repairAttempts < maxRepairAttempts) {
       repairAttempts++;
       stages.push(`repair_attempt_${repairAttempts}`);
+      emitProgress(
+        'validating',
+        `Repairing validation diagnostics (attempt ${repairAttempts}/${maxRepairAttempts}) for ${provisionalName}...`,
+        Math.min(82, 70 + repairAttempts * 5),
+        { projectName: provisionalName, files: Object.keys(currentFiles) }
+      );
 
       const existingFileList = Object.entries(currentFiles)
         .slice(0, 25)
@@ -819,12 +993,12 @@ Include every file that was created or repaired (or the complete file map if sta
       parsedPayload = repairedPayload;
 
       if (Object.keys(repairedPayload.files).length > 0) {
-        // Merge repaired/added files onto preserved original generation
-        currentFiles = {
+        // Merge repaired/added files onto preserved original generation and prune any path collisions
+        currentFiles = pruneConflictingFilePaths({
           ...originalFilesSnapshot,
           ...currentFiles,
           ...repairedPayload.files,
-        };
+        });
         if (repairedPayload.summary) currentSummary = repairedPayload.summary;
         if (repairedPayload.manifest) {
           currentManifest = { ...currentManifest, ...repairedPayload.manifest };
@@ -856,6 +1030,10 @@ Include every file that was created or repaired (or the complete file map if sta
 
     stages.push('completed');
     const manifest = buildManifestMetadata(currentFiles, classification, currentManifest, prompt);
+    emitProgress('installing', `Finalizing dependencies & workspace bundle for ${manifest.projectName}...`, 86, {
+      projectName: manifest.projectName,
+      files: Object.keys(currentFiles),
+    });
     const projectKind: 'frontend' | 'fullstack' =
       classification.requiresBackend || hasBackendFiles(currentFiles) ? 'fullstack' : 'frontend';
 

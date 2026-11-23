@@ -74,6 +74,13 @@ export interface CognitiveKernelInput {
     saharaMode?: boolean;
     preferredModel?: string;
   };
+  onProgress?: (update: {
+    stage: 'understanding' | 'planning' | 'generating' | 'validating' | 'installing' | 'starting_preview' | 'testing' | 'completed' | 'failed';
+    message: string;
+    progressPct: number;
+    projectName?: string;
+    files?: string[];
+  }) => void;
 }
 
 export interface CognitiveExecutionPlan {
@@ -549,7 +556,8 @@ export class AnnyCognitiveKernel {
             updateExisting: Boolean(input.contextOverride?.updateExisting),
             images: validImages,
             webSearch: Boolean(input.webSearch),
-            model: preferredModel
+            model: preferredModel,
+            onProgress: input.onProgress
           });
           finalOutput = synth.summary;
           artifacts.push({

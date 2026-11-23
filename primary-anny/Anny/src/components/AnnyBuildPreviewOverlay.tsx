@@ -55,10 +55,12 @@ function mapStageToIndex(currentStageText: string): number {
 interface AnnyBuildPreviewOverlayProps {
   isBuilding: boolean;
   buildState?: 'in_progress' | 'completed' | 'failed';
+  projectName?: string;
   userPrompt?: string;
   currentStage?: string;
   progressPct?: number;
   stages?: BuildStageItem[];
+  generatedFiles?: string[];
   errorMessage?: string;
   diagnostics?: string[];
   onViewCode?: () => void;
@@ -69,10 +71,12 @@ interface AnnyBuildPreviewOverlayProps {
 export const AnnyBuildPreviewOverlay: React.FC<AnnyBuildPreviewOverlayProps> = ({
   isBuilding,
   buildState,
+  projectName,
   userPrompt,
   currentStage = 'Understanding request…',
   progressPct,
   stages,
+  generatedFiles,
   errorMessage,
   diagnostics,
   onViewCode,
@@ -81,6 +85,7 @@ export const AnnyBuildPreviewOverlay: React.FC<AnnyBuildPreviewOverlayProps> = (
 }) => {
   const effectiveState = buildState || (isBuilding ? 'in_progress' : 'completed');
   if (effectiveState === 'completed' && !isBuilding) return null;
+  const cleanProjectName = projectName && projectName.trim() ? projectName.trim() : '';
 
   const isFailed = effectiveState === 'failed';
   const activeIndex = mapStageToIndex(currentStage);
@@ -165,13 +170,15 @@ export const AnnyBuildPreviewOverlay: React.FC<AnnyBuildPreviewOverlayProps> = (
             >
               <Sparkles className="h-3.5 w-3.5" /> ANNY Build Runtime
             </div>
-            <h2 className="mt-1 text-lg sm:text-xl font-semibold text-white">
-              {isFailed ? 'Project generation failed' : 'Building your project'}
+            <h2 className="mt-1 text-lg sm:text-xl font-semibold text-white truncate">
+              {isFailed
+                ? (cleanProjectName ? `${cleanProjectName} — Generation Failed` : 'Project generation failed')
+                : (cleanProjectName ? `Building ${cleanProjectName}` : 'Building your project')}
             </h2>
             <p className="mt-1 text-xs text-slate-400">
               {isFailed
                 ? 'Review the diagnostic details below, inspect logs, or retry generation.'
-                : 'The live preview opens automatically once project files pass validation.'}
+                : 'Real-time build pipeline active — live preview opens automatically once files pass validation.'}
             </p>
           </div>
         </div>
@@ -236,6 +243,23 @@ export const AnnyBuildPreviewOverlay: React.FC<AnnyBuildPreviewOverlayProps> = (
               </div>
             ))}
           </div>
+          {generatedFiles && generatedFiles.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-white/10">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                Live Workspace Files ({generatedFiles.length})
+              </div>
+              <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto">
+                {generatedFiles.slice(0, 14).map((f) => (
+                  <span
+                    key={f}
+                    className="px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-[10px] font-mono text-cyan-200 truncate max-w-[180px]"
+                  >
+                    {f}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Failure reason & diagnostics */}

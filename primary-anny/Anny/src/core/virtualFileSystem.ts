@@ -52,8 +52,9 @@ export type VFSEventListener = (event: VFSChangeEvent) => void;
 // PATH UTILITIES
 // ============================================================================
 export class PathUtils {
-  public static normalize(path: string): string {
-    let clean = path.trim().replace(/\\/g, '/');
+  public static normalize(path: any): string {
+    const cleanPath = typeof path === 'string' ? path : (path != null ? String(path) : '/');
+    let clean = cleanPath.trim().replace(/\\/g, '/');
     if (!clean.startsWith('/')) clean = '/' + clean;
     clean = clean.replace(/\/+/g, '/');
     if (clean.length > 1 && clean.endsWith('/')) {
@@ -171,20 +172,18 @@ export class VirtualFileSystem {
 
     for (const part of parts) {
       currentPath += '/' + part;
-      if (!current.children[part]) {
+      if (!current.children[part] || current.children[part].type !== 'directory') {
         const newDir: VFSDirectoryNode = {
           id: `dir_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
           name: part,
           path: currentPath,
           type: 'directory',
-          children: {},
+          children: current.children[part] && current.children[part].type === 'directory' ? (current.children[part] as VFSDirectoryNode).children : {},
           createdAt: Date.now(),
           updatedAt: Date.now()
         };
         current.children[part] = newDir;
         this.notify({ type: 'create', path: currentPath, node: newDir, timestamp: Date.now() });
-      } else if (current.children[part].type !== 'directory') {
-        throw new Error(`Cannot mkdir '${norm}': '${currentPath}' is a file.`);
       }
       current = current.children[part] as VFSDirectoryNode;
     }
@@ -199,10 +198,21 @@ export class VirtualFileSystem {
     throw new Error("PHANTOM_WRITE_ERROR: Unauthorized project mutation attempt. Direct VFS mutations are prohibited. Use vfsTransactionManager.");
   }
   public _unsafe_writeFile(path: string, rawContent: any, isExecutable: boolean = false): VFSFileNode {
-    const stringContent = typeof rawContent === 'string' ? rawContent : (rawContent != null ? String(rawContent) : '');
-    const norm = PathUtils.normalize(path);
+    const safePath = typeof path === 'string' && path.trim() ? path : (path != null ? String(path) : '/untitled.tsx');
+    const stringContent = typeof rawContent === 'string' 
+      ? rawContent 
+      : (rawContent != null 
+          ? (typeof rawContent === 'object' ? JSON.stringify(rawContent, null, 2) : String(rawContent)) 
+          : '');
+    let norm = PathUtils.normalize(safePath);
+    if (!norm || norm === '/') {
+      norm = '/untitled.txt';
+    }
     const parentPath = PathUtils.getParent(norm);
     const fileName = PathUtils.getName(norm);
+    if (!fileName || fileName === '/') {
+      throw new Error(`[VFS Invalid Path] Cannot write file at directory path: ${norm}`);
+    }
 
     const isScript = norm.endsWith('.ts') || norm.endsWith('.tsx') || norm.endsWith('.js') || norm.endsWith('.jsx');
     const content = isScript ? sanitizeConstDeclarations(stringContent) : stringContent;
@@ -253,12 +263,13 @@ export class VirtualFileSystem {
     }
 
     parentDir.children[fileName] = node;
-    this.notify({ type: eventType, path: norm, node, timestamp: now });
 
-    // MANDATORY READ-BACK VERIFICATION
-    const readBackContent = this.readFile(norm);
-    const readBackHash = PathUtils.computeHash(readBackContent);
-    if (!readBackContent || readBackHash !== hash) {
+    // MANDATORY READ-BACK VERIFICATION (supports legitimate empty files such as "" / .keep / .env.example)
+    // Verify BEFORE firing watch() listeners so synchronous subscribers cannot invalidate the read-back check.
+    const readBackNode = this.getNode(norm);
+    const readBackContent = readBackNode && readBackNode.type === 'file' ? readBackNode.content : null;
+    const readBackHash = readBackContent !== null ? PathUtils.computeHash(readBackContent) : '';
+    if (readBackContent === null || readBackHash !== hash) {
       try {
         systemBus.publish('FILE_OPERATION_FAILED', 'VirtualFileSystem', { filePath: norm, error: `Read-back verification failed for ${norm}` });
         executionStreamManager.failFile(norm, `Read-back verification failed for ${norm}`);
@@ -266,6 +277,7 @@ export class VirtualFileSystem {
       throw new Error(`[VFS Write Verification Failure] File write verification failed for ${norm}`);
     }
 
+    this.notify({ type: eventType, path: norm, node, timestamp: now });
     try {
       systemBus.publish('FILE_OPERATION_COMPLETED', 'VirtualFileSystem', { filePath: norm, operation: eventType === 'create' ? 'create' : 'edit' });
       executionStreamManager.completeFile(norm, eventType === 'create' ? 'create' : 'edit');
@@ -360,6 +372,10 @@ export class VirtualFileSystem {
     throw new Error("PHANTOM_WRITE_ERROR: Unauthorized project mutation attempt. Direct VFS mutations are prohibited. Use vfsTransactionManager.");
   }
   public _unsafe_deleteFile(path: string): boolean {
+    return this._unsafe_remove(path);
+  }
+
+  public _unsafe_delete(path: string): boolean {
     return this._unsafe_remove(path);
   }
 

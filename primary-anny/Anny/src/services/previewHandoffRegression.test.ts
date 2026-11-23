@@ -8,6 +8,7 @@ import { WorkspaceManager } from '../core/workspaceManager';
 import { safeStorage } from '../lib/storage';
 import { projectPersistenceService } from './projectPersistenceService';
 import { projectSaveOrchestrator } from './projectSaveOrchestrator';
+import { generateRealProjectTitle, isGenericPlaceholderProjectTitle } from '../lib/projectTitleUtils';
 
 test('ANNY Preview Handoff & Project Restoration Regression Tests (A - I)', async (t) => {
   await t.test('A: identifies application entry point correctly for React and HTML apps', () => {
@@ -296,6 +297,53 @@ test('ANNY Preview Handoff & Project Restoration Regression Tests (A - I)', asyn
     assert.equal(finalB?.files['/src/B.tsx'], 'B-v1');
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  await t.test('M: handles empty files, invalid root keys, and clears stale VFS files during activateProject without crashing', () => {
+    const projId = 'proj_empty_file_regression';
+    const mgr = WorkspaceManager.getInstance();
+    mgr.switchWorkspace(projId, 'Initial Project');
+    const vfs = mgr.getWorkspaceVFS(projId);
+    vfs._unsafe_writeFile('/src/StaleOldFile.tsx', 'export const stale = true;');
+
+    const activated = projectPreviewController.activateProject({
+      projectId: projId,
+      name: 'Hospital Pharmacy Portal',
+      version: 1,
+      projectType: 'website',
+      files: {
+        '/': 'ignored root entry',
+        '': 'ignored blank entry',
+        '.env.example': '',
+        '/src/empty.css': '',
+        'src/App.tsx': 'export default function HospitalPharmacy() { return <main>Pharmacy</main>; }',
+      },
+      sessionId: 'session_empty_file_test',
+    });
+
+    assert.equal(activated.projectName, 'Hospital Pharmacy Portal');
+    const extracted = projectPreviewController.extractFilesFromVFS(projId);
+    assert.equal(extracted['/src/StaleOldFile.tsx'], undefined);
+    assert.equal(extracted['/.env.example'], '');
+    assert.equal(extracted['/src/empty.css'], '');
+    assert.ok(extracted['/src/App.tsx']?.includes('HospitalPharmacy'));
+  });
+
+  await t.test('N: extracts real project titles and rejects generic placeholder titles like Task & Planner App', () => {
+    assert.equal(isGenericPlaceholderProjectTitle('Task & Planner App'), true);
+    assert.equal(isGenericPlaceholderProjectTitle('Generated Website'), true);
+    assert.equal(isGenericPlaceholderProjectTitle('Akinwumi Logistics Hub'), false);
+
+    const pharmacyTitle = generateRealProjectTitle(
+      'Build a hospital pharmacy website with medicine list and delivery schedule'
+    );
+    assert.notEqual(pharmacyTitle, 'Task & Planner App');
+    assert.equal(isGenericPlaceholderProjectTitle(pharmacyTitle), false);
+    assert.ok(/pharmacy|hospital/i.test(pharmacyTitle));
+
+    const bakeryTitle = generateRealProjectTitle('Create a luxury artisan bakery storefront with menu and online ordering');
+    assert.notEqual(bakeryTitle, 'Task & Planner App');
+    assert.ok(/bakery/i.test(bakeryTitle));
   });
 });
 

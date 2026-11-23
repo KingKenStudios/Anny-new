@@ -174,7 +174,7 @@ export default function SuperAppStudio() {
   const [marketplaceCartCount, setMarketplaceCartCount] = useState(2);
   const [liveViewers, setLiveViewers] = useState(14820);
   const [socialPosts, setSocialPosts] = useState([
-    { id: 1, author: 'Kehinde Anny', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80', content: '🚀 Anny Super-App Matrix has officially launched! Integrated Social, Video Reels, Dating, Lotto, Work & Marketplace into 1 ready-to-deploy bundle!', likes: 342, comments: 48, time: '10m ago' },
+    { id: 1, author: 'Akinwumi Kehinde', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80', content: '🚀 Anny Super-App Matrix has officially launched! Integrated Social, Video Reels, Dating, Lotto, Work & Marketplace into 1 ready-to-deploy bundle!', likes: 342, comments: 48, time: '10m ago' },
     { id: 2, author: 'Dr. Sarah Lin', avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80', content: 'The ROS 2 hardware watchdog and 3D spatial reasoning in this system are phenomenal.', likes: 189, comments: 21, time: '1h ago' },
   ]);
   const [newPostInput, setNewPostInput] = useState('');

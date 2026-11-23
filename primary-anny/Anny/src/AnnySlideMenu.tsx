@@ -17,6 +17,11 @@ import {
   Shield,
   Calculator,
   Building2,
+  Globe,
+  Sliders,
+  Network,
+  Server,
+  ShieldCheck,
 } from 'lucide-react';
 import logoImg from './assets/logo.png';
 
@@ -73,6 +78,11 @@ export const AnnySlideMenu: React.FC<AnnySlideMenuProps> = ({
     { key: 'engineering-safety', label: 'Engineering & Safety', icon: Calculator },
     { key: 'media-arch-studio', label: 'Architecture & Media', icon: Building2 },
     { key: 'watchdog', label: 'Watchdog Security', icon: Shield },
+    { key: 'languages', label: 'Universal Languages', icon: Globe },
+    { key: 'aios-control', label: 'AIOS Control Plane', icon: Sliders },
+    { key: 'organizations', label: 'Organizations', icon: Network },
+    { key: 'portable-runtime', label: 'Portable Runtime', icon: Server },
+    { key: 'master-audit', label: 'Reality Audit Hub', icon: ShieldCheck },
     { key: 'integrations', label: 'Integrations', icon: Puzzle },
     { key: 'settings', label: 'Settings', icon: Settings },
   ];
@@ -91,6 +101,11 @@ export const AnnySlideMenu: React.FC<AnnySlideMenuProps> = ({
     if (itemKey === 'engineering-safety' && (currentTab === 'engineering-safety' || currentTab === 'safety')) return true;
     if (itemKey === 'media-arch-studio' && (currentTab === 'media-arch-studio' || currentTab === 'architecture' || currentTab === 'broadcast' || currentTab === 'distribution')) return true;
     if (itemKey === 'watchdog' && (currentTab === 'watchdog' || currentTab === 'cybersecurity')) return true;
+    if (itemKey === 'languages' && (currentTab === 'languages' || currentTab === 'anny-languages' || currentTab === 'universal-languages')) return true;
+    if (itemKey === 'aios-control' && (currentTab === 'aios-control' || currentTab === 'aios')) return true;
+    if (itemKey === 'organizations' && (currentTab === 'organizations' || currentTab === 'orgs')) return true;
+    if (itemKey === 'portable-runtime' && (currentTab === 'portable-runtime' || currentTab === 'portable')) return true;
+    if (itemKey === 'master-audit' && (currentTab === 'master-audit' || currentTab === 'audit' || currentTab === 'capabilities' || currentTab === 'reality-verification')) return true;
     if (itemKey === 'integrations' && (currentTab === 'integrations' || currentTab === 'anny-integrations')) return true;
     if (itemKey === 'settings' && (currentTab === 'settings' || currentTab === 'anny-settings')) return true;
     return currentTab === itemKey;

@@ -63,7 +63,16 @@ function redactSecretsForPreview(content: string): string {
 }
 
 function getRuntimeRequire(): NodeRequire {
-  return createRequire(import.meta.url);
+  try {
+    if (typeof __filename !== 'undefined' && __filename) {
+      return createRequire(__filename);
+    }
+  } catch (_e) {}
+  try {
+    return createRequire(import.meta.url);
+  } catch (_e) {
+    return (typeof require !== 'undefined' ? require : ({} as any)) as NodeRequire;
+  }
 }
 
 function extractTailwindCandidates(files: Record<string, string>): string[] {

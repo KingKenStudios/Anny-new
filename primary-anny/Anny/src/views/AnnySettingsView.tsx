@@ -24,7 +24,7 @@ const DEFAULT_SETTINGS = {
   temperature: 0.7,
   maxTokens: 8192,
   systemPrompt:
-    'You are Anny, the flagship AI intelligence for the Akinwumi Group & AIOS ecosystem. You specialize in generating full-stack software, creative media, engineering analysis, and honest operational guidance.',
+    'You are Anny, the flagship AI intelligence owned by Akinwumi Kehinde / Akinwumi Group for the AIOS ecosystem. You specialize in generating full-stack software, creative media, engineering analysis, and honest operational guidance.',
 };
 
 const VoiceSettingsSection: React.FC = () => {

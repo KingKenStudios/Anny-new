@@ -59,6 +59,7 @@ export interface WorkspacePreviewContainerProps {
   onRetryBuild?: () => void;
   projectName?: string;
   projectVersion?: number;
+  generatedFiles?: string[];
   onRebuild?: () => void;
   onFixRuntimeError?: (errorMessage: string) => void;
   onOpenNewTabError?: (msg: string) => void;
@@ -107,6 +108,7 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
   onRetryBuild,
   projectName,
   projectVersion,
+  generatedFiles,
   onRebuild,
   onFixRuntimeError,
   onOpenNewTabError,
@@ -969,10 +971,12 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
             <AnnyBuildPreviewOverlay
               isBuilding={buildState === 'in_progress'}
               buildState={buildState}
+              projectName={projectName}
               userPrompt={currentBuildPrompt}
               currentStage={liveBuildAction}
               progressPct={buildProgressPct}
               stages={buildStages}
+              generatedFiles={generatedFiles}
               errorMessage={buildError}
               diagnostics={buildDiagnostics}
               onViewCode={() => setRightTab('code')}
