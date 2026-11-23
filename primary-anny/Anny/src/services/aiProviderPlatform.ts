@@ -838,12 +838,15 @@ export class AIProviderPlatform {
         const is429 = err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED');
         const isConnRefused = err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED');
         const shortReason = is429 ? 'Quota / Rate Limited (429)' : (isConnRefused ? 'Unreachable (ECONNREFUSED)' : (err.message || 'Error').slice(0, 120));
-        if (strictOffline || blockCloudFallback) {
+        if (strictOffline || (blockCloudFallback && provider === 'ollama')) {
           throw new Error(
             shortReason.startsWith('OFFLINE_UNAVAILABLE:')
               ? shortReason
               : `OFFLINE_UNAVAILABLE: Local Ollama inference failed (${shortReason}).`
           );
+        }
+        if (blockCloudFallback) {
+          throw new Error(`PROVIDER_UNAVAILABLE: ${provider} failed and provider fallback is disabled (${shortReason}).`);
         }
         console.warn(`[AI Provider Platform] Provider ${provider} unavailable: ${shortReason}. Failing over...`);
         lastError = err;
