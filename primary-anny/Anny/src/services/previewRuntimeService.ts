@@ -19,6 +19,7 @@ import {
   type PersistedPreviewSession,
 } from './projectPersistenceService';
 import { isStrongSecuritySecret } from './envConfigService';
+import { derivePreviewCapabilityToken } from './previewCapabilityUtils';
 
 export type PreviewRuntimeStatus = 'STARTING' | 'RUNNING' | 'STOPPED' | 'ERROR';
 
@@ -229,13 +230,7 @@ export class PreviewRuntimeService {
     'previewId' | 'projectId' | 'ownerUserId' | 'version' | 'updatedAt'
   >): string {
     const secret = this.getCapabilitySecret();
-    const material = [
-      session.previewId,
-      session.projectId,
-      session.ownerUserId,
-      session.updatedAt
-    ].join('\\u0000');
-    return crypto.createHmac('sha256', secret).update(material).digest('hex');
+    return derivePreviewCapabilityToken(secret, session);
   }
 
   private restoreSession(record: PersistedPreviewSession): PreviewSessionRecord {
