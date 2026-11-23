@@ -23,6 +23,8 @@ export interface EnvConfig {
   togetherApiKey?: string;
   fireworksApiKey?: string;
   ollamaBaseUrl: string;
+  ollamaEmbeddingModel?: string;
+  embeddingProvider?: 'auto' | 'gemini' | 'ollama';
 
   // Databases & Infrastructure
   databaseUrl?: string;
@@ -246,6 +248,10 @@ export class EnvConfigService {
       togetherApiKey: isBrowserRuntime ? undefined : getVal('TOGETHER_API_KEY'),
       fireworksApiKey: isBrowserRuntime ? undefined : getVal('FIREWORKS_API_KEY'),
       ollamaBaseUrl: (getVal('OLLAMA_BASE_URL') || '').trim(),
+      ollamaEmbeddingModel: (getVal('OLLAMA_EMBEDDING_MODEL') || '').trim() || undefined,
+      embeddingProvider: ['auto', 'gemini', 'ollama'].includes(String(getVal('EMBEDDING_PROVIDER') || 'auto').trim().toLowerCase())
+        ? String(getVal('EMBEDDING_PROVIDER') || 'auto').trim().toLowerCase() as 'auto' | 'gemini' | 'ollama'
+        : 'auto',
 
       databaseUrl: env.DATABASE_URL?.trim() || undefined,
       postgresUser: env.POSTGRES_USER || 'postgres',

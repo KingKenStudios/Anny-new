@@ -126,3 +126,12 @@ Use the separate verified workspace compilation/preview pipeline where it is act
 ## Preview render verification
 
 A preview route being selected is not proof that the generated artifact rendered. The current preview health routine does not have independent evidence from each viewer (iframe load/target DOM, image decode, PDF page render, or simulator output). It therefore reports `ROUTED_UNVERIFIED` / `DEGRADED` instead of counting the host ANNY page DOM as successful artifact rendering.
+
+
+## Offline semantic embeddings
+
+Set `EMBEDDING_PROVIDER=ollama` to force local-only embeddings even when cloud credentials are present. With `EMBEDDING_PROVIDER=auto` (the default), ANNY uses Gemini when configured and otherwise attempts genuine local Ollama embeddings rather than manufacturing placeholder vectors. Install an embedding model locally (for example `ollama pull nomic-embed-text`) and optionally set `OLLAMA_EMBEDDING_MODEL=nomic-embed-text:latest`. The configured model must exist in the local Ollama model list and be identified as an embedding model.
+
+The adapter uses Ollama's `/api/embed` endpoint and supports the legacy `/api/embeddings` endpoint when the modern route returns HTTP 404. Returned vectors must be non-empty arrays of finite numbers. Missing or invalid provider output fails explicitly; ANNY never substitutes synthetic vectors or silently switches providers.
+
+If neither a real cloud embedding provider nor a local embedding model is available, semantic indexing and retrieval report an embedding-provider error. Keyword retrieval may still be available through the separately persisted local keyword index.

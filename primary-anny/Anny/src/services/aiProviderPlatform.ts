@@ -9,7 +9,7 @@ import axios from 'axios';
 import { GoogleGenAI } from '@google/genai';
 import { envConfigService } from './envConfigService';
 import { ollamaDiscoveryService } from './ollamaService';
-import { assertOllamaMediaSupported, resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
+import { assertOllamaMediaSupported, resolveOllamaEmbeddingModel, resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
 import { resolveProviderAttempts } from './providerRoutingUtils';
 
 export type AIProviderId = 
@@ -159,6 +159,14 @@ function orderGeminiCandidates(candidates: string[]): string[] {
 }
 
 const UNIVERSAL_ANNY_CONVERSATION_POLICY = `For ordinary conversation, speak naturally like a thoughtful human. Use normal sentences and paragraphs. Do not use decorative Markdown such as **, __, ###, ---, ___, or bullet-list formatting unless the user explicitly requests structured output. Use commas, periods, question marks, exclamation marks, colons, and semicolons naturally. Do not use robotic filler phrases. Preserve code, JSON, tables, URLs, and other technical structures when the task explicitly requires them.`;
+
+export function normalizeEmbeddingVector(value: unknown, providerName: string): number[] {
+  if (!Array.isArray(value) || value.length === 0 ||
+      !value.every(item => typeof item === 'number' && Number.isFinite(item))) {
+    throw new Error(`INVALID_EMBEDDING_VECTOR: ${providerName} returned no valid finite embedding vector.`);
+  }
+  return value as number[];
+}
 
 export class AIProviderPlatform {
   private static instance: AIProviderPlatform;
@@ -928,10 +936,19 @@ export class AIProviderPlatform {
     throw new Error('PROVIDER_UNAVAILABLE: All configured AI providers are currently exhausted or unreachable.');
   }
 
-  // Embeddings generation
-  public async embeddings(text: string, provider: AIProviderId = 'gemini'): Promise<{ embedding: number[]; provider: AIProviderId }> {
+  // Embeddings generation. No synthetic vectors or silent provider substitution are allowed.
+  public async embeddings(text: string, provider?: AIProviderId): Promise<{ embedding: number[]; provider: AIProviderId }> {
     const config = envConfigService.getConfig();
-    if (provider === 'gemini' && config.geminiApiKey) {
+    const configuredEmbeddingProvider = config.embeddingProvider || 'auto';
+    const selectedProvider: AIProviderId = provider ||
+      (configuredEmbeddingProvider === 'ollama' ? 'ollama' :
+        configuredEmbeddingProvider === 'gemini' ? 'gemini' :
+          config.geminiApiKey ? 'gemini' : 'ollama');
+
+    if (selectedProvider === 'gemini') {
+      if (!config.geminiApiKey) {
+        throw new Error('EMBEDDING_PROVIDER_UNAVAILABLE: Gemini embeddings were explicitly selected but GEMINI_API_KEY is not configured.');
+      }
       const genAI = new GoogleGenAI({
         apiKey: config.geminiApiKey,
         ...(typeof window === 'undefined' ? { httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } } : {})
@@ -940,14 +957,44 @@ export class AIProviderPlatform {
         model: 'gemini-embedding-2',
         contents: text
       });
-      return {
-        embedding: (res as any).embedding?.values || (res as any).embeddings?.[0]?.values || new Array(768).fill(0.01),
-        provider: 'gemini'
-      };
+      const raw = (res as any).embedding?.values ?? (res as any).embeddings?.[0]?.values;
+      return { embedding: normalizeEmbeddingVector(raw, 'Gemini'), provider: 'gemini' };
     }
 
-    // No real embedding provider available — do not fabricate a vector and mislabel its source.
-    throw new Error('No embedding provider available. Set GEMINI_API_KEY to enable embeddings (gemini-embedding-2).');
+    if (selectedProvider === 'ollama') {
+      let discovery = ollamaDiscoveryService.getLastDiscovery();
+      if (!discovery?.reachable || !discovery.activeEndpoint) {
+        discovery = await ollamaDiscoveryService.discoverAndTest();
+      }
+      const endpoint = resolveOllamaEndpoint(discovery);
+      const model = resolveOllamaEmbeddingModel(config.ollamaEmbeddingModel, discovery.discoveredModels);
+      let response: any;
+      try {
+        response = await axios.post(
+          `${endpoint}/api/embed`,
+          { model, input: text },
+          { timeout: 120_000 }
+        );
+      } catch (error: any) {
+        if (error?.response?.status !== 404) {
+          throw new Error(`OFFLINE_EMBEDDINGS_UNAVAILABLE: Ollama embedding request failed (${error?.response?.status || error?.code || 'request error'}).`);
+        }
+        // Compatibility with older Ollama releases.
+        try {
+          response = await axios.post(
+            `${endpoint}/api/embeddings`,
+            { model, prompt: text },
+            { timeout: 120_000 }
+          );
+        } catch (legacyError: any) {
+          throw new Error(`OFFLINE_EMBEDDINGS_UNAVAILABLE: Ollama embedding request failed (${legacyError?.response?.status || legacyError?.code || 'request error'}).`);
+        }
+      }
+      const raw = response?.data?.embeddings?.[0] ?? response?.data?.embedding;
+      return { embedding: normalizeEmbeddingVector(raw, 'Ollama'), provider: 'ollama' };
+    }
+
+    throw new Error(`EMBEDDING_PROVIDER_UNAVAILABLE: Provider "${selectedProvider}" does not implement genuine embeddings.`);
   }
 
   // Image Generation — delegates to authoritative CreativeGenerationService
