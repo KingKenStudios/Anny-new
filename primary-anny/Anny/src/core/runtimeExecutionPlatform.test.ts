@@ -19,15 +19,13 @@ test('runtime platform default state does not claim a real process or telemetry'
 
 test('starting a workspace runs only structural validation and reports simulation mode', async () => {
   const projectId = 'test-runtime-simulation-' + Date.now();
-  const vfs = runtimePlatform.getProjects().length
-    ? (await import('./workspaceManager')).WorkspaceManager.getInstance().getVFS()
-    : (await import('./virtualFileSystem')).VirtualFileSystem.getInstance();
+  const vfs = (await import('./workspaceManager')).WorkspaceManager.getInstance().getVFS();
   const started = runtimePlatform.startProject(projectId, 'Test Runtime', vfs);
   assert.equal(started.executionMode, 'SIMULATED');
   assert.equal(started.metrics.pid, null);
   assert.equal(started.port, 0);
 
-  await new Promise(resolve => setTimeout(resolve, 400));
+  await new Promise(resolve => setTimeout(resolve, 500));
   const result = runtimePlatform.getProjects().find(item => item.projectId === projectId);
   assert.ok(result);
   assert.equal(result!.executionMode, 'SIMULATED');
