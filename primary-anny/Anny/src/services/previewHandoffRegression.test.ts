@@ -1,32 +1,29 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import test from 'node:test';
+import assert from 'node:assert/strict';
 import { projectPreviewController, hasApplicationEntryPoint } from './projectPreviewController';
 import { WorkspaceManager } from '../core/workspaceManager';
 import { safeStorage } from '../lib/storage';
 
-describe('ANNY Preview Handoff & Project Restoration Regression Tests (A - I)', () => {
-  beforeEach(() => {
-    safeStorage.clear();
+test('ANNY Preview Handoff & Project Restoration Regression Tests (A - I)', async (t) => {
+  await t.test('A: identifies application entry point correctly for React and HTML apps', () => {
+    assert.equal(hasApplicationEntryPoint(null), false);
+    assert.equal(hasApplicationEntryPoint({}), false);
+    assert.equal(hasApplicationEntryPoint({ '/src/App.tsx': 'export default function App() {}' }), true);
+    assert.equal(hasApplicationEntryPoint({ '/index.html': '<html><body><div id="root"></div></body></html>' }), true);
+    assert.equal(hasApplicationEntryPoint({ '/package.json': '{}', '/README.md': '# Hello' }), false);
   });
 
-  it('A: identifies application entry point correctly for React and HTML apps', () => {
-    expect(hasApplicationEntryPoint(null)).toBe(false);
-    expect(hasApplicationEntryPoint({})).toBe(false);
-    expect(hasApplicationEntryPoint({ '/src/App.tsx': 'export default function App() {}' })).toBe(true);
-    expect(hasApplicationEntryPoint({ '/index.html': '<html><body><div id="root"></div></body></html>' })).toBe(true);
-    expect(hasApplicationEntryPoint({ '/package.json': '{}', '/README.md': '# Hello' })).toBe(false);
-  });
-
-  it('B: validates project ID sanitization and rejects invalid or placeholder IDs', async () => {
+  await t.test('B: validates project ID sanitization and rejects invalid or placeholder IDs', async () => {
     const mismatchResult = await projectPreviewController.restoreProjectById('proj_valid_1', {
       expectedMeta: { projectId: 'proj_other_2' } as any,
     });
-    expect(mismatchResult.status).toBe('authorization_denied');
+    assert.equal(mismatchResult.status, 'authorization_denied');
 
     const emptyResult = await projectPreviewController.restoreProjectById('');
-    expect(emptyResult.status).toBe('missing_project_id');
+    assert.equal(emptyResult.status, 'missing_project_id');
   });
 
-  it('C: registers and stores session project metadata deterministically', () => {
+  await t.test('C: registers and stores session project metadata deterministically', () => {
     const testProjectId = 'proj_test_regression_123';
     const sessionId = 'session_xyz_789';
 
@@ -42,14 +39,14 @@ describe('ANNY Preview Handoff & Project Restoration Regression Tests (A - I)', 
     });
 
     const meta = projectPreviewController.getSessionProjectMeta(sessionId);
-    expect(meta).not.toBeNull();
-    expect(meta?.projectId).toBe(testProjectId);
-    expect(meta?.name).toBe('Regression E-Commerce App');
-    expect(meta?.version).toBe(2);
-    expect(meta?.fileCount).toBe(1);
+    assert.notEqual(meta, null);
+    assert.equal(meta?.projectId, testProjectId);
+    assert.equal(meta?.name, 'Regression E-Commerce App');
+    assert.equal(meta?.version, 2);
+    assert.equal(meta?.fileCount, 1);
   });
 
-  it('D: extracts files strictly from project VFS without leaking across workspaces', () => {
+  await t.test('D: extracts files strictly from project VFS without leaking across workspaces', () => {
     const projA = 'proj_alpha_999';
     const projB = 'proj_beta_888';
 
@@ -61,13 +58,13 @@ describe('ANNY Preview Handoff & Project Restoration Regression Tests (A - I)', 
     mgr.getWorkspaceVFS(projB)._unsafe_writeFile('/src/App.tsx', 'export default function B() {}');
 
     const filesA = projectPreviewController.extractFilesFromVFS(projA);
-    expect(filesA['/src/App.tsx']).toContain('function A()');
+    assert.ok(filesA['/src/App.tsx']?.includes('function A()'));
 
     const filesB = projectPreviewController.extractFilesFromVFS(projB);
-    expect(filesB['/src/App.tsx']).toContain('function B()');
+    assert.ok(filesB['/src/App.tsx']?.includes('function B()'));
   });
 
-  it('E: logs safe diagnostic telemetry without exposing secrets or private credentials', () => {
+  await t.test('E: logs safe diagnostic telemetry without exposing secrets or private credentials', () => {
     const diagnostics = projectPreviewController.logPreviewHandoffDiagnostics({
       requestedProjectId: 'proj_telemetry_1',
       resolvedProjectId: 'proj_telemetry_1',
@@ -80,12 +77,12 @@ describe('ANNY Preview Handoff & Project Restoration Regression Tests (A - I)', 
       compilationResult: 'SUCCESS',
     });
 
-    expect(diagnostics.requestedProjectId).toBe('proj_telemetry_1');
-    expect(diagnostics.handshakeAccepted).toBe(true);
-    expect(diagnostics.compilationResult).toBe('SUCCESS');
+    assert.equal(diagnostics.requestedProjectId, 'proj_telemetry_1');
+    assert.equal(diagnostics.handshakeAccepted, true);
+    assert.equal(diagnostics.compilationResult, 'SUCCESS');
 
     const lastDiag = projectPreviewController.getLastDiagnostics();
-    expect(lastDiag).not.toBeNull();
-    expect(lastDiag?.resolvedProjectId).toBe('proj_telemetry_1');
+    assert.notEqual(lastDiag, null);
+    assert.equal(lastDiag?.resolvedProjectId, 'proj_telemetry_1');
   });
 });

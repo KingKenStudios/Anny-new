@@ -1595,6 +1595,17 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
         : `Establishing verified VFS handshake for project ${targetProjId}...`,
     );
 
+    // Direct restoration fallback: immediately attempt to load project via projectPreviewController
+    if (!isPlaceholder) {
+      projectPreviewController.restoreProjectById(targetProjId).then((res) => {
+        if (res.status === 'restored' && res.hasEntryPoint && Object.keys(res.files).length > 0) {
+          const previewVfs = createIsolatedPreviewVFS(targetProjId, res.files);
+          setIsolatedPreviewVfs(previewVfs);
+          setVfsVersion((prev) => prev + 1);
+        }
+      }).catch(() => {});
+    }
+
     acceptedHandshakeIdsRef.current.clear();
     let initialHandshakeId = '';
     try {

@@ -490,7 +490,7 @@ export const AnnyPromptComposer: React.FC<AnnyPromptComposerProps> = ({
               : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
           }`}
         >
-          <AudioLines
+          <Mic
             className={`w-3.5 h-3.5 shrink-0 ${
               isRecordingVoiceNote
                 ? isLight
@@ -502,7 +502,7 @@ export const AnnyPromptComposer: React.FC<AnnyPromptComposerProps> = ({
             }`}
           />
           <span className={variant === 'split' ? 'hidden sm:inline' : ''}>
-            {isRecordingVoiceNote ? 'Recording...' : 'Voice'}
+            {isRecordingVoiceNote ? 'Recording...' : 'Voice Note'}
           </span>
         </button>
       </div>

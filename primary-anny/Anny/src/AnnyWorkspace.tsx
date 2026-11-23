@@ -24,7 +24,7 @@ import { AnnyPromptComposer, type ComposerAttachedFile } from './components/chat
 import { VoiceNoteAttachmentCard, formatVoiceDuration } from './components/chat/VoiceNoteRecorder';
 import { resolveDraftAfterFailedSend } from './components/chat/composerUtils';
 import { ChatProjectBuildCard } from './components/chat/ChatProjectBuildCard';
-import { projectPreviewController, type ProjectBuildMetadata } from './services/projectPreviewController';
+import { projectPreviewController, resolveBestProjectId, type ProjectBuildMetadata } from './services/projectPreviewController';
 import {
   Sparkles,
   Command,
@@ -2991,10 +2991,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   };
 
   if (isVisualEditor) {
-    const activeEditorSessionId =
-      projectMetaState.projectId && projectMetaState.projectId.startsWith('proj_')
-        ? projectMetaState.projectId
-        : WorkspaceManager.getInstance().getActiveProjectId() || currentChatId || undefined;
+    const activeEditorSessionId = resolveBestProjectId(currentChatId, projectMetaState.projectId);
     return (
       <AnnyProfessionalEditor
         userEmail={userEmail}
@@ -3876,11 +3873,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                         buildDiagnostics={buildFailureInfo?.diagnostics}
                         onRetryBuild={lastBuildPrompt ? () => handleSend(lastBuildPrompt) : undefined}
                         setRightTab={setPreviewTab}
-                        activeProjectId={
-                          projectMetaState.projectId && projectMetaState.projectId.startsWith('proj_')
-                            ? projectMetaState.projectId
-                            : WorkspaceManager.getInstance().getActiveProjectId() || activeProj?.id || 'anny-project'
-                        }
+                        activeProjectId={resolveBestProjectId(currentChatId, projectMetaState.projectId)}
                         reloadKey={reloadKey}
                         previewRuntimeReady={hasBuiltApp && !isGenerating && !buildFailureInfo}
                         onOpenVisualEdit={() => setIsVisualEditor(true)}

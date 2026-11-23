@@ -1187,3 +1187,32 @@ class ProjectPreviewController {
 }
 
 export const projectPreviewController = new ProjectPreviewController();
+
+export function resolveBestProjectId(sessionId?: string | null, fallbackId?: string | null): string {
+  const cleanFallback = String(fallbackId || '').trim();
+  if (cleanFallback.startsWith('proj_')) return cleanFallback;
+
+  const cleanSession = String(sessionId || '').trim();
+  if (cleanSession) {
+    const sessionMeta = projectPreviewController.getSessionProjectMeta(cleanSession);
+    if (sessionMeta?.projectId && sessionMeta.projectId.startsWith('proj_')) {
+      return sessionMeta.projectId;
+    }
+  }
+
+  const controllerActive = projectPreviewController.getState().activeProjectId;
+  if (controllerActive && controllerActive.startsWith('proj_')) {
+    return controllerActive;
+  }
+
+  const activeMgr = WorkspaceManager.getInstance().getActiveProjectId();
+  if (activeMgr && activeMgr.startsWith('proj_')) {
+    return activeMgr;
+  }
+
+  if (cleanSession && cleanSession.startsWith('proj_')) {
+    return cleanSession;
+  }
+
+  return cleanFallback || 'ws_default_1';
+}
