@@ -395,7 +395,7 @@ export class MemoryEngine {
     const bm25Scores: Array<{ chunk: DocumentChunk; score: number }> = [];
 
     this.keywordIndex.forEach((chunk) => {
-      if (ownerUserId && chunk.ownerUserId && chunk.ownerUserId !== ownerUserId) {
+      if (ownerUserId && chunk.ownerUserId !== ownerUserId) {
         return;
       }
       const chunkLower = chunk.text.toLowerCase();
