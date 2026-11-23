@@ -298,7 +298,8 @@ export class ToolPermissionSystem {
     return { allowed: true, status: 'GRANTED', riskLevel: tool.riskLevel, policyReason: auditLog.policyReason, auditLog };
   }
   public getAuditLogs(limit: number = 50): ToolExecutionAuditLog[] {
-    return this.auditLogs.slice(-limit);
+    const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.min(this.maxAuditLogs, Math.floor(limit))) : 50;
+    return this.auditLogs.slice(-safeLimit);
   }
 }
 
