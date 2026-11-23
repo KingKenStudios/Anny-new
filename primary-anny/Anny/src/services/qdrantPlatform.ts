@@ -335,6 +335,9 @@ export class QdrantPlatform {
     if (collectionName === 'conversation_memory' && !filterSessionId) {
       throw new Error('SESSION_SCOPE_REQUIRED: Conversation memory search must specify the owning session ID.');
     }
+    if (['conversation_memory', 'knowledge_base'].includes(collectionName) && !filterOwnerUserId) {
+      throw new Error('MEMORY_OWNER_SCOPE_REQUIRED: Tenant-owned memory search must specify the authenticated owner user ID.');
+    }
     this.validateCollectionName(collectionName);
     const safeLimit = Math.max(1, Math.min(100, Math.floor(limit) || 5));
     let queryVector: number[];
@@ -413,8 +416,11 @@ export class QdrantPlatform {
     return dot / (Math.sqrt(normA) * Math.sqrt(normB));
   }
 
-  public async retrieveMemoryContext(sessionId: string, currentQuery: string): Promise<string> {
-    const memoryResults = await this.search('conversation_memory', currentQuery, 3, undefined, sessionId);
+  public async retrieveMemoryContext(sessionId: string, currentQuery: string, ownerUserId: string): Promise<string> {
+    if (!ownerUserId?.trim()) {
+      throw new Error('MEMORY_OWNER_SCOPE_REQUIRED: Conversation memory retrieval requires the authenticated owner user ID.');
+    }
+    const memoryResults = await this.search('conversation_memory', currentQuery, 3, undefined, sessionId, ownerUserId);
     if (memoryResults.length === 0) return '';
     return memoryResults.map(result => `[Rel. Memory Score ${result.score}]: ${result.content}`).join('\n');
   }
