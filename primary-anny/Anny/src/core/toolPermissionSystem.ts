@@ -255,111 +255,48 @@ export class ToolPermissionSystem {
     requesterId: string,
     requesterRole: string,
     inputParams: Record<string, any>,
-    options: { isLotoAuthorized?: boolean; userConfirmed?: boolean } = {}
+    options: { isLotoAuthorized?: boolean; userConfirmed?: boolean; grantedPermissions?: string[] } = {}
   ): VerificationResult {
     const tool = this.registry.get(toolId);
-    const auditId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const auditId = globalThis.crypto?.randomUUID ? `audit_${globalThis.crypto.randomUUID()}` : `audit_${Date.now()}_${this.auditLogs.length}`;
+    const inputSummary = this.summarizeInput(inputParams);
 
-    if (!tool) {
+    const deny = (riskLevel: RiskLevel, reason: string, status: 'DENIED' | 'REQUIRES_CONFIRMATION' = 'DENIED'): VerificationResult => {
       const auditLog: ToolExecutionAuditLog = {
-        id: auditId,
-        timestamp: new Date().toISOString(),
-        toolId,
-        requesterId,
-        requesterRole,
-        riskLevel: 'HIGH',
-        authorized: false,
-        lotoAuthorized: Boolean(options.isLotoAuthorized),
-        policyReason: `Tool ID '${toolId}' is not registered in the Tool Permission System.`,
-        inputSummary: JSON.stringify(inputParams).substring(0, 100),
-        status: 'DENIED'
+        id: auditId, timestamp: new Date().toISOString(), toolId, requesterId, requesterRole, riskLevel,
+        authorized: false, lotoAuthorized: Boolean(options.isLotoAuthorized), policyReason: reason, inputSummary, status
       };
-      this.auditLogs.push(auditLog);
-      return {
-        allowed: false,
-        status: 'DENIED',
-        riskLevel: 'HIGH',
-        policyReason: auditLog.policyReason,
-        auditLog
-      };
-    }
+      this.addAudit(auditLog);
+      return { allowed: false, status, riskLevel, policyReason: reason, auditLog };
+    };
 
-    // Policy Checks
-    if (tool.riskLevel === 'CRITICAL') {
-      if (tool.category === 'actuator_robotics' && !options.isLotoAuthorized) {
-        const auditLog: ToolExecutionAuditLog = {
-          id: auditId,
-          timestamp: new Date().toISOString(),
-          toolId,
-          requesterId,
-          requesterRole,
-          riskLevel: tool.riskLevel,
-          authorized: false,
-          lotoAuthorized: false,
-          policyReason: 'CRITICAL physical actuator control requires Digital Lockout/Tagout (LOTO) key authorization.',
-          inputSummary: JSON.stringify(inputParams).substring(0, 100),
-          status: 'DENIED'
-        };
-        this.auditLogs.push(auditLog);
-        return {
-          allowed: false,
-          status: 'DENIED',
-          riskLevel: tool.riskLevel,
-          policyReason: auditLog.policyReason,
-          auditLog
-        };
-      }
-    }
+    if (!tool) return deny('HIGH', `Tool ID '${toolId}' is not registered.`);
+    const granted = new Set(Array.isArray(options.grantedPermissions) ? options.grantedPermissions : []);
+    const missing = tool.requiredPermissions.filter(permission => !granted.has(permission));
+    if (missing.length) return deny(tool.riskLevel, `Missing required permission(s): ${missing.join(', ')}.`);
+    const inputError = this.validateInput(tool, inputParams);
+    if (inputError) return deny(tool.riskLevel, `Invalid input: ${inputError}`);
 
+    if (tool.riskLevel === 'CRITICAL' && tool.category === 'actuator_robotics' &&
+        (!options.isLotoAuthorized || !granted.has('scada:loto_override'))) {
+      return deny('CRITICAL', 'CRITICAL physical actuator control requires trusted LOTO authorization and scada:loto_override permission.');
+    }
+    if (tool.executionPolicy === 'loto_authorized_only' && !options.isLotoAuthorized) {
+      return deny(tool.riskLevel, 'This tool requires trusted LOTO authorization.');
+    }
     if (tool.executionPolicy === 'require_user_confirm' && !options.userConfirmed) {
-      const auditLog: ToolExecutionAuditLog = {
-        id: auditId,
-        timestamp: new Date().toISOString(),
-        toolId,
-        requesterId,
-        requesterRole,
-        riskLevel: tool.riskLevel,
-        authorized: false,
-        lotoAuthorized: Boolean(options.isLotoAuthorized),
-        policyReason: `Tool '${tool.name}' has risk level ${tool.riskLevel} and requires explicit user confirmation before execution.`,
-        inputSummary: JSON.stringify(inputParams).substring(0, 100),
-        status: 'REQUIRES_CONFIRMATION'
-      };
-      this.auditLogs.push(auditLog);
-      return {
-        allowed: false,
-        status: 'REQUIRES_CONFIRMATION',
-        riskLevel: tool.riskLevel,
-        policyReason: auditLog.policyReason,
-        auditLog
-      };
+      return deny(tool.riskLevel, `Tool '${tool.name}' requires explicit user confirmation before execution.`, 'REQUIRES_CONFIRMATION');
     }
 
-    // Granted
     const auditLog: ToolExecutionAuditLog = {
-      id: auditId,
-      timestamp: new Date().toISOString(),
-      toolId,
-      requesterId,
-      requesterRole,
-      riskLevel: tool.riskLevel,
-      authorized: true,
-      lotoAuthorized: Boolean(options.isLotoAuthorized),
-      policyReason: `Tool execution authorized under ${tool.riskLevel} risk policy.`,
-      inputSummary: JSON.stringify(inputParams).substring(0, 100),
-      status: 'GRANTED'
+      id: auditId, timestamp: new Date().toISOString(), toolId, requesterId, requesterRole, riskLevel: tool.riskLevel,
+      authorized: true, lotoAuthorized: Boolean(options.isLotoAuthorized),
+      policyReason: `Tool execution authorized under ${tool.riskLevel} risk policy with all required permissions and input validation.`,
+      inputSummary, status: 'GRANTED'
     };
-    this.auditLogs.push(auditLog);
-
-    return {
-      allowed: true,
-      status: 'GRANTED',
-      riskLevel: tool.riskLevel,
-      policyReason: auditLog.policyReason,
-      auditLog
-    };
+    this.addAudit(auditLog);
+    return { allowed: true, status: 'GRANTED', riskLevel: tool.riskLevel, policyReason: auditLog.policyReason, auditLog };
   }
-
   public getAuditLogs(limit: number = 50): ToolExecutionAuditLog[] {
     return this.auditLogs.slice(-limit);
   }
