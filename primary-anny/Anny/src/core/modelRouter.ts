@@ -6,6 +6,7 @@
 
 import { aiProviderPlatform, AIProviderId, ChatMessage, ChatOptions, ChatResponse } from '../services/aiProviderPlatform';
 import { envConfigService } from '../services/envConfigService';
+import { isInstalledOllamaModel } from '../services/ollamaModelSelection';
 import { providerRegistryService, ProviderDefinition, ModelDefinition } from '../services/providerRegistryService';
 import { adaptiveIntelligenceEngine } from './AdaptiveIntelligenceEngine';
 
@@ -298,6 +299,10 @@ export class ModelRouter {
     }
 
     if (!this.isProviderAvailable(descriptor.provider)) return -1;
+    if (descriptor.provider === 'ollama') {
+      const installedModels = providerRegistryService.getProvider('ollama')?.availableModels || [];
+      if (!isInstalledOllamaModel(descriptor.model, installedModels)) return -1;
+    }
 
     let score = 0;
     const requiredCap = TASK_TO_CAPABILITY_MAP[strategy.taskCategory] || 'GENERAL';
