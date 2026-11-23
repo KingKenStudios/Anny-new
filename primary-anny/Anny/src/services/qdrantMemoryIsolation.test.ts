@@ -24,6 +24,11 @@ test('conversation memory is session-scoped and never fabricates embeddings', as
       [1, 0]
     );
 
+    await assert.rejects(
+      () => qdrantPlatform.search('conversation_memory', 'unscoped query'),
+      /SESSION_SCOPE_REQUIRED/
+    );
+
     const sessionAContext = await qdrantPlatform.retrieveMemoryContext(sessionA, 'recall memory');
     assert.match(sessionAContext, /Private memory belonging to session A/);
     assert.doesNotMatch(sessionAContext, /Private memory belonging to session B/);
