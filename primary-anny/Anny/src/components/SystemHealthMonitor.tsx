@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Activity, Server, Wifi, WifiOff, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
 
 interface HealthStatus {
@@ -17,9 +17,11 @@ export default function SystemHealthMonitor() {
   });
   const [isHovered, setIsHovered] = useState(false);
   const [isPinging, setIsPinging] = useState(false);
+  const checkInProgress = useRef(false);
 
   const checkHealth = async () => {
-    if (isPinging) return;
+    if (checkInProgress.current) return;
+    checkInProgress.current = true;
     setIsPinging(true);
     const startTime = performance.now();
     const controller = new AbortController();
@@ -55,6 +57,7 @@ export default function SystemHealthMonitor() {
       });
     } finally {
       window.clearTimeout(timeoutId);
+      checkInProgress.current = false;
       setIsPinging(false);
     }
   };
