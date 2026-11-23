@@ -128,6 +128,10 @@ export class QdrantPlatform {
     filterCategory?: string,
     filterSessionId?: string
   ): Promise<SearchResult[]> {
+    if (collectionName === 'conversation_memory' && !filterSessionId) {
+      throw new Error('SESSION_SCOPE_REQUIRED: Conversation memory search must specify the owning session ID.');
+    }
+
     const docs = this.collections.get(collectionName) || [];
     if (docs.length === 0) return [];
 
