@@ -7,15 +7,15 @@
 import { WorkspaceManager, CompilationResult } from './workspaceManager';
 import { VirtualFileSystem } from './virtualFileSystem';
 
-export type ProcessState = 'idle' | 'starting' | 'running' | 'failed' | 'recovering' | 'stopped';
+export type ProcessState = 'idle' | 'starting' | 'running' | 'simulated' | 'failed' | 'recovering' | 'stopped';
 export type FrameworkType = 'react_vite' | 'nextjs' | 'express_node' | 'python_fastapi' | 'go_gin' | 'rust_actix' | 'flutter_web';
 
 export interface ProcessMetrics {
-  pid: number;
-  cpuUsagePct: number;
-  memoryUsageMb: number;
-  uptimeSeconds: number;
-  listeningPort: number;
+  pid: number | null;
+  cpuUsagePct: number | null;
+  memoryUsageMb: number | null;
+  uptimeSeconds: number | null;
+  listeningPort: number | null;
   healthStatus: 'healthy' | 'degraded' | 'critical' | 'offline';
 }
 
@@ -36,6 +36,7 @@ export interface RuntimeProjectConfig {
   entryPoint: string;
   port: number;
   state: ProcessState;
+  executionMode: 'REAL' | 'SIMULATED';
   metrics: ProcessMetrics;
   autoRecoveryEnabled: boolean;
   restartCount: number;
@@ -46,10 +47,8 @@ export class RuntimeExecutionPlatform {
   private activeProjects: Map<string, RuntimeProjectConfig> = new Map();
   private logs: ExecutionLogEntry[] = [];
   private listeners: Set<() => void> = new Set();
-  private metricsTimer: any = null;
 
   private constructor() {
-    this.startMetricsMonitor();
     this.initDefaultRuntime();
   }
 
@@ -66,23 +65,24 @@ export class RuntimeExecutionPlatform {
       name: 'ANNY Operating System Core',
       framework: 'react_vite',
       entryPoint: '/src/main.tsx',
-      port: 3000,
-      state: 'running',
+      port: 0,
+      state: 'simulated',
+      executionMode: 'SIMULATED',
       metrics: {
-        pid: 10421,
-        cpuUsagePct: 1.4,
-        memoryUsageMb: 142.8,
-        uptimeSeconds: 320,
-        listeningPort: 3000,
-        healthStatus: 'healthy'
+        pid: null,
+        cpuUsagePct: null,
+        memoryUsageMb: null,
+        uptimeSeconds: null,
+        listeningPort: null,
+        healthStatus: 'degraded'
       },
       autoRecoveryEnabled: true,
       restartCount: 0
     };
 
     this.activeProjects.set(defaultProject.projectId, defaultProject);
-    this.addLog('info', 'runtime', 'Runtime Execution Platform initialized successfully.', 0, 'proj_primary_anny');
-    this.addLog('info', 'dev_server', 'Vite development server listening on http://localhost:3000 (Port 3000 proxy layer active)', 0, 'proj_primary_anny');
+    this.addLog('warn', 'runtime', 'Runtime state is simulated. No OS process or Vite server was started.', undefined, 'proj_primary_anny');
+    this.addLog('info', 'compiler', 'Workspace validation uses a lightweight bracket-structure check; it is not a TypeScript compiler or production build.', undefined, 'proj_primary_anny');
   }
 
   public subscribe(listener: () => void): () => void {
@@ -135,22 +135,23 @@ export class RuntimeExecutionPlatform {
       name,
       framework,
       entryPoint: framework === 'python_fastapi' ? '/main.py' : '/src/main.tsx',
-      port: 3000,
+      port: 0,
       state: 'starting',
+      executionMode: 'SIMULATED',
       metrics: {
-        pid: Math.floor(10000 + Math.random() * 90000),
-        cpuUsagePct: 2.5,
-        memoryUsageMb: 85.0,
-        uptimeSeconds: 0,
-        listeningPort: 3000,
-        healthStatus: 'healthy'
+        pid: null,
+        cpuUsagePct: null,
+        memoryUsageMb: null,
+        uptimeSeconds: null,
+        listeningPort: null,
+        healthStatus: 'degraded'
       },
       autoRecoveryEnabled: true,
       restartCount: existing ? existing.restartCount : 0
     };
 
     this.activeProjects.set(projectId, config);
-    this.addLog('info', 'runtime', `Booting runtime process for '${name}' [Framework: ${framework}]`, 0, projectId);
+    this.addLog('warn', 'runtime', `Starting simulated workspace validation for '${name}' [Framework: ${framework}]; no runtime process will be spawned.`, undefined, projectId);
     this.notify();
 
     // Trigger build & compile
@@ -166,7 +167,7 @@ export class RuntimeExecutionPlatform {
     if (p) {
       p.state = 'stopped';
       p.metrics.healthStatus = 'offline';
-      this.addLog('warn', 'runtime', `Stopped process PID ${p.metrics.pid} for project '${p.name}'.`, 0, projectId);
+      this.addLog('warn', 'runtime', `Stopped simulated runtime state for project '${p.name}'. No OS process was terminated.`, undefined, projectId);
       this.notify();
     }
   }
@@ -176,7 +177,7 @@ export class RuntimeExecutionPlatform {
     if (p) {
       p.restartCount += 1;
       p.state = 'starting';
-      p.metrics.uptimeSeconds = 0;
+      p.metrics.uptimeSeconds = null;
       this.addLog('info', 'runtime', `Restarting process for '${p.name}' (Attempt #${p.restartCount})...`, 0, projectId);
       this.notify();
 
@@ -195,14 +196,21 @@ export class RuntimeExecutionPlatform {
     const compilation: CompilationResult = wsManager.compileWorkspace();
 
     if (compilation.success) {
-      p.state = 'running';
-      p.metrics.healthStatus = 'healthy';
-      this.addLog('info', 'compiler', `Compilation succeeded in ${compilation.buildTimeMs}ms (0 errors).`, 0, projectId);
-      this.addLog('info', 'dev_server', `Development server listening on http://localhost:${p.port}`, 0, projectId);
+      p.state = 'simulated';
+      p.executionMode = 'SIMULATED';
+      p.port = 0;
+      p.metrics.healthStatus = 'degraded';
+      p.metrics.pid = null;
+      p.metrics.cpuUsagePct = null;
+      p.metrics.memoryUsageMb = null;
+      p.metrics.uptimeSeconds = null;
+      p.metrics.listeningPort = null;
+      this.addLog('info', 'compiler', `Lightweight workspace structure check passed in ${compilation.buildTimeMs}ms. This is not a real compiler/build.`, undefined, projectId);
+      this.addLog('warn', 'dev_server', 'Preview/runtime was NOT launched. No listening port or process telemetry is available.', undefined, projectId);
     } else {
       p.state = 'failed';
       p.metrics.healthStatus = 'critical';
-      this.addLog('error', 'compiler', `Compilation failed with ${compilation.errors.length} error(s).`, 1, projectId);
+      this.addLog('error', 'compiler', `Workspace structure check failed with ${compilation.errors.length} error(s).`, 1, projectId);
       compilation.errors.forEach(err => {
         this.addLog('error', 'compiler', `[${err.file}] ${err.message}`, 1, projectId);
       });
@@ -222,7 +230,7 @@ export class RuntimeExecutionPlatform {
 
     p.state = 'recovering';
     p.restartCount += 1;
-    this.addLog('warn', 'recovery', `🤖 [AUTONOMOUS RECOVERY] Analyzing ${errors.length} compilation crash logs for project '${p.name}'...`, 0, projectId);
+    this.addLog('warn', 'recovery', `🤖 [AUTONOMOUS RECOVERY] Analyzing ${errors.length} workspace structure validation issue(s) for project '${p.name}'...`, 0, projectId);
     this.notify();
 
     setTimeout(() => {
@@ -244,27 +252,9 @@ export class RuntimeExecutionPlatform {
         }
       });
 
-      this.addLog('info', 'recovery', `Re-evaluating compilation after autonomous code patch...`, 0, projectId);
+      this.addLog('info', 'recovery', `Re-running the lightweight structure check after the transaction-backed heuristic repair...`, 0, projectId);
       this.compileAndLaunch(projectId, context);
     }, 1200);
-  }
-
-  // --- Metrics Monitoring Loop ---
-  private startMetricsMonitor(): void {
-    this.metricsTimer = setInterval(() => {
-      let updated = false;
-      this.activeProjects.forEach(p => {
-        if (p.state === 'running') {
-          p.metrics.uptimeSeconds += 2;
-          p.metrics.cpuUsagePct = Number((1.0 + Math.random() * 2.5).toFixed(1));
-          p.metrics.memoryUsageMb = Number((120.0 + Math.random() * 30.0).toFixed(1));
-          updated = true;
-        }
-      });
-      if (updated) {
-        this.notify();
-      }
-    }, 2000);
   }
 
   // --- Logging Engine ---
