@@ -93,7 +93,7 @@ test('private vector search rejects whitespace, control characters and oversized
     /MEMORY_OWNER_SCOPE_REQUIRED/
   );
   await assert.rejects(
-    () => platform.search('knowledge_base', 'query', 3, undefined, undefined, 'tenant\\u0000a'),
+    () => platform.search('knowledge_base', 'query', 3, undefined, undefined, 'tenant\u0000a'),
     /MEMORY_OWNER_SCOPE_INVALID/
   );
   await assert.rejects(
@@ -105,7 +105,7 @@ test('private vector search rejects whitespace, control characters and oversized
     /SESSION_SCOPE_REQUIRED/
   );
   await assert.rejects(
-    () => platform.search('conversation_memory', 'query', 3, undefined, 'session\\u0000a', 'owner-a'),
+    () => platform.search('conversation_memory', 'query', 3, undefined, 'session\u0000a', 'owner-a'),
     /SESSION_SCOPE_INVALID/
   );
 });
