@@ -430,7 +430,13 @@ export class MemoryEngine {
     bm25Scores.sort((a, b) => b.score - a.score);
 
     // 3. Reciprocal Rank Fusion (RRF) Reranking
-    const rrfMap: Map<string, { chunkId: string; text: string; documentTitle: string; rrfScore: number }> = new Map();
+    const rrfMap: Map<string, {
+      chunkId: string;
+      text: string;
+      documentTitle: string;
+      rrfScore: number;
+      sources: Set<'dense' | 'bm25'>;
+    }> = new Map();
     const kConstant = 60;
 
     // Dense RRF
@@ -441,7 +447,8 @@ export class MemoryEngine {
         chunkId,
         text: vr.content,
         documentTitle: vr.payload?.title || 'Knowledge Base',
-        rrfScore: rrf
+        rrfScore: rrf,
+        sources: new Set(['dense'])
       });
     });
 
@@ -451,12 +458,14 @@ export class MemoryEngine {
       const existing = rrfMap.get(bm.chunk.chunkId);
       if (existing) {
         existing.rrfScore += rrf;
+        existing.sources.add('bm25');
       } else {
         rrfMap.set(bm.chunk.chunkId, {
           chunkId: bm.chunk.chunkId,
           text: bm.chunk.text,
           documentTitle: bm.chunk.documentTitle,
-          rrfScore: rrf
+          rrfScore: rrf,
+          sources: new Set(['bm25'])
         });
       }
     });
@@ -473,7 +482,9 @@ export class MemoryEngine {
         text: item.text,
         documentTitle: item.documentTitle,
         score: Number(item.rrfScore.toFixed(5)),
-        retrievalSource: 'rrf_fusion' as const
+        retrievalSource: item.sources.size > 1
+          ? 'rrf_fusion' as const
+          : item.sources.has('dense') ? 'dense' as const : 'bm25' as const
       }));
 
     return finalRAG;
