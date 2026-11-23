@@ -225,13 +225,17 @@ export class ProjectPersistenceService {
       const raw = fs.readFileSync(this.storePath, 'utf8');
       if (!raw.trim()) return;
       const parsed = JSON.parse(raw);
+      const tombstones = Array.isArray(parsed?.deletedProjectIds) ? parsed.deletedProjectIds : [];
+      this.deletedProjectIds = new Set(
+        tombstones.filter((id: unknown) => typeof id === 'string' && isValidProjectId(id)).map((id: string) => id.trim())
+      );
       const list: PersistedProjectRecord[] = Array.isArray(parsed?.projects)
         ? parsed.projects
         : Array.isArray(parsed)
           ? parsed
           : [];
       for (const item of list) {
-        if (item && isValidProjectId(item.projectId)) {
+        if (item && isValidProjectId(item.projectId) && !this.deletedProjectIds.has(item.projectId.trim())) {
           const files = sanitizeProjectFilesMap(item.files);
           this.records.set(item.projectId, {
             ...item,
