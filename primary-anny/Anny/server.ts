@@ -1674,14 +1674,16 @@ async function startServer() {
       });
     } catch (err: any) {
       const msg = String(err?.message || 'Failed to start preview session');
-      const status = msg === 'FORBIDDEN_PROJECT_OWNERSHIP' ? 403 : msg === 'PROJECT_NOT_FOUND' ? 404 : 422;
+      const status = (msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE' || msg.startsWith('PREVIEW_CAPABILITY_SECRET_')) ? 503
+        : (msg === 'FORBIDDEN_PROJECT_OWNERSHIP' || msg === 'FORBIDDEN_PREVIEW_OWNERSHIP') ? 403
+        : msg === 'PROJECT_NOT_FOUND' ? 404 : 422;
       return res.status(status).json({ success: false, error: msg });
     }
   });
 
-  app.get("/api/preview/sessions/:previewId/status", requireAuth(), (req: AuthenticatedRequest, res) => {
+  app.get("/api/preview/sessions/:previewId/status", requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
-      const session = previewRuntimeService.getPreviewSessionStatus(
+      const session = await previewRuntimeService.getPreviewSessionStatus(
         String(req.params.previewId || ''),
         req.authUser!.uid,
         req.authUser!.isAdmin
@@ -1692,14 +1694,16 @@ async function startServer() {
       });
     } catch (err: any) {
       const msg = String(err?.message || 'Preview status unavailable');
-      const status = msg === 'FORBIDDEN_PREVIEW_OWNERSHIP' ? 403 : msg === 'PREVIEW_SESSION_NOT_FOUND' ? 404 : 400;
+      const status = (msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE' || msg.startsWith('PREVIEW_CAPABILITY_SECRET_')) ? 503
+        : msg === 'FORBIDDEN_PREVIEW_OWNERSHIP' ? 403
+        : msg === 'PREVIEW_SESSION_NOT_FOUND' ? 404 : 400;
       return res.status(status).json({ success: false, error: msg });
     }
   });
 
   app.post("/api/preview/sessions/:previewId/refresh", requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
-      const existing = previewRuntimeService.getPreviewSessionStatus(
+      const existing = await previewRuntimeService.getPreviewSessionStatus(
         String(req.params.previewId || ''),
         req.authUser!.uid,
         req.authUser!.isAdmin
@@ -1716,7 +1720,8 @@ async function startServer() {
       });
     } catch (err: any) {
       const msg = String(err?.message || 'Preview refresh failed');
-      const status = msg === 'FORBIDDEN_PREVIEW_OWNERSHIP' || msg === 'FORBIDDEN_PROJECT_OWNERSHIP' ? 403 : 422;
+      const status = (msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE' || msg.startsWith('PREVIEW_CAPABILITY_SECRET_')) ? 503
+        : msg === 'FORBIDDEN_PREVIEW_OWNERSHIP' || msg === 'FORBIDDEN_PROJECT_OWNERSHIP' ? 403 : 422;
       return res.status(status).json({ success: false, error: msg });
     }
   });
@@ -1734,7 +1739,9 @@ async function startServer() {
       });
     } catch (err: any) {
       const msg = String(err?.message || 'Preview stop failed');
-      const status = msg === 'FORBIDDEN_PREVIEW_OWNERSHIP' ? 403 : msg === 'PREVIEW_SESSION_NOT_FOUND' ? 404 : 400;
+      const status = (msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE' || msg.startsWith('PREVIEW_CAPABILITY_SECRET_')) ? 503
+        : msg === 'FORBIDDEN_PREVIEW_OWNERSHIP' ? 403
+        : msg === 'PREVIEW_SESSION_NOT_FOUND' ? 404 : 400;
       return res.status(status).json({ success: false, error: msg });
     }
   });
@@ -1753,11 +1760,13 @@ async function startServer() {
     } catch (err: any) {
       const msg = String(err?.message || 'Preview unavailable');
       const status =
-        msg === 'UNAUTHORIZED_PREVIEW_CAPABILITY'
-          ? 403
-          : msg === 'PREVIEW_SESSION_STOPPED'
-            ? 410
-            : 404;
+        (msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE' || msg.startsWith('PREVIEW_CAPABILITY_SECRET_'))
+          ? 503
+          : msg === 'UNAUTHORIZED_PREVIEW_CAPABILITY'
+            ? 403
+            : msg === 'PREVIEW_SESSION_STOPPED'
+              ? 410
+              : 404;
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; style-src 'unsafe-inline';");
       return res.status(status).send(

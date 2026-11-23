@@ -80,3 +80,15 @@ The `auth_sessions` table and indexes are created additively with `CREATE TABLE 
 Browser ANNY also persists tenant-owned BM25 keyword chunks in the `keyword_chunks` IndexedDB object store. The database upgrades additively from version 1 to version 2, retaining the existing vector collection store. Keyword reads require an owner ID and query the owner index, so records belonging to other users are not included in retrieval.
 
 This is device-local persistence. Server-side Node runtimes without IndexedDB still use the in-process keyword index unless a separate durable server-side knowledge store is configured; they must not be described as restart-safe BM25 storage.
+
+
+## Durable isolated preview sessions
+
+Preview-session metadata is persisted with the project store, using PostgreSQL when configured and the atomic `.anny-data/projects.json` store for local/self-hosted operation. A server restart can restore the preview ID, project owner, version, state, and entry file; the preview is rebuilt from the persisted project files when requested.
+
+Preview capability credentials are derived with HMAC-SHA-256 from the preview identity and a stable server secret. The raw capability token is never stored in PostgreSQL or the project JSON file.
+
+- In production, set a strong, stable `SESSION_SECRET`; preview creation fails closed if it is missing or weak.
+- In local development, ANNY creates `.anny-data/preview-capability.key` with mode `0600`, keeps the local data directory at mode `0700`, and reuses the key across restarts. The entire `.anny-data/` directory is Git-ignored.
+- If PostgreSQL is configured but the durable preview-session registry is unavailable, preview status, refresh, stop, and serving return a service-unavailable response instead of trusting stale process memory.
+- Preview session ownership is checked against the owning persisted project.

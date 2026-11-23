@@ -18,6 +18,8 @@ primary-anny/Anny/build/
 *.key
 
 # AI Studio / local workspace artifacts
+.anny-data/
+**/.anny-data/
 .aistudio/
 public/assets/aistudio/
 
