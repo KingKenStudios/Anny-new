@@ -9,6 +9,8 @@
 
 import { aiProviderPlatform } from './aiProviderPlatform';
 import { envConfigService } from './envConfigService';
+import { IndexedDbVectorStore } from './indexedDbVectorStore';
+import type { LocalVectorStore } from './indexedDbVectorStore';
 
 export interface VectorDocument {
   id: string;
@@ -35,10 +37,11 @@ type QdrantPlatformOptions = {
   fetcher?: typeof fetch;
   getConfig?: () => QdrantConfig;
   embed?: (text: string) => Promise<number[]>;
+  localStore?: LocalVectorStore;
 };
 
 type QdrantHealth = {
-  status: 'CONNECTED' | 'NOT_CONFIGURED' | 'CONNECTION_FAILED' | 'VOLATILE_OFFLINE';
+  status: 'CONNECTED' | 'NOT_CONFIGURED' | 'CONNECTION_FAILED' | 'VOLATILE_OFFLINE' | 'LOCAL_PERSISTENT' | 'LOCAL_PERSISTENCE_FAILED';
   latencyMs: number;
   totalVectors: number;
   detail: string;
@@ -50,6 +53,7 @@ export class QdrantPlatform {
   private readonly fetcher: typeof fetch;
   private readonly getConfig: () => QdrantConfig;
   private readonly embed: (text: string) => Promise<number[]>;
+  private readonly localStore: LocalVectorStore;
 
   constructor(options: QdrantPlatformOptions = {}) {
     this.fetcher = options.fetcher || fetch.bind(globalThis);
@@ -58,6 +62,7 @@ export class QdrantPlatform {
       const result = await aiProviderPlatform.embeddings(text);
       return result.embedding;
     });
+    this.localStore = options.localStore || new IndexedDbVectorStore();
     this.createCollection('knowledge_base');
     this.createCollection('conversation_memory');
     this.createCollection('codebase_embeddings');
@@ -166,12 +171,30 @@ export class QdrantPlatform {
     const started = Date.now();
     let total = 0;
     if (!this.getConfig().qdrantUrl?.trim()) {
+      if (this.localStore.isAvailable()) {
+        try {
+          total = await this.localStore.count();
+          return {
+            status: 'LOCAL_PERSISTENT',
+            latencyMs: Date.now() - started,
+            totalVectors: total,
+            detail: 'Remote Qdrant is not configured; vectors are stored persistently in this browser using IndexedDB.'
+          };
+        } catch (error) {
+          return {
+            status: 'LOCAL_PERSISTENCE_FAILED',
+            latencyMs: Date.now() - started,
+            totalVectors: 0,
+            detail: error instanceof Error ? error.message : 'Local IndexedDB storage is unavailable.'
+          };
+        }
+      }
       this.collections.forEach(items => { total += items.length; });
       return {
         status: 'VOLATILE_OFFLINE',
         latencyMs: Date.now() - started,
         totalVectors: total,
-        detail: 'Qdrant is not configured; vectors exist only in volatile process memory and will be lost on restart.'
+        detail: 'Neither remote Qdrant nor browser IndexedDB is available; vectors exist only in volatile process memory and will be lost on restart.'
       };
     }
 
@@ -243,6 +266,8 @@ export class QdrantPlatform {
           }]
         })
       });
+    } else if (this.localStore.isAvailable()) {
+      await this.localStore.put(collectionName, doc);
     } else {
       this.createCollection(collectionName);
       this.collections.get(collectionName)!.push(doc);
@@ -308,7 +333,9 @@ export class QdrantPlatform {
       }));
     }
 
-    const docs = this.collections.get(collectionName) || [];
+    const docs = this.localStore.isAvailable()
+      ? await this.localStore.getCollection(collectionName)
+      : (this.collections.get(collectionName) || []);
     return docs
       .filter(doc => !filterCategory || doc.payload.category === filterCategory)
       .filter(doc => !filterSessionId || doc.payload.sessionId === filterSessionId)
