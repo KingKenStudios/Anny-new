@@ -10,7 +10,7 @@
 import { aiProviderPlatform } from './aiProviderPlatform';
 import { envConfigService } from './envConfigService';
 import { IndexedDbVectorStore } from './indexedDbVectorStore';
-import type { LocalVectorStore } from './indexedDbVectorStore';
+import type { LocalVectorStore, StoredKeywordChunk } from './indexedDbVectorStore';
 
 export interface VectorDocument {
   id: string;
@@ -301,6 +301,17 @@ export class QdrantPlatform {
       else localDocuments.push(doc);
     }
     return doc;
+  }
+
+  public async putKeywordChunk(chunk: StoredKeywordChunk): Promise<boolean> {
+    if (!this.localStore.isAvailable()) return false;
+    await this.localStore.putKeywordChunk(chunk);
+    return true;
+  }
+
+  public async getKeywordChunks(ownerUserId: string): Promise<StoredKeywordChunk[]> {
+    if (!this.localStore.isAvailable()) return [];
+    return this.localStore.getKeywordChunks(ownerUserId);
   }
 
   public async search(
