@@ -63,8 +63,8 @@ export interface SystemHealthReport {
   version: string;
   health: 'healthy' | 'degraded' | 'critical';
   status: 'online' | 'offline' | 'recovering';
-  cpuUsagePct: number;
-  memoryMb: number;
+  cpuUsagePct: number | null;
+  memoryMb: number | null;
   capabilities: string[];
   limitations: string[];
   lastTestTime: string;
@@ -80,8 +80,13 @@ export interface EABPBuildResult {
   graph: ExecutionGraphNode[];
   generatedFilesCount: number;
   compilationResult: CompilationResult;
-  testPassRatePct: number;
-  healthScore: number; // 0-100
+  /** null until a real test suite is executed. */
+  testPassRatePct: number | null;
+  /** null until a real build/test/runtime health measurement is available. */
+  healthScore: number | null;
+  verificationLevel: 'STRUCTURE_CHECK_ONLY' | 'FAILED';
+  runtimeStatus: 'UNAVAILABLE' | 'SIMULATED' | 'VERIFIED';
+  deploymentStatus: 'PLAN_ONLY' | 'DEPLOYED';
   deploymentTarget: string;
   liveUrl: string;
 }
@@ -133,12 +138,12 @@ export class EnterpriseAutonomousBuilderPlatform {
     this.subsystemReports.set('VFS', {
       subsystemName: 'Virtual FileSystem (VFS)',
       version: '1.0.0',
-      health: 'healthy',
+      health: 'degraded',
       status: 'online',
-      cpuUsagePct: 0.2,
-      memoryMb: 12.4,
-      capabilities: ['Hierarchical Tree', 'In-memory CRUD', 'Path Normalization', 'Event Watching', 'Persistence'],
-      limitations: ['Browser LocalStorage quota limits (5-10MB)'],
+      cpuUsagePct: null,
+      memoryMb: null,
+      capabilities: ['Hierarchical Tree', 'In-memory CRUD', 'Path Normalization', 'Event Watching'],
+      limitations: ['Storage persistence depends on configured browser/server adapter; no live telemetry probe is attached.'],
       lastTestTime: now,
       repairCount: 0
     });
@@ -146,12 +151,12 @@ export class EnterpriseAutonomousBuilderPlatform {
     this.subsystemReports.set('Workspace', {
       subsystemName: 'Workspace Manager',
       version: '1.0.0',
-      health: 'healthy',
+      health: 'degraded',
       status: 'online',
-      cpuUsagePct: 0.4,
-      memoryMb: 18.2,
-      capabilities: ['State Isolation', 'Multi-workspace Orchestration', 'AST Syntax Check'],
-      limitations: ['Client-side single-thread execution'],
+      cpuUsagePct: null,
+      memoryMb: null,
+      capabilities: ['State Isolation', 'Multi-workspace Orchestration', 'Lightweight bracket-structure validation'],
+      limitations: ['Structure check is not a full AST parse, TypeScript compile, test run, or production build; no live telemetry probe is attached.'],
       lastTestTime: now,
       repairCount: 0
     });
@@ -159,12 +164,12 @@ export class EnterpriseAutonomousBuilderPlatform {
     this.subsystemReports.set('Runtime', {
       subsystemName: 'Runtime Execution Platform',
       version: '1.0.0',
-      health: 'healthy',
-      status: 'online',
-      cpuUsagePct: 1.2,
-      memoryMb: 45.6,
-      capabilities: ['Framework Auto-detection', 'Dev Server Mocking/Proxying', 'Telemetry Metrics', 'Auto-recovery'],
-      limitations: ['Sandbox iFrame port 3000 mapping constraint'],
+      health: 'degraded',
+      status: 'offline',
+      cpuUsagePct: null,
+      memoryMb: null,
+      capabilities: ['Framework detection', 'Simulated lifecycle state', 'Transaction-backed structural repair heuristic'],
+      limitations: ['No real process is launched; CPU, memory, uptime, and port telemetry are unavailable.'],
       lastTestTime: now,
       repairCount: 0
     });
@@ -172,12 +177,12 @@ export class EnterpriseAutonomousBuilderPlatform {
     this.subsystemReports.set('IntentRouter', {
       subsystemName: 'Pre-LLM Intent Router',
       version: '1.0.0',
-      health: 'healthy',
+      health: 'degraded',
       status: 'online',
-      cpuUsagePct: 0.1,
-      memoryMb: 8.0,
-      capabilities: ['15 Execution Modes', 'Chat Code Dump Prevention', 'Direct Pipeline Trigger'],
-      limitations: ['Rule-based pattern classification fallback'],
+      cpuUsagePct: null,
+      memoryMb: null,
+      capabilities: ['Rule-based intent classification', 'Execution mode routing metadata'],
+      limitations: ['No independent intent-routing accuracy benchmark is currently attached; live telemetry unavailable.'],
       lastTestTime: now,
       repairCount: 0
     });
@@ -185,12 +190,12 @@ export class EnterpriseAutonomousBuilderPlatform {
     this.subsystemReports.set('EABP', {
       subsystemName: 'Enterprise Autonomous Builder Platform',
       version: '1.0.0',
-      health: 'healthy',
+      health: 'degraded',
       status: 'online',
-      cpuUsagePct: 1.8,
-      memoryMb: 62.0,
-      capabilities: ['19-stage Pipeline', 'Requirements Extraction', 'Testing Suite', 'Deployment Spec Gen', 'Self-Healing'],
-      limitations: ['Cloud container deployment requires OAuth / GCP binding'],
+      cpuUsagePct: null,
+      memoryMb: null,
+      capabilities: ['Requirement heuristics', 'Architecture selection', 'AI source synthesis', 'Lightweight structure check', 'Heuristic repair planning'],
+      limitations: ['Tests are not executed; no real compiler/build, process launch, deployment, or verified health score is produced. Runtime and hardware metrics unavailable.'],
       lastTestTime: now,
       repairCount: 0
     });
