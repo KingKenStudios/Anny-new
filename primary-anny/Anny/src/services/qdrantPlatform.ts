@@ -126,7 +126,8 @@ export class QdrantPlatform {
     queryText: string,
     limit: number = 5,
     filterCategory?: string,
-    filterSessionId?: string
+    filterSessionId?: string,
+    filterOwnerUserId?: string
   ): Promise<SearchResult[]> {
     if (collectionName === 'conversation_memory' && !filterSessionId) {
       throw new Error('SESSION_SCOPE_REQUIRED: Conversation memory search must specify the owning session ID.');
@@ -152,6 +153,7 @@ export class QdrantPlatform {
     const results: SearchResult[] = docs
       .filter(doc => !filterCategory || doc.payload.category === filterCategory)
       .filter(doc => !filterSessionId || doc.payload.sessionId === filterSessionId)
+      .filter(doc => !filterOwnerUserId || doc.payload.metadata?.ownerUserId === filterOwnerUserId)
       .map(doc => {
         const score = this.cosineSimilarity(queryVector, doc.vector);
         return {
