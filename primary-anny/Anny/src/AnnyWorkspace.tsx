@@ -1679,15 +1679,20 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     [projectMetaState.projectId, projectMetaState.name]
   );
 
+  const getProjectVFS = () => {
+    const bestProjId = resolveBestProjectId(currentChatId, projectMetaState.projectId);
+    return WorkspaceManager.getInstance().getWorkspaceVFS(bestProjId);
+  };
+
   // Code editor handlers
   const handleCodeChange = (content: string) => {
     setActiveFileContent(content);
-    WorkspaceManager.getInstance().getVFS()._unsafe_writeFile(activeCodeFile, content);
+    getProjectVFS()._unsafe_writeFile(activeCodeFile, content);
     setVfsFiles(getVfsMap());
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('anny_vfs_changed', {
-          detail: { projectId: WorkspaceManager.getInstance().getActiveProjectId() },
+          detail: { projectId: resolveBestProjectId(currentChatId, projectMetaState.projectId) },
         })
       );
     }
@@ -1698,7 +1703,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   };
 
   const handleDeleteFile = (path: string) => {
-    WorkspaceManager.getInstance().getVFS()._unsafe_remove(path);
+    getProjectVFS()._unsafe_remove(path);
     setVfsFiles(getVfsMap());
     if (activeCodeFile === path) {
       const remaining = openTabs.filter((t) => t !== path);
@@ -1713,7 +1718,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     const raw = newFolderName.trim();
     if (!raw) { setIsAddingFolder(false); return; }
     const path = raw.startsWith('/') ? raw : `/${raw}`;
-    WorkspaceManager.getInstance().getVFS()._unsafe_mkdir(path);
+    getProjectVFS()._unsafe_mkdir(path);
     setVfsFiles(getVfsMap());
     setNewFolderName('');
     setIsAddingFolder(false);
@@ -1724,7 +1729,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     const nextName = window.prompt('Rename file or folder', currentName)?.trim();
     if (!nextName || nextName === currentName) return;
     try {
-      WorkspaceManager.getInstance().getVFS().rename(path, nextName);
+      getProjectVFS().rename(path, nextName);
       setOpenTabs(prev => prev.map(tab => tab === path ? `${path.slice(0, path.lastIndexOf('/') + 1)}${nextName}` : tab));
       if (activeCodeFile === path) setActiveCodeFile(`${path.slice(0, path.lastIndexOf('/') + 1)}${nextName}`);
       setVfsFiles(getVfsMap());
@@ -1736,7 +1741,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     if (!name) return;
     try {
       const destination = `${destinationFolder.replace(/\/$/, '')}/${name}`;
-      WorkspaceManager.getInstance().getVFS().move(sourcePath, destination);
+      getProjectVFS().move(sourcePath, destination);
       const newPath = destination;
       setOpenTabs(prev => prev.map(tab => tab === sourcePath ? newPath : tab));
       if (activeCodeFile === sourcePath) setActiveCodeFile(newPath);
@@ -1751,7 +1756,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     }
     let p = newFileName.trim();
     if (!p.startsWith('/')) p = '/' + p;
-    WorkspaceManager.getInstance().getVFS()._unsafe_writeFile(p, '');
+    getProjectVFS()._unsafe_writeFile(p, '');
     setVfsFiles(getVfsMap());
     setIsAddingFile(false);
     setNewFileName('');
@@ -1761,7 +1766,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
 
   useEffect(() => {
     if (activeCodeFile) {
-      const vfs = WorkspaceManager.getInstance().getVFS();
+      const vfs = getProjectVFS();
       const content = vfs.readFile(activeCodeFile) || '';
       setActiveFileContent(content);
     } else {
@@ -5005,7 +5010,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
             >
               {previewTab === 'preview' ? (
                 <div className="flex-1 flex flex-col h-full bg-white relative overflow-y-auto custom-scrollbar isolate [transform:translateZ(0)]">
-                  <DynamicVFSAppRunner projectId={WorkspaceManager.getInstance().getActiveProjectId() || activeProj?.id} />
+                  <DynamicVFSAppRunner projectId={resolveBestProjectId(currentChatId, projectMetaState.projectId)} />
                 </div>
               ) : previewTab === 'intelligence' ? (
                 <AnnyIntelligenceWorkspacePanel />
@@ -5037,7 +5042,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                   setFileSearch={setFileSearch}
                   setRightTab={(tab) => setPreviewTab(tab)}
                   setVfsFiles={setVfsFiles}
-                  projectName={activeProj?.id || WorkspaceManager.getInstance().getActiveProjectId() || 'anny-project'}
+                  projectName={projectMetaState.name || resolveBestProjectId(currentChatId, projectMetaState.projectId)}
                 />
               )}
             </div>
