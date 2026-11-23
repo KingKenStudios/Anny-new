@@ -9,7 +9,7 @@ import axios from 'axios';
 import { GoogleGenAI } from '@google/genai';
 import { envConfigService } from './envConfigService';
 import { ollamaDiscoveryService } from './ollamaService';
-import { isOllamaVisionModel, resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
+import { assertOllamaMediaSupported, resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
 import { resolveProviderAttempts } from './providerRoutingUtils';
 
 export type AIProviderId = 
@@ -777,23 +777,7 @@ export class AIProviderPlatform {
           const discovery = ollamaDiscoveryService.getLastDiscovery() || await ollamaDiscoveryService.discoverAndTest();
           const endpoint = resolveOllamaEndpoint(discovery);
           const modelName = resolveOllamaModel(options.model, discovery.discoveredModels);
-          const unsupportedLocalMedia = effectiveMessages.some(message =>
-            Array.isArray(message.content) && message.content.some(part =>
-              Boolean(part.fileData) ||
-              Boolean(part.inlineData && !(part.inlineData.mimeType || '').toLowerCase().startsWith('image/'))
-            )
-          );
-          if (unsupportedLocalMedia) {
-            throw new Error('OFFLINE_UNAVAILABLE: This Ollama chat route currently supports text and image input only; audio, video, and remote file references are not passed to the local model.');
-          }
-          const hasImages = effectiveMessages.some(message =>
-            Array.isArray(message.content) && message.content.some(part =>
-              Boolean(part.inlineData?.data && (part.inlineData.mimeType || '').toLowerCase().startsWith('image/'))
-            )
-          );
-          if (hasImages && !isOllamaVisionModel(modelName)) {
-            throw new Error(`OFFLINE_UNAVAILABLE: Local model "${modelName}" is not identified as a vision-capable Ollama model.`);
-          }
+          assertOllamaMediaSupported(effectiveMessages, modelName);
           const apiMessages = [
             { role: 'system', content: sysPrompt },
             ...effectiveMessages.map(m => {
