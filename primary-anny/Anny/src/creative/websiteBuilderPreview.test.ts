@@ -97,6 +97,48 @@ test('projectPersistenceService persists, reloads from disk, bumps versions, and
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+test('projectPersistenceService accepts empty {} snapshots and isolates concurrent project saves', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'anny-concurrency-test-'));
+  const storeFile = path.join(tmpDir, 'projects.json');
+  projectPersistenceService.setPersistencePathForTests(storeFile);
+
+  const projA = 'proj_concurrency_a';
+  const projB = 'proj_concurrency_b';
+
+  await projectPersistenceService.upsertProject({
+    projectId: projA,
+    ownerUserId: 'user_1',
+    name: 'Project A',
+    files: { '/src/A.tsx': 'export const A = 1;' },
+  });
+
+  await projectPersistenceService.upsertProject({
+    projectId: projB,
+    ownerUserId: 'user_1',
+    name: 'Project B',
+    files: { '/src/B.tsx': 'export const B = 2;' },
+  });
+
+  // Simulate concurrent / rapid updates to both projects
+  await Promise.all([
+    projectPersistenceService.updateProjectFiles(projA, 'user_1', {}), // empty snapshot test
+    projectPersistenceService.updateProjectFiles(projB, 'user_1', { '/src/B.tsx': 'export const B = 99;' }),
+  ]);
+
+  const loadedA = await projectPersistenceService.getProjectById(projA);
+  const loadedB = await projectPersistenceService.getProjectById(projB);
+
+  assert.ok(loadedA);
+  assert.equal(loadedA.files_count, 0);
+  assert.deepEqual(loadedA.files, {});
+
+  assert.ok(loadedB);
+  assert.equal(loadedB.files_count, 1);
+  assert.ok(loadedB.files['/src/B.tsx'].includes('99'));
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
 test('previewRuntimeService compiles React 19 + Tailwind CSS offline, manages sessions, and enforces sandbox CSP', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'anny-prev-test-'));
   const storeFile = path.join(tmpDir, 'projects.json');

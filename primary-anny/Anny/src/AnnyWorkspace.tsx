@@ -1132,6 +1132,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     previewUrl: string | null;
     lastSavedAt: string | null;
     isSaving: boolean;
+    saveError?: string | null;
   }>(() => ({
     projectId: WorkspaceManager.getInstance().getActiveProjectId(),
     name: WorkspaceManager.getInstance().getActiveProjectName(),
@@ -1139,6 +1140,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     previewUrl: null,
     lastSavedAt: null,
     isSaving: false,
+    saveError: null,
   }));
 
   const speakText = (text: string, id: string) => {
@@ -1641,51 +1643,72 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     return WorkspaceManager.getInstance().getWorkspaceVFS(bestProjId);
   };
 
-  const isSavingRef = useRef(false);
-  const isDirtyRef = useRef(false);
+  const projectSavingRef = useRef<Set<string>>(new Set());
+  const projectDirtyRef = useRef<Map<string, boolean>>(new Map());
+
   const persistVfsToServer = React.useCallback(
     async (explicitProjectId?: string) => {
       const targetProjectId = explicitProjectId || getCanonicalProjectId();
       if (!targetProjectId || targetProjectId === 'ws_default_1') return;
-      if (isSavingRef.current) {
-        isDirtyRef.current = true;
+
+      if (projectSavingRef.current.has(targetProjectId)) {
+        projectDirtyRef.current.set(targetProjectId, true);
         return;
       }
-      isSavingRef.current = true;
+      projectSavingRef.current.add(targetProjectId);
+
       try {
         do {
-          isDirtyRef.current = false;
-          const currentFiles = getVfsMap();
+          projectDirtyRef.current.set(targetProjectId, false);
+          const controllerFiles = projectPreviewController.extractFilesFromVFS(targetProjectId);
+          const vfsFilesMap = Object.keys(controllerFiles).length > 0
+            ? controllerFiles
+            : WorkspaceManager.getInstance().getWorkspaceVFS(targetProjectId).getAllFilesMap();
+
           const cleanFiles: Record<string, string> = {};
-          for (const [k, v] of Object.entries(currentFiles) as [string, string][]) {
+          for (const [k, v] of Object.entries(vfsFilesMap) as [string, string][]) {
             if (!k.startsWith('/__anny_')) {
               cleanFiles[k] = v;
             }
           }
 
-          setProjectMetaState((prev) => ({ ...prev, isSaving: true }));
+          if (getCanonicalProjectId() === targetProjectId) {
+            setProjectMetaState((prev) => ({ ...prev, isSaving: true, saveError: null }));
+          }
+
           const res = await fetchWithAuth(`/api/anny/projects/${encodeURIComponent(targetProjectId)}/files`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ files: cleanFiles, name: projectMetaState.name }),
           });
           const data = await res.json().catch(() => null);
+
           if (res.ok && data?.success) {
-            setProjectMetaState((prev) => ({
-              ...prev,
-              version: data.project?.version || prev.version,
-              previewUrl: data.preview?.previewUrl || prev.previewUrl,
-              lastSavedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              isSaving: false,
-            }));
+            if (getCanonicalProjectId() === targetProjectId) {
+              setProjectMetaState((prev) => ({
+                ...prev,
+                version: data.project?.version || prev.version,
+                previewUrl: data.preview?.previewUrl || prev.previewUrl,
+                lastSavedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                isSaving: false,
+                saveError: null,
+              }));
+            }
           } else {
-            setProjectMetaState((prev) => ({ ...prev, isSaving: false }));
+            const errorMsg = data?.error || `HTTP ${res.status}`;
+            throw new Error(errorMsg);
           }
-        } while (isDirtyRef.current);
-      } catch {
-        setProjectMetaState((prev) => ({ ...prev, isSaving: false }));
+        } while (projectDirtyRef.current.get(targetProjectId));
+      } catch (err: any) {
+        if (getCanonicalProjectId() === targetProjectId) {
+          setProjectMetaState((prev) => ({
+            ...prev,
+            isSaving: false,
+            saveError: err?.message || 'Failed to save project files',
+          }));
+        }
       } finally {
-        isSavingRef.current = false;
+        projectSavingRef.current.delete(targetProjectId);
       }
     },
     [currentChatId, projectMetaState.projectId, projectMetaState.name]
@@ -4029,13 +4052,22 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                 </div>
 
                 <div className="flex items-center gap-3">
-                  <span>
-                    {projectMetaState.isSaving
-                      ? 'Saving changes...'
-                      : projectMetaState.lastSavedAt
-                        ? `Saved ${projectMetaState.lastSavedAt}`
-                        : 'Ready'}
-                  </span>
+                  {projectMetaState.saveError ? (
+                    <button
+                      type="button"
+                      onClick={() => void persistVfsToServer()}
+                      className="text-rose-400 hover:text-rose-300 underline cursor-pointer"
+                      title={projectMetaState.saveError}
+                    >
+                      Save failed · Retry
+                    </button>
+                  ) : projectMetaState.isSaving ? (
+                    <span>Saving changes...</span>
+                  ) : projectMetaState.lastSavedAt ? (
+                    <span>Saved {projectMetaState.lastSavedAt}</span>
+                  ) : (
+                    <span>Ready</span>
+                  )}
                 </div>
               </div>
             </div>
