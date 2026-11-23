@@ -189,15 +189,18 @@ export class ToolPermissionSystem {
       throw new Error('TOOL_ALREADY_REGISTERED: Existing tools cannot be silently replaced.');
     }
     if (!tool.name?.trim() || !tool.description?.trim() ||
+        !['file_system', 'code_execution', 'database', 'network_api', 'actuator_robotics', 'financial_control', 'system_admin'].includes(tool.category) ||
         !['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(tool.riskLevel) ||
         !['auto_execute', 'require_user_confirm', 'loto_authorized_only'].includes(tool.executionPolicy) ||
-        !Array.isArray(tool.requiredPermissions) || tool.requiredPermissions.some(permission => !permission?.trim()) ||
-        !tool.inputSchema || typeof tool.inputSchema !== 'object' || Array.isArray(tool.inputSchema)) {
+        !Array.isArray(tool.requiredPermissions) || tool.requiredPermissions.some(permission => typeof permission !== 'string' || !permission.trim() || permission.length > 128) ||
+        !tool.inputSchema || typeof tool.inputSchema !== 'object' || Array.isArray(tool.inputSchema) ||
+        !tool.outputSchema || typeof tool.outputSchema !== 'object' || Array.isArray(tool.outputSchema)) {
       throw new Error('TOOL_DEFINITION_INVALID: Tool definition failed required metadata validation.');
     }
-    for (const field of Object.values(tool.inputSchema)) {
-      if (!field || !['string', 'number', 'boolean', 'array', 'object'].includes(field.type) ||
-          typeof field.description !== 'string') {
+    for (const [fieldName, field] of Object.entries(tool.inputSchema)) {
+      if (!/^[a-zA-Z][a-zA-Z0-9_]{0,127}$/.test(fieldName) ||
+          !field || !['string', 'number', 'boolean', 'array', 'object'].includes(field.type) ||
+          typeof field.description !== 'string' || typeof field.required !== 'undefined' && typeof field.required !== 'boolean) {
         throw new Error('TOOL_SCHEMA_INVALID: Input fields must use supported types and descriptions.');
       }
     }
