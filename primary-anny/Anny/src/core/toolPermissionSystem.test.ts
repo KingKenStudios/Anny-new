@@ -109,3 +109,28 @@ test('tool registry refuses unsafe definitions and duplicate replacement', () =>
   assert.throws(() => system.registerTool({ ...makeTool('bad'), inputSchema: { value: { type: 'unknown', description: 'bad' } } }), /TOOL_SCHEMA_INVALID/);
   assert.throws(() => system.registerTool({ ...makeTool('bad-id'), toolId: '../unsafe' }), /TOOL_DEFINITION_INVALID/);
 });
+
+
+test('critical financial operation always requires explicit confirmation', () => {
+  const system = new ToolPermissionSystem();
+  system.registerTool({
+    ...makeTool('critical_financial'),
+    category: 'financial_control',
+    riskLevel: 'CRITICAL',
+    executionPolicy: 'auto_execute',
+    requiredPermissions: ['finance:transfer'],
+    inputSchema: {
+      amount: { type: 'number', description: 'Amount', required: true },
+      recipient: { type: 'string', description: 'Recipient', required: true }
+    }
+  });
+  const permissions = ['finance:transfer'];
+  const input = { amount: 10, recipient: 'wallet-id' };
+  assert.equal(system.verifyExecution('critical_financial', 'u', 'OPERATOR', input, {
+    grantedPermissions: permissions
+  }).status, 'REQUIRES_CONFIRMATION');
+  assert.equal(system.verifyExecution('critical_financial', 'u', 'OPERATOR', input, {
+    grantedPermissions: permissions,
+    userConfirmed: true
+  }).allowed, true);
+});
