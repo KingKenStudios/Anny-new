@@ -381,13 +381,14 @@ export class MemoryEngine {
     if (!query || !query.trim()) return [];
 
     // 1. Dense Vector Search via Qdrant
-    const rawVectorResults = await qdrantPlatform.search('knowledge_base', query, limit * 2);
-    const vectorResults = ownerUserId
-      ? rawVectorResults.filter((vr) => {
-          const chunkOwner = vr.payload?.metadata?.ownerUserId;
-          return !chunkOwner || chunkOwner === ownerUserId;
-        })
-      : rawVectorResults;
+    const vectorResults = await qdrantPlatform.search(
+      'knowledge_base',
+      query,
+      limit * 2,
+      undefined,
+      undefined,
+      ownerUserId
+    );
 
     // 2. BM25 Keyword Search across internal index
     const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
