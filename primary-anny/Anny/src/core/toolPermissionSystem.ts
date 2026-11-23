@@ -299,7 +299,7 @@ export class ToolPermissionSystem {
   }
   public getAuditLogs(limit: number = 50): ToolExecutionAuditLog[] {
     const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.min(this.maxAuditLogs, Math.floor(limit))) : 50;
-    return this.auditLogs.slice(-safeLimit);
+    return safeLimit === 0 ? [] : this.auditLogs.slice(-safeLimit);
   }
 }
 
