@@ -36,9 +36,13 @@ export class OllamaDiscoveryService {
     return OllamaDiscoveryService.instance;
   }
 
-  public getLastDiscovery(maxAgeMs = 30_000): OllamaDiscoveryResult | null {
+  public getLastDiscovery(maxAgeMs = 300_000): OllamaDiscoveryResult | null {
     if (!this.lastDiscovery || Date.now() - this.lastDiscoveryAt > maxAgeMs) return null;
     return this.lastDiscovery;
+  }
+
+  public invalidateDiscovery(): void {
+    this.lastDiscoveryAt = 0;
   }
 
   /**
