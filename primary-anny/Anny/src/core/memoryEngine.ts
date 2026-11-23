@@ -9,6 +9,7 @@
 
 import { qdrantPlatform, type VectorDocument } from '../services/qdrantPlatform';
 import { isOwnedByTenant, requireTenantOwner } from './memoryTenantScope';
+import { canDegradeToKeywordSearch, resolveRagChunkId } from './ragRetrievalUtils';
 import { db, auth } from '../lib/firebase';
 import { doc, setDoc, getDoc, collection, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
 
@@ -385,17 +386,25 @@ export class MemoryEngine {
     if (!query || !query.trim()) return [];
     const tenantOwnerId = requireTenantOwner(ownerUserId, 'Knowledge retrieval');
 
-    // 1. Dense Vector Search via Qdrant
-    const vectorResults = await qdrantPlatform.search(
-      'knowledge_base',
-      query,
-      limit * 2,
-      undefined,
-      undefined,
-      tenantOwnerId
-    );
+    // 1. Dense vector retrieval is preferred, but keyword retrieval remains
+    // usable offline when an embedding provider or remote Qdrant is unavailable.
+    let vectorResults: Awaited<ReturnType<typeof qdrantPlatform.search>> = [];
+    let denseSearchError: unknown;
+    try {
+      vectorResults = await qdrantPlatform.search(
+        'knowledge_base',
+        query,
+        limit * 2,
+        undefined,
+        undefined,
+        tenantOwnerId
+      );
+    } catch (error) {
+      if (!canDegradeToKeywordSearch(error)) throw error;
+      denseSearchError = error;
+    }
 
-    // 2. BM25 Keyword Search across internal index
+    // 2. BM25 Keyword Search across the persistent tenant-scoped index
     const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
     const bm25Scores: Array<{ chunk: DocumentChunk; score: number }> = [];
     const persistedKeywordChunks = await qdrantPlatform.getKeywordChunks(tenantOwnerId);
@@ -427,8 +436,9 @@ export class MemoryEngine {
     // Dense RRF
     vectorResults.forEach((vr, rank) => {
       const rrf = 1 / (kConstant + rank + 1);
-      rrfMap.set(vr.id, {
-        chunkId: vr.id,
+      const chunkId = resolveRagChunkId(vr);
+      rrfMap.set(chunkId, {
+        chunkId,
         text: vr.content,
         documentTitle: vr.payload?.title || 'Knowledge Base',
         rrfScore: rrf
@@ -450,6 +460,10 @@ export class MemoryEngine {
         });
       }
     });
+
+    if (denseSearchError && vectorResults.length === 0 && bm25Scores.length === 0) {
+      throw denseSearchError;
+    }
 
     const finalRAG = Array.from(rrfMap.values())
       .sort((a, b) => b.rrfScore - a.rrfScore)
