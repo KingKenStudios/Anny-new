@@ -32,7 +32,9 @@ test('local model resolution auto-selects an installed model and supports exact 
 });
 
 test('local model resolution fails clearly when no model is installed or requested model is missing', () => {
-  assert.throws(() => resolveOllamaModel(undefined, []), /no local models are installed/i);
+  assert.throws(() => resolveOllamaModel(undefined, []), /no local chat-capable models are installed/i);
+  assert.throws(() => resolveOllamaModel(undefined, [{ name: 'nomic-embed-text' }]), /no local chat-capable models are installed/i);
+  assert.equal(isInstalledOllamaModel('nomic-embed-text', ['nomic-embed-text']), false);
   assert.throws(() => resolveOllamaModel('deepseek-r1', discovery.discoveredModels), /not installed locally/i);
   assert.throws(() => resolveOllamaModel('qwen2.5:72b', discovery.discoveredModels), /not installed locally/i);
 });
