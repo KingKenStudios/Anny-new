@@ -8,6 +8,8 @@ import { formatNaturalConversation } from '../utils/chatHelpers';
 import axios from 'axios';
 import { GoogleGenAI } from '@google/genai';
 import { envConfigService } from './envConfigService';
+import { ollamaDiscoveryService } from './ollamaService';
+import { resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
 
 export type AIProviderId = 
   | 'gemini' 
@@ -224,6 +226,25 @@ export class AIProviderPlatform {
         return;
       }
 
+      if (p === 'ollama') {
+        const discovery = await ollamaDiscoveryService.discoverAndTest();
+        const status: ProviderHealth['status'] = !discovery.reachable
+          ? 'OFFLINE'
+          : discovery.discoveredModels.length === 0 || !discovery.inferenceTestPassed
+            ? 'DEGRADED'
+            : 'HEALTHY';
+        this.healthMap.set(p, {
+          provider: p,
+          status,
+          latencyMs: Date.now() - startTime,
+          lastChecked: new Date().toISOString(),
+          ...(status === 'HEALTHY' ? {} : { error: discovery.error || (!discovery.discoveredModels.length
+            ? 'Ollama is reachable but no local models are installed.'
+            : 'Ollama did not pass a real local inference probe.') })
+        });
+        return;
+      }
+
       // Real, lightweight reachability check (not a fake "simulation") — a cheap
       // GET against each provider's models-list endpoint, 3s timeout.
       try {
@@ -307,7 +328,9 @@ export class AIProviderPlatform {
       : `${baseSystemPrompt}\n\n${UNIVERSAL_ANNY_CONVERSATION_POLICY}`;
     const effectiveMessages = nonSystemMessages.length > 0 ? nonSystemMessages : messages;
     const strictOffline = Boolean(options.offlineOnly);
-    const blockCloudFallback = Boolean(options.offlineOnly || options.disableCloudFallback);
+    // Explicitly selecting local Ollama must never silently send the prompt to
+    // a cloud provider if local inference fails.
+    const blockCloudFallback = Boolean(options.offlineOnly || options.disableCloudFallback || preferredProvider === 'ollama');
 
     if (strictOffline && preferredProvider && preferredProvider !== 'ollama') {
       throw new Error(`OFFLINE_UNAVAILABLE: Provider "${preferredProvider}" is blocked in OFFLINE_ONLY mode.`);
@@ -316,10 +339,10 @@ export class AIProviderPlatform {
     // Check if any message contains multimodal content (images/audio/etc)
     const hasMultimodal = messages.some(m => Array.isArray(m.content));
 
-    const providersToTry: AIProviderId[] = strictOffline
+    const providersToTry: AIProviderId[] = strictOffline || (blockCloudFallback && (!preferredProvider || preferredProvider === 'ollama'))
       ? ['ollama']
-      : (blockCloudFallback && preferredProvider === 'ollama')
-        ? ['ollama']
+      : blockCloudFallback && preferredProvider
+        ? [preferredProvider]
         : preferredProvider
           ? [preferredProvider, ...this.providerPriority.filter(p => p !== preferredProvider)]
           : this.providerPriority;
@@ -748,13 +771,12 @@ export class AIProviderPlatform {
         }
 
         if (provider === 'ollama') {
-          if (!options.model || options.model === 'none') {
-            throw new Error('OFFLINE_UNAVAILABLE: No verified local Ollama model is available.');
-          }
-          const modelName = options.model;
+          const discovery = ollamaDiscoveryService.getLastDiscovery() || await ollamaDiscoveryService.discoverAndTest();
+          const endpoint = resolveOllamaEndpoint(discovery);
+          const modelName = resolveOllamaModel(options.model, discovery.discoveredModels);
           const apiMessages = [
             { role: 'system', content: sysPrompt },
-            ...messages.map(m => {
+            ...effectiveMessages.map(m => {
               if (typeof m.content === 'string') {
                 return { role: m.role === 'model' ? 'assistant' : m.role, content: m.content };
               }
@@ -769,19 +791,38 @@ export class AIProviderPlatform {
               };
             })
           ];
-          const response = await axios.post(
-            `${config.ollamaBaseUrl}/api/chat`,
-            {
-              model: modelName,
-              messages: apiMessages,
-              stream: false
+          const requestBody: Record<string, any> = {
+            model: modelName,
+            messages: apiMessages,
+            stream: false,
+            options: {
+              ...(typeof options.temperature === 'number' ? { temperature: options.temperature } : {}),
+              ...(typeof options.maxTokens === 'number' ? { num_predict: options.maxTokens } : {})
             },
-            { timeout: options.timeoutMs || 15000 }
+            ...(options.responseMimeType === 'application/json' ? { format: 'json' } : {}),
+            ...(options.functions?.length ? {
+              tools: options.functions.map(fn => ({
+                type: 'function',
+                function: { name: fn.name, description: fn.description, parameters: fn.parameters }
+              }))
+            } : {})
+          };
+          const response = await axios.post(
+            `${endpoint}/api/chat`,
+            requestBody,
+            { timeout: options.timeoutMs || 120_000 }
           );
 
-          const content = response.data.message?.content || '';
+          const content = String(response.data.message?.content || '');
+          const rawFunctionCall = response.data.message?.tool_calls?.[0]?.function;
+          const functionCall = rawFunctionCall?.name
+            ? { name: String(rawFunctionCall.name), arguments: rawFunctionCall.arguments || {} }
+            : undefined;
+          if (!content.trim() && !functionCall) {
+            throw new Error('OLLAMA_EMPTY_RESPONSE: Local Ollama returned neither text nor a tool call.');
+          }
           const latencyMs = Date.now() - startTime;
-          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(messages), content, 'ollama-local');
+          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(effectiveMessages), content, 'ollama-local');
 
           return {
             content: options.preserveStructured ? content : formatNaturalConversation(content),
@@ -789,7 +830,8 @@ export class AIProviderPlatform {
             model: modelName,
             tokensUsed: tokens,
             estimatedCostUsd: costUsd,
-            latencyMs
+            latencyMs,
+            ...(functionCall ? { functionCall } : {})
           };
         }
       } catch (err: any) {
