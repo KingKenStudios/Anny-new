@@ -38,3 +38,26 @@ This runs the engine at `http://127.0.0.1:8765`. The main app's server proxies `
 **Using it:** open the 3D Generator (Neural Lab) panel and upload a photo — it's sent to the local engine for real image-to-3D reconstruction, then rendered with animation/orbit controls once ready. Text-only prompts (no image) instead use an optional cloud fallback (Meshy) if you set `MESHY_API_KEY` in `.env.local` — there is no simulated/fake result if neither is configured; you'll get an honest error telling you what to set up.
 
 **Note:** I configured and verified the server-side wiring against the engine's real API contract (`modly-main/api/routers/generation.py`), and confirmed every endpoint fails honestly with no engine running. I was not able to run actual GPU inference in this environment — no GPU is available here and Hugging Face's model-weight host isn't reachable from this sandbox. The first real end-to-end generation should be tested on your machine.
+
+
+## Persistent and offline vector memory
+
+ANNY supports two distinct vector-storage modes:
+
+- **Remote Qdrant:** when `QDRANT_URL` is configured, ANNY uses the real Qdrant REST API for collection creation, vector upserts, and semantic search. Qdrant's storage volume in `docker-compose.yml` is named `anny_qdrant`, so its data survives container recreation.
+- **Browser offline storage:** when no remote Qdrant URL is configured and the app is running in a browser, ANNY stores vectors in IndexedDB on that device. This survives browser reloads, but it is local to that browser profile and is not automatically synced or backed up.
+- **Volatile fallback:** runtimes without remote Qdrant or browser IndexedDB use process memory only. ANNY reports this as volatile and it is lost when the process exits.
+
+### Start the bundled Qdrant service
+
+From this directory, run:
+
+```bash
+docker compose up -d qdrant
+```
+
+The ANNY container in the same Compose project is configured to use `http://qdrant:6333` by default. For a remote Qdrant instance, set `QDRANT_URL` to its HTTP(S) endpoint and optionally set `QDRANT_API_KEY`; Compose forwards both values to the application container.
+
+A real embedding provider is still required for semantic indexing and search. Storage availability alone does not create embeddings. ANNY reports remote Qdrant as connected only after a live request succeeds, and a configured-but-unreachable Qdrant endpoint does not silently fall back to volatile storage.
+
+**Operational note:** browser IndexedDB is device-local storage, not a backup system. Export or back up important source documents separately.

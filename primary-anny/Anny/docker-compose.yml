@@ -12,6 +12,7 @@ services:
       - DATABASE_URL=${DATABASE_URL:-postgresql://anny:anny@postgres:5432/anny}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
       - RABBITMQ_URL=${RABBITMQ_URL:-amqp://anny:anny@rabbitmq:5672}
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-minio:9000}
       - CLICKHOUSE_URL=${CLICKHOUSE_URL:-http://clickhouse:8123}
