@@ -479,6 +479,7 @@ export class ProjectPersistenceService {
       buildLogs: options?.buildLogs,
       lastError: options?.lastError,
       bumpVersion: true,
+      isAdmin: options?.isAdmin,
     });
   }
 
