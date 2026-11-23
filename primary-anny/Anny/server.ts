@@ -199,11 +199,12 @@ async function startServer() {
 
   // Initialize Background Services (optional services skip probing when unconfigured)
   databaseMonitor.startMonitoring();
-  rabbitWorkerService.initialize().catch((err) => console.warn('RabbitWorker init warning:', err));
+  const rabbitInitialization = rabbitWorkerService.initialize().catch((err) => { console.warn('RabbitWorker init warning:', err); return false; });
   // Non-blocking startup Ollama & provider discovery (never blocks or crashes boot)
   void providerRegistryService.auditAndRefreshHealth()
     .then(({ ollamaDiscovery }) => {
       console.log(`[Startup Discovery] Ollama reachable=${ollamaDiscovery.reachable}, models=${ollamaDiscovery.discoveredModels.length}, inferenceTestPassed=${ollamaDiscovery.inferenceTestPassed}`);
+      await rabbitInitialization;
       void runAnnyLiveCapabilityProbes(ollamaDiscovery).catch((err) => {
         console.warn('[Capability Probes] Live service verification warning:', err?.message || err);
       });
