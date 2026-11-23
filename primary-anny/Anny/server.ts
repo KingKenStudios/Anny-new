@@ -1674,7 +1674,7 @@ async function startServer() {
       });
     } catch (err: any) {
       const msg = String(err?.message || 'Failed to start preview session');
-      const status = msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE' ? 503
+      const status = (msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE' || msg.startsWith('PREVIEW_CAPABILITY_SECRET_')) ? 503
         : msg === 'FORBIDDEN_PROJECT_OWNERSHIP' ? 403
         : msg === 'PROJECT_NOT_FOUND' ? 404 : 422;
       return res.status(status).json({ success: false, error: msg });
@@ -1694,7 +1694,7 @@ async function startServer() {
       });
     } catch (err: any) {
       const msg = String(err?.message || 'Preview status unavailable');
-      const status = msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE' ? 503
+      const status = (msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE' || msg.startsWith('PREVIEW_CAPABILITY_SECRET_')) ? 503
         : msg === 'FORBIDDEN_PREVIEW_OWNERSHIP' ? 403
         : msg === 'PREVIEW_SESSION_NOT_FOUND' ? 404 : 400;
       return res.status(status).json({ success: false, error: msg });
@@ -1720,7 +1720,7 @@ async function startServer() {
       });
     } catch (err: any) {
       const msg = String(err?.message || 'Preview refresh failed');
-      const status = msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE' ? 503
+      const status = (msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE' || msg.startsWith('PREVIEW_CAPABILITY_SECRET_')) ? 503
         : msg === 'FORBIDDEN_PREVIEW_OWNERSHIP' || msg === 'FORBIDDEN_PROJECT_OWNERSHIP' ? 403 : 422;
       return res.status(status).json({ success: false, error: msg });
     }
@@ -1739,7 +1739,7 @@ async function startServer() {
       });
     } catch (err: any) {
       const msg = String(err?.message || 'Preview stop failed');
-      const status = msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE' ? 503
+      const status = (msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE' || msg.startsWith('PREVIEW_CAPABILITY_SECRET_')) ? 503
         : msg === 'FORBIDDEN_PREVIEW_OWNERSHIP' ? 403
         : msg === 'PREVIEW_SESSION_NOT_FOUND' ? 404 : 400;
       return res.status(status).json({ success: false, error: msg });
@@ -1760,7 +1760,7 @@ async function startServer() {
     } catch (err: any) {
       const msg = String(err?.message || 'Preview unavailable');
       const status =
-        msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE'
+        (msg === 'PREVIEW_SESSION_STORE_UNAVAILABLE' || msg.startsWith('PREVIEW_CAPABILITY_SECRET_'))
           ? 503
           : msg === 'UNAUTHORIZED_PREVIEW_CAPABILITY'
             ? 403
