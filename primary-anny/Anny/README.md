@@ -130,7 +130,7 @@ A preview route being selected is not proof that the generated artifact rendered
 
 ## Offline semantic embeddings
 
-When no Gemini embedding key is configured, ANNY now attempts genuine local Ollama embeddings rather than manufacturing placeholder vectors. Install an embedding model locally (for example `ollama pull nomic-embed-text`) and optionally set `OLLAMA_EMBEDDING_MODEL=nomic-embed-text:latest`. The configured model must exist in the local Ollama model list and be identified as an embedding model.
+Set `EMBEDDING_PROVIDER=ollama` to force local-only embeddings even when cloud credentials are present. With `EMBEDDING_PROVIDER=auto` (the default), ANNY uses Gemini when configured and otherwise attempts genuine local Ollama embeddings rather than manufacturing placeholder vectors. Install an embedding model locally (for example `ollama pull nomic-embed-text`) and optionally set `OLLAMA_EMBEDDING_MODEL=nomic-embed-text:latest`. The configured model must exist in the local Ollama model list and be identified as an embedding model.
 
 The adapter uses Ollama's `/api/embed` endpoint and supports the legacy `/api/embeddings` endpoint when the modern route returns HTTP 404. Returned vectors must be non-empty arrays of finite numbers. Missing or invalid provider output fails explicitly; ANNY never substitutes synthetic vectors or silently switches providers.
 
