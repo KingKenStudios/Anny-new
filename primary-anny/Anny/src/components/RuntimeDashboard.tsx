@@ -1,6 +1,6 @@
 /**
  * ANNY — RUNTIME DASHBOARD (VERSION 1.0)
- * Real-Time Subsystem Monitoring, Process Controls, CPU/Memory Telemetry,
+ * Simulated Workspace Status, Process Controls, and Verified Runtime Availability,
  * Structured Execution Log Viewer, and Autonomous Error Recovery Panel.
  */
 
@@ -105,7 +105,7 @@ export const RuntimeDashboard: React.FC = () => {
 
           <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
             <div>
-              <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Uptime / PID</p>
+              <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Runtime Telemetry</p>
               <p className="text-sm font-bold text-emerald-400 mt-1 font-mono">{activeProject.metrics.uptimeSeconds === null ? 'Not available' : `${activeProject.metrics.uptimeSeconds}s`} (PID: {activeProject.metrics.pid ?? 'None'})</p>
             </div>
             <Activity className="w-8 h-8 text-emerald-400/60" />
@@ -135,7 +135,7 @@ export const RuntimeDashboard: React.FC = () => {
               >
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-sm truncate">{p.name}</span>
-                  <span className={`text-[10px] px-2 py-0.5 rounded font-mono ${p.metrics.healthStatus === 'healthy' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                  <span className={`text-[10px] px-2 py-0.5 rounded font-mono ${p.metrics.healthStatus === 'healthy' ? 'bg-emerald-500/20 text-emerald-400' : p.metrics.healthStatus === 'degraded' ? 'bg-amber-500/20 text-amber-400' : 'bg-red-500/20 text-red-400'}`}>
                     {p.metrics.healthStatus}
                   </span>
                 </div>
