@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { derivePreviewCapabilityToken } from './previewCapabilityUtils';
 
 test('preview capability tokens are reproducible after restart from stable session metadata', () => {
-  const secret = crypto.randomBytes(32).toString('hex');
+  const secret = crypto.randomBytes(48).toString('base64url');
   const identity = {
     previewId: 'prev_0123456789abcdef01234567',
     projectId: 'project-a',
@@ -19,7 +19,7 @@ test('preview capability tokens are reproducible after restart from stable sessi
 });
 
 test('preview capability tokens are bound to tenant, project, session, and refresh timestamp', () => {
-  const secret = crypto.randomBytes(32).toString('hex');
+  const secret = crypto.randomBytes(48).toString('base64url');
   const identity = {
     previewId: 'prev_0123456789abcdef01234567',
     projectId: 'project-a',
@@ -31,7 +31,7 @@ test('preview capability tokens are bound to tenant, project, session, and refre
   assert.notEqual(token, derivePreviewCapabilityToken(secret, { ...identity, ownerUserId: 'tenant-b' }));
   assert.notEqual(token, derivePreviewCapabilityToken(secret, { ...identity, projectId: 'project-b' }));
   assert.notEqual(token, derivePreviewCapabilityToken(secret, { ...identity, updatedAt: '2026-11-23T10:01:00.000Z' }));
-  assert.notEqual(token, derivePreviewCapabilityToken(crypto.randomBytes(32).toString('hex'), identity));
+  assert.notEqual(token, derivePreviewCapabilityToken(crypto.randomBytes(48).toString('base64url'), identity));
 });
 
 test('preview capability derivation rejects weak or placeholder secrets', () => {
