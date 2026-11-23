@@ -947,7 +947,7 @@ export class AIProviderPlatform {
       }
       const genAI = new GoogleGenAI({
         apiKey: config.geminiApiKey,
-        ...(typeof window === 'undefined' ? { httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } : {})
+        ...(typeof window === 'undefined' ? { httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } } : {})
       });
       const res = await genAI.models.embedContent({
         model: 'gemini-embedding-2',
@@ -958,7 +958,10 @@ export class AIProviderPlatform {
     }
 
     if (selectedProvider === 'ollama') {
-      const discovery = ollamaDiscoveryService.getLastDiscovery() || await ollamaDiscoveryService.discoverAndTest();
+      let discovery = ollamaDiscoveryService.getLastDiscovery();
+      if (!discovery?.reachable || !discovery.activeEndpoint) {
+        discovery = await ollamaDiscoveryService.discoverAndTest();
+      }
       const endpoint = resolveOllamaEndpoint(discovery);
       const model = resolveOllamaEmbeddingModel(config.ollamaEmbeddingModel, discovery.discoveredModels);
       let response: any;
