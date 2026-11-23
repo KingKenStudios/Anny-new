@@ -774,7 +774,10 @@ export class AIProviderPlatform {
         }
 
         if (provider === 'ollama') {
-          const discovery = ollamaDiscoveryService.getLastDiscovery() || await ollamaDiscoveryService.discoverAndTest();
+          let discovery = ollamaDiscoveryService.getLastDiscovery();
+          if (!discovery?.reachable || !discovery.activeEndpoint || discovery.discoveredModels.length === 0) {
+            discovery = await ollamaDiscoveryService.discoverAndTest();
+          }
           const endpoint = resolveOllamaEndpoint(discovery);
           const modelName = resolveOllamaModel(options.model, discovery.discoveredModels);
           assertOllamaMediaSupported(effectiveMessages, modelName);
