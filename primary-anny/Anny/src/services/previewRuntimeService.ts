@@ -182,16 +182,53 @@ export class PreviewRuntimeService {
   private compiledCssCache: Map<string, string> = new Map();
   private sessionsById: Map<string, PreviewSessionRecord> = new Map();
   private previewIdByProject: Map<string, string> = new Map();
+  private localCapabilitySecret: string | null = null;
 
   private constructor() {}
+
+  private getCapabilitySecret(): string {
+    const configuredSecret = typeof process !== 'undefined' ? process.env.SESSION_SECRET?.trim() : '';
+    if (isStrongSecuritySecret(configuredSecret)) return configuredSecret;
+    if (typeof process !== 'undefined' && process.env.NODE_ENV === 'production') {
+      throw new Error('PREVIEW_CAPABILITY_SECRET_UNAVAILABLE');
+    }
+    if (this.localCapabilitySecret) return this.localCapabilitySecret;
+
+    const dataDirectory = typeof process !== 'undefined' && process.env.ANNY_DATA_DIR
+      ? path.resolve(process.env.ANNY_DATA_DIR)
+      : path.join(process.cwd(), '.anny-data');
+    fs.mkdirSync(dataDirectory, { recursive: true, mode: 0o700 });
+    const secretPath = path.join(dataDirectory, 'preview-capability.key');
+
+    if (fs.existsSync(secretPath)) {
+      const existingSecret = fs.readFileSync(secretPath, 'utf8').trim();
+      if (!isStrongSecuritySecret(existingSecret)) {
+        throw new Error('PREVIEW_CAPABILITY_SECRET_INVALID');
+      }
+      try { fs.chmodSync(secretPath, 0o600); } catch {}
+      this.localCapabilitySecret = existingSecret;
+      return existingSecret;
+    }
+
+    const generatedSecret = crypto.randomBytes(32).toString('hex');
+    try {
+      fs.writeFileSync(secretPath, generatedSecret, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    } catch (error: any) {
+      if (error?.code !== 'EEXIST') throw new Error('PREVIEW_CAPABILITY_SECRET_PERSIST_FAILED');
+      const concurrentSecret = fs.readFileSync(secretPath, 'utf8').trim();
+      if (!isStrongSecuritySecret(concurrentSecret)) throw new Error('PREVIEW_CAPABILITY_SECRET_INVALID');
+      this.localCapabilitySecret = concurrentSecret;
+      return concurrentSecret;
+    }
+    try { fs.chmodSync(secretPath, 0o600); } catch {}
+    this.localCapabilitySecret = generatedSecret;
+    return generatedSecret;
+  }
 
   private deriveCapabilityToken(session: Pick<PersistedPreviewSession,
     'previewId' | 'projectId' | 'ownerUserId' | 'version' | 'updatedAt'
   >): string {
-    const secret = envConfigService.refreshFromProcess().sessionSecret;
-    if (!isStrongSecuritySecret(secret)) {
-      throw new Error('PREVIEW_CAPABILITY_SECRET_UNAVAILABLE');
-    }
+    const secret = this.getCapabilitySecret();
     const material = [
       session.previewId,
       session.projectId,
