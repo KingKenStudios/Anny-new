@@ -838,6 +838,7 @@ export class AIProviderPlatform {
           };
         }
       } catch (err: any) {
+        if (provider === 'ollama') ollamaDiscoveryService.invalidateDiscovery();
         const is429 = err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED');
         const isConnRefused = err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED');
         const shortReason = is429 ? 'Quota / Rate Limited (429)' : (isConnRefused ? 'Unreachable (ECONNREFUSED)' : (err.message || 'Error').slice(0, 120));
