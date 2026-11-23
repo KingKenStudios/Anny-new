@@ -18,7 +18,7 @@ import {
   sanitizeProjectFilesMap,
   type PersistedPreviewSession,
 } from './projectPersistenceService';
-import { envConfigService, isStrongSecuritySecret } from './envConfigService';
+import { isStrongSecuritySecret } from './envConfigService';
 
 export type PreviewRuntimeStatus = 'STARTING' | 'RUNNING' | 'STOPPED' | 'ERROR';
 
