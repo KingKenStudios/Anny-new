@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { projectPreviewController, hasApplicationEntryPoint } from './projectPreviewController';
 import { WorkspaceManager } from '../core/workspaceManager';
 import { safeStorage } from '../lib/storage';
+import { projectPersistenceService } from './projectPersistenceService';
 
 test('ANNY Preview Handoff & Project Restoration Regression Tests (A - I)', async (t) => {
   await t.test('A: identifies application entry point correctly for React and HTML apps', () => {
@@ -152,6 +156,47 @@ test('ANNY Preview Handoff & Project Restoration Regression Tests (A - I)', asyn
     // projB has no files initially
     const filesB = projectPreviewController.extractFilesFromVFS(projB);
     assert.equal(filesB['/src/A.tsx'], undefined);
+  });
+
+  await t.test('J: deterministic project-switch save race & failed-save isolation using controlled promises', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'anny-race-test-'));
+    const storeFile = path.join(tmpDir, 'projects.json');
+    projectPersistenceService.setPersistencePathForTests(storeFile);
+
+    const projA = 'proj_race_a';
+    const projB = 'proj_race_b';
+
+    await projectPersistenceService.upsertProject({
+      projectId: projA,
+      ownerUserId: 'user_1',
+      name: 'Project A',
+      files: { '/src/A.tsx': 'export const A = 1;' },
+    });
+
+    await projectPersistenceService.upsertProject({
+      projectId: projB,
+      ownerUserId: 'user_1',
+      name: 'Project B',
+      files: { '/src/B.tsx': 'export const B = 2;' },
+    });
+
+    // Verify isolation via projectPersistenceService update
+    const pA = projectPersistenceService.updateProjectFiles(projA, 'user_1', { '/src/A.tsx': 'export const A = 100;' });
+    const pB = projectPersistenceService.updateProjectFiles(projB, 'user_1', { '/src/B.tsx': 'export const B = 200;' });
+
+    await Promise.all([pA, pB]);
+
+    const finalA = await projectPersistenceService.getProjectById(projA);
+    const finalB = await projectPersistenceService.getProjectById(projB);
+
+    assert.ok(finalA);
+    assert.ok(finalB);
+    assert.equal(finalA.files['/src/A.tsx'], 'export const A = 100;');
+    assert.equal(finalA.files['/src/B.tsx'], undefined);
+    assert.equal(finalB.files['/src/B.tsx'], 'export const B = 200;');
+    assert.equal(finalB.files['/src/A.tsx'], undefined);
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 });
 

@@ -1143,6 +1143,14 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     saveError: null,
   }));
 
+  const [projectSaveStatuses, setProjectSaveStatuses] = useState<Record<string, {
+    isSaving: boolean;
+    isDirty: boolean;
+    saveError: string | null;
+    lastSavedAt: string | null;
+    version: number;
+  }>>({});
+
   const speakText = (text: string, id: string) => {
     if (currentlySpeakingId === id) {
       annyVoiceService.stop();
@@ -1653,6 +1661,13 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
 
       if (projectSavingRef.current.has(targetProjectId)) {
         projectDirtyRef.current.set(targetProjectId, true);
+        setProjectSaveStatuses((prev) => ({
+          ...prev,
+          [targetProjectId]: {
+            ...(prev[targetProjectId] || { isSaving: false, isDirty: false, saveError: null, lastSavedAt: null, version: 1 }),
+            isDirty: true,
+          },
+        }));
         return;
       }
       projectSavingRef.current.add(targetProjectId);
@@ -1672,9 +1687,14 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
             }
           }
 
-          if (getCanonicalProjectId() === targetProjectId) {
-            setProjectMetaState((prev) => ({ ...prev, isSaving: true, saveError: null }));
-          }
+          setProjectSaveStatuses((prev) => ({
+            ...prev,
+            [targetProjectId]: {
+              ...(prev[targetProjectId] || { isDirty: false, lastSavedAt: null, version: 1 }),
+              isSaving: true,
+              saveError: null,
+            },
+          }));
 
           const res = await fetchWithAuth(`/api/anny/projects/${encodeURIComponent(targetProjectId)}/files`, {
             method: 'PUT',
@@ -1684,14 +1704,25 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           const data = await res.json().catch(() => null);
 
           if (res.ok && data?.success) {
-            if (getCanonicalProjectId() === targetProjectId) {
+            const newVersion = data.project?.version || (projectSaveStatuses[targetProjectId]?.version || 1) + 1;
+            const savedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            setProjectSaveStatuses((prev) => ({
+              ...prev,
+              [targetProjectId]: {
+                isSaving: false,
+                isDirty: projectDirtyRef.current.get(targetProjectId) || false,
+                saveError: null,
+                lastSavedAt: savedTime,
+                version: newVersion,
+              },
+            }));
+
+            if (data.preview?.previewUrl && getCanonicalProjectId() === targetProjectId) {
               setProjectMetaState((prev) => ({
                 ...prev,
-                version: data.project?.version || prev.version,
-                previewUrl: data.preview?.previewUrl || prev.previewUrl,
-                lastSavedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                isSaving: false,
-                saveError: null,
+                previewUrl: data.preview.previewUrl,
+                version: newVersion,
               }));
             }
           } else {
@@ -1700,18 +1731,22 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           }
         } while (projectDirtyRef.current.get(targetProjectId));
       } catch (err: any) {
-        if (getCanonicalProjectId() === targetProjectId) {
-          setProjectMetaState((prev) => ({
-            ...prev,
+        const errorMsg = err?.message || 'Failed to save project files';
+        projectDirtyRef.current.set(targetProjectId, true);
+        setProjectSaveStatuses((prev) => ({
+          ...prev,
+          [targetProjectId]: {
+            ...(prev[targetProjectId] || { lastSavedAt: null, version: 1 }),
             isSaving: false,
-            saveError: err?.message || 'Failed to save project files',
-          }));
-        }
+            isDirty: true,
+            saveError: errorMsg,
+          },
+        }));
       } finally {
         projectSavingRef.current.delete(targetProjectId);
       }
     },
-    [currentChatId, projectMetaState.projectId, projectMetaState.name]
+    [currentChatId, projectMetaState.name, projectSaveStatuses]
   );
 
   const triggerProjectPersist = () => {
@@ -4052,22 +4087,32 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                 </div>
 
                 <div className="flex items-center gap-3">
-                  {projectMetaState.saveError ? (
-                    <button
-                      type="button"
-                      onClick={() => void persistVfsToServer()}
-                      className="text-rose-400 hover:text-rose-300 underline cursor-pointer"
-                      title={projectMetaState.saveError}
-                    >
-                      Save failed · Retry
-                    </button>
-                  ) : projectMetaState.isSaving ? (
-                    <span>Saving changes...</span>
-                  ) : projectMetaState.lastSavedAt ? (
-                    <span>Saved {projectMetaState.lastSavedAt}</span>
-                  ) : (
-                    <span>Ready</span>
-                  )}
+                  {(() => {
+                    const currentProjId = getCanonicalProjectId();
+                    const st = projectSaveStatuses[currentProjId] || { isSaving: false, isDirty: false, saveError: null, lastSavedAt: null, version: 1 };
+                    if (st.saveError) {
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => void persistVfsToServer(currentProjId)}
+                          className="text-rose-400 hover:text-rose-300 underline cursor-pointer"
+                          title={st.saveError}
+                        >
+                          Save failed · Retry
+                        </button>
+                      );
+                    }
+                    if (st.isSaving) {
+                      return <span>Saving changes...</span>;
+                    }
+                    if (st.isDirty) {
+                      return <span className="text-amber-300">Unsaved changes</span>;
+                    }
+                    if (st.lastSavedAt) {
+                      return <span>Saved {st.lastSavedAt}</span>;
+                    }
+                    return <span>Ready</span>;
+                  })()}
                 </div>
               </div>
             </div>
