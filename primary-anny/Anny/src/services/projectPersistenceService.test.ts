@@ -10,6 +10,7 @@ function createIsolatedService() {
   const service = Object.create(ProjectPersistenceService.prototype) as any;
   service.storePath = path.join(directory, 'projects.json');
   service.records = new Map();
+  service.previewSessions = new Map();
   service.pool = null;
   service.pgSchemaReady = false;
   service.projectWriteLocks = new Map();
@@ -180,5 +181,58 @@ test('PostgreSQL owner predicate blocks cross-process first-write races', async 
       (results.find(result => result.status === 'fulfilled') as PromiseFulfilledResult<any>).value.ownerUserId);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+
+test('preview session metadata survives disk restoration without storing capability credentials', async () => {
+  const fixture = createIsolatedService();
+  try {
+    await fixture.service.upsertProject({
+      projectId: 'preview-project',
+      ownerUserId: 'tenant-a',
+      name: 'Private project'
+    });
+    const previewRecord = {
+      previewId: 'prev_0123456789abcdef01234567',
+      projectId: 'preview-project',
+      ownerUserId: 'tenant-a',
+      name: 'Private project',
+      version: 1,
+      status: 'RUNNING' as const,
+      runtimeMode: 'ISOLATED_OPQ_ORIGIN_SANDBOX' as const,
+      entryFile: '/src/App.tsx',
+      lastError: null,
+      startedAt: '2026-11-23T00:00:00.000Z',
+      updatedAt: '2026-11-23T00:01:00.000Z'
+    };
+    await fixture.service.upsertPreviewSession(previewRecord);
+
+    const disk = JSON.parse(fs.readFileSync(path.join(fixture.directory, 'projects.json'), 'utf8'));
+    assert.equal(disk.previewSessions.length, 1);
+    assert.equal(disk.previewSessions[0].previewId, previewRecord.previewId);
+    assert.equal('capabilityToken' in disk.previewSessions[0], false);
+
+    const restored = Object.create(ProjectPersistenceService.prototype) as any;
+    restored.storePath = path.join(fixture.directory, 'projects.json');
+    restored.records = new Map();
+    restored.previewSessions = new Map();
+    restored.pool = null;
+    restored.pgSchemaReady = false;
+    restored.projectWriteLocks = new Map();
+    restored.loadFromDisk();
+
+    const loaded = await restored.getPreviewSessionById(previewRecord.previewId);
+    assert.equal(loaded?.projectId, 'preview-project');
+    assert.equal(loaded?.ownerUserId, 'tenant-a');
+    assert.equal(loaded?.status, 'RUNNING');
+    assert.equal((await restored.getPreviewSessionByProjectId('preview-project'))?.previewId, previewRecord.previewId);
+
+    await assert.rejects(
+      () => restored.upsertPreviewSession({ ...previewRecord, ownerUserId: 'tenant-b' }),
+      /FORBIDDEN_PROJECT_OWNERSHIP/
+    );
+  } finally {
+    fixture.cleanup();
   }
 });
