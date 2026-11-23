@@ -218,6 +218,7 @@ export class ProjectPersistenceService {
   private loadFromDisk(): void {
     try {
       if (!fs.existsSync(this.storePath)) return;
+      try { fs.chmodSync(this.storePath, 0o600); } catch {}
       const raw = fs.readFileSync(this.storePath, 'utf8');
       if (!raw.trim()) return;
       const parsed = JSON.parse(raw);
@@ -263,8 +264,8 @@ export class ProjectPersistenceService {
   private saveToDisk(): void {
     try {
       const dir = path.dirname(this.storePath);
-      fs.mkdirSync(dir, { recursive: true });
-      const tmpPath = `${this.storePath}.${process.pid}.${Date.now()}.tmp`;
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const tmpPath = `${this.storePath}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString('hex')}.tmp`;
       const payload = JSON.stringify(
         {
           schemaVersion: 1,
@@ -275,8 +276,9 @@ export class ProjectPersistenceService {
         null,
         2
       );
-      fs.writeFileSync(tmpPath, payload, 'utf8');
+      fs.writeFileSync(tmpPath, payload, { encoding: 'utf8', mode: 0o600 });
       fs.renameSync(tmpPath, this.storePath);
+      try { fs.chmodSync(this.storePath, 0o600); } catch {}
     } catch (err: any) {
       console.warn('[ProjectPersistence] Disk persistence write warning:', err?.message || err);
     }
