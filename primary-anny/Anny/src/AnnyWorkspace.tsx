@@ -1640,18 +1640,33 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     setAttachedFiles((prev) => prev.filter((f) => f.id !== id));
   };
 
+  const getCanonicalProjectId = React.useCallback(() => {
+    return resolveBestProjectId(currentChatId, projectMetaState.projectId);
+  }, [currentChatId, projectMetaState.projectId]);
+
+  const getProjectVFS = () => {
+    const bestProjId = getCanonicalProjectId();
+    return WorkspaceManager.getInstance().getWorkspaceVFS(bestProjId);
+  };
+
+  const isSavingRef = useRef(false);
   const persistVfsToServer = React.useCallback(
     async (explicitProjectId?: string) => {
-      const targetProjectId = explicitProjectId || projectMetaState.projectId || WorkspaceManager.getInstance().getActiveProjectId();
+      const targetProjectId = explicitProjectId || getCanonicalProjectId();
       if (!targetProjectId || targetProjectId === 'ws_default_1') return;
+      if (isSavingRef.current) return;
+      isSavingRef.current = true;
       const currentFiles = getVfsMap();
       const cleanFiles: Record<string, string> = {};
-      for (const [k, v] of Object.entries(currentFiles)) {
+      for (const [k, v] of Object.entries(currentFiles) as [string, string][]) {
         if (!k.startsWith('/__anny_')) {
           cleanFiles[k] = v;
         }
       }
-      if (Object.keys(cleanFiles).length === 0) return;
+      if (Object.keys(cleanFiles).length === 0) {
+        isSavingRef.current = false;
+        return;
+      }
 
       setProjectMetaState((prev) => ({ ...prev, isSaving: true }));
       try {
@@ -1674,14 +1689,18 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         }
       } catch {
         setProjectMetaState((prev) => ({ ...prev, isSaving: false }));
+      } finally {
+        isSavingRef.current = false;
       }
     },
-    [projectMetaState.projectId, projectMetaState.name]
+    [currentChatId, projectMetaState.projectId, projectMetaState.name]
   );
 
-  const getProjectVFS = () => {
-    const bestProjId = resolveBestProjectId(currentChatId, projectMetaState.projectId);
-    return WorkspaceManager.getInstance().getWorkspaceVFS(bestProjId);
+  const triggerProjectPersist = () => {
+    if (codePersistTimerRef.current) clearTimeout(codePersistTimerRef.current);
+    codePersistTimerRef.current = setTimeout(() => {
+      void persistVfsToServer();
+    }, 800);
   };
 
   // Code editor handlers
@@ -1692,14 +1711,11 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('anny_vfs_changed', {
-          detail: { projectId: resolveBestProjectId(currentChatId, projectMetaState.projectId) },
+          detail: { projectId: getCanonicalProjectId() },
         })
       );
     }
-    if (codePersistTimerRef.current) clearTimeout(codePersistTimerRef.current);
-    codePersistTimerRef.current = setTimeout(() => {
-      void persistVfsToServer();
-    }, 1200);
+    triggerProjectPersist();
   };
 
   const handleDeleteFile = (path: string) => {
@@ -1712,6 +1728,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     } else {
       setOpenTabs((prev) => prev.filter((t) => t !== path));
     }
+    triggerProjectPersist();
   };
 
   const handleCreateNewFolder = () => {
@@ -1722,6 +1739,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     setVfsFiles(getVfsMap());
     setNewFolderName('');
     setIsAddingFolder(false);
+    triggerProjectPersist();
   };
 
   const handleRenameFile = (path: string) => {
@@ -1733,6 +1751,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       setOpenTabs(prev => prev.map(tab => tab === path ? `${path.slice(0, path.lastIndexOf('/') + 1)}${nextName}` : tab));
       if (activeCodeFile === path) setActiveCodeFile(`${path.slice(0, path.lastIndexOf('/') + 1)}${nextName}`);
       setVfsFiles(getVfsMap());
+      triggerProjectPersist();
     } catch (error) { console.error('ANNY rename failed', error); }
   };
 
@@ -1746,6 +1765,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       setOpenTabs(prev => prev.map(tab => tab === sourcePath ? newPath : tab));
       if (activeCodeFile === sourcePath) setActiveCodeFile(newPath);
       setVfsFiles(getVfsMap());
+      triggerProjectPersist();
     } catch (error) { console.error('ANNY move failed', error); }
   };
 
@@ -1762,7 +1782,27 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     setNewFileName('');
     setOpenTabs((prev) => Array.from(new Set([...prev, p])));
     setActiveCodeFile(p);
+    triggerProjectPersist();
   };
+
+  // Synchronize VFS and files on project/chat switch
+  useEffect(() => {
+    const projId = getCanonicalProjectId();
+    const vfs = WorkspaceManager.getInstance().getWorkspaceVFS(projId);
+    const files = vfs.getAllFilesMap();
+    setVfsFiles(files);
+    const fileKeys = Object.keys(files).filter((k) => !k.startsWith('/__anny_'));
+    if (fileKeys.length > 0) {
+      if (!activeCodeFile || !files[activeCodeFile]) {
+        const defaultFile = files['/src/App.tsx'] ? '/src/App.tsx' : fileKeys[0];
+        setActiveCodeFile(defaultFile);
+        setOpenTabs([defaultFile]);
+      }
+    } else {
+      setActiveCodeFile('');
+      setOpenTabs([]);
+    }
+  }, [currentChatId, projectMetaState.projectId]);
 
   useEffect(() => {
     if (activeCodeFile) {

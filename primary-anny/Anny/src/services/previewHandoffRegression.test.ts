@@ -85,4 +85,44 @@ test('ANNY Preview Handoff & Project Restoration Regression Tests (A - I)', asyn
     assert.notEqual(lastDiag, null);
     assert.equal(lastDiag?.resolvedProjectId, 'proj_telemetry_1');
   });
+
+  await t.test('F: ensures canonical project ID consistency and file operation persistence across VFS instances', () => {
+    const projX = 'proj_consistency_x';
+    const mgr = WorkspaceManager.getInstance();
+    mgr.switchWorkspace(projX, 'Consistency Project');
+    const vfs = mgr.getWorkspaceVFS(projX);
+
+    // Create file
+    vfs._unsafe_writeFile('/src/Header.tsx', 'export const Header = () => <header/>;');
+    assert.equal(vfs.readFile('/src/Header.tsx'), 'export const Header = () => <header/>;');
+
+    // Rename file
+    vfs.rename('/src/Header.tsx', 'TopHeader.tsx');
+    assert.equal(vfs.readFile('/src/TopHeader.tsx'), 'export const Header = () => <header/>;');
+    assert.equal(vfs.readFile('/src/Header.tsx'), '');
+
+    // Delete file
+    vfs._unsafe_remove('/src/TopHeader.tsx');
+    assert.equal(vfs.readFile('/src/TopHeader.tsx'), '');
+  });
+
+  await t.test('G: verifies project switching isolation with identical active filenames', () => {
+    const proj1 = 'proj_switch_one';
+    const proj2 = 'proj_switch_two';
+    const mgr = WorkspaceManager.getInstance();
+
+    mgr.switchWorkspace(proj1, 'Project One');
+    mgr.getWorkspaceVFS(proj1)._unsafe_writeFile('/src/App.tsx', 'export default function App1() { return <div>One</div>; }');
+
+    mgr.switchWorkspace(proj2, 'Project Two');
+    mgr.getWorkspaceVFS(proj2)._unsafe_writeFile('/src/App.tsx', 'export default function App2() { return <div>Two</div>; }');
+
+    const files1 = projectPreviewController.extractFilesFromVFS(proj1);
+    const files2 = projectPreviewController.extractFilesFromVFS(proj2);
+
+    assert.ok(files1['/src/App.tsx']?.includes('One'));
+    assert.ok(files2['/src/App.tsx']?.includes('Two'));
+    assert.notEqual(files1['/src/App.tsx'], files2['/src/App.tsx']);
+  });
 });
+
