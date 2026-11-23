@@ -40,3 +40,31 @@ export function isOllamaVisionModel(modelName: string): boolean {
   return name.includes('vision') || name.includes('llava') ||
     name.includes('minicpm-v') || name.includes('moondream') || name.includes('-vl');
 }
+
+
+export function assertOllamaMediaSupported(
+  messages: Array<{ content: string | Array<{
+    fileData?: unknown;
+    inlineData?: { mimeType?: string; data?: string };
+  }> }>,
+  modelName: string
+): void {
+  const unsupported = messages.some(message =>
+    Array.isArray(message.content) && message.content.some(part =>
+      Boolean(part.fileData) ||
+      Boolean(part.inlineData && !(part.inlineData.mimeType || '').toLowerCase().startsWith('image/'))
+    )
+  );
+  if (unsupported) {
+    throw new Error('OFFLINE_UNAVAILABLE: This Ollama chat route currently supports text and image input only; audio, video, and remote file references are not passed to the local model.');
+  }
+
+  const hasImages = messages.some(message =>
+    Array.isArray(message.content) && message.content.some(part =>
+      Boolean(part.inlineData?.data && (part.inlineData.mimeType || '').toLowerCase().startsWith('image/'))
+    )
+  );
+  if (hasImages && !isOllamaVisionModel(modelName)) {
+    throw new Error(`OFFLINE_UNAVAILABLE: Local model "${modelName}" is not identified as a vision-capable Ollama model.`);
+  }
+}
