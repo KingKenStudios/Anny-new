@@ -278,8 +278,13 @@ test('Phase 7A: AnnyPromptComposer renders mobile-zoom-safe >=16px inputs, acces
   assert.ok(lightMarkup.includes('data-testid="anny-composer-textarea"'));
   assert.ok(lightMarkup.includes('aria-label="Prompt input"'));
   assert.ok(lightMarkup.includes('text-[16px]'));
-  assert.ok(lightMarkup.includes('text-blue-800'));
-  assert.ok(lightMarkup.includes('text-emerald-900'));
+  assert.ok(lightMarkup.includes('text-amber-900'));
+  assert.ok(lightMarkup.includes('data-testid="pro-tools-btn"'));
+  assert.ok(lightMarkup.includes('data-testid="record-voice-note-btn"'));
+  assert.ok(lightMarkup.includes('data-testid="voice-to-text-btn"'));
+  assert.ok(!lightMarkup.includes('aria-label="Toggle web search grounding"'));
+  assert.ok(!lightMarkup.includes('aria-label="Select neural model route"'));
+  assert.ok(!lightMarkup.includes('aria-label="Include workspace code context"'));
   assert.ok(lightMarkup.includes('aria-label="Send message"'));
 
   const workingDarkMarkup = renderToStaticMarkup(

@@ -227,14 +227,23 @@ export function AnnyMainApp() {
         if (!snapshot || snapshot.empty) return;
 
         const liveMsgs = snapshot.docs
-          .map((docSnap) => ({
-            id: docSnap.id,
-            role: docSnap.data().role,
-            content: docSnap.data().content,
-            userId: docSnap.data().userId,
-            sessionId: docSnap.data().sessionId || 'default-session',
-            timestamp: docSnap.data().timestamp,
-          }))
+          .map((docSnap) => {
+            const raw = docSnap.data();
+            return {
+              id: docSnap.id,
+              role: raw.role,
+              content: raw.content,
+              userId: raw.userId,
+              sessionId: raw.sessionId || 'default-session',
+              timestamp: raw.timestamp,
+              ...(raw.projectBuild ? { projectBuild: raw.projectBuild } : {}),
+              ...(raw.generatedImages ? { generatedImages: raw.generatedImages } : {}),
+              ...(raw.generatedVideo ? { generatedVideo: raw.generatedVideo } : {}),
+              ...(raw.generatedAudio ? { generatedAudio: raw.generatedAudio } : {}),
+              ...(raw.attachedFiles ? { attachedFiles: raw.attachedFiles } : {}),
+              ...(raw.sources ? { sources: raw.sources } : {}),
+            };
+          })
           .filter(
             (m) =>
               !m.id?.toString().startsWith('init-') &&
@@ -270,13 +279,53 @@ export function AnnyMainApp() {
               const existingIndex = updated.findIndex((c) => c.id === sId);
               if (existingIndex >= 0) {
                 const currentMsgs = updated[existingIndex].messages || [];
+                // Merge rich local metadata (especially projectBuild, generatedImages, etc.) onto incoming Firestore messages
+                const mergedMsgs = sMsgs.map((remoteMsg) => {
+                  const localMatch = currentMsgs.find(
+                    (cm: any) =>
+                      cm &&
+                      (cm.id === remoteMsg.id ||
+                        (cm.role === remoteMsg.role && cm.content === remoteMsg.content)),
+                  );
+                  if (!localMatch) return remoteMsg;
+                  return {
+                    ...localMatch,
+                    ...remoteMsg,
+                    projectBuild: remoteMsg.projectBuild || localMatch.projectBuild,
+                    generatedImages: remoteMsg.generatedImages || localMatch.generatedImages,
+                    generatedVideo: remoteMsg.generatedVideo || localMatch.generatedVideo,
+                    generatedAudio: remoteMsg.generatedAudio || localMatch.generatedAudio,
+                    attachedFiles: remoteMsg.attachedFiles || localMatch.attachedFiles,
+                    sources: remoteMsg.sources || localMatch.sources,
+                  };
+                });
+
+                // Keep any local messages with projectBuild that have not yet round-tripped through Firestore
+                for (const localMsg of currentMsgs) {
+                  if (
+                    localMsg?.projectBuild &&
+                    !mergedMsgs.some(
+                      (m: any) =>
+                        m.id === localMsg.id ||
+                        m.projectBuild?.projectId === localMsg.projectBuild?.projectId,
+                    )
+                  ) {
+                    mergedMsgs.push(localMsg);
+                  }
+                }
+
                 if (
-                  sMsgs.length !== currentMsgs.length ||
-                  sMsgs.some((m, idx) => !currentMsgs[idx] || currentMsgs[idx].id !== m.id)
+                  mergedMsgs.length !== currentMsgs.length ||
+                  mergedMsgs.some(
+                    (m, idx) =>
+                      !currentMsgs[idx] ||
+                      currentMsgs[idx].id !== m.id ||
+                      Boolean(currentMsgs[idx].projectBuild) !== Boolean(m.projectBuild),
+                  )
                 ) {
                   updated[existingIndex] = {
                     ...updated[existingIndex],
-                    messages: sMsgs,
+                    messages: mergedMsgs,
                   };
                   changed = true;
                 }

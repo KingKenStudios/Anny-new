@@ -3483,6 +3483,44 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                         <span className="text-[10px] font-mono">{isSaharaEnabled ? 'ON' : 'OFF'}</span>
                       </button>
                     </div>
+                    <div className="pt-1 border-t border-white/10">
+                      <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                        <Brain className="w-3 h-3 text-purple-400" />
+                        <span>Neural Brain Route</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[
+                          { id: 'auto', label: 'Auto (Best Route)' },
+                          { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen' },
+                          { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
+                          { id: 'ollama-local', label: 'Local Sovereign' },
+                        ].map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedModelId(m.id);
+                              setActiveModel(m.label);
+                              setSelectedNeuralEngine?.(m.id);
+                              try {
+                                const raw = safeStorage.getItem('anny_settings_v1');
+                                const parsed = raw ? JSON.parse(raw) : {};
+                                safeStorage.setItem('anny_settings_v1', JSON.stringify({ ...parsed, defaultModel: m.id }));
+                              } catch {}
+                              showNotice(`Active model switched to ${m.label}`, 'info');
+                            }}
+                            className={`px-2 py-1.5 rounded-lg border text-left flex items-center justify-between transition-all cursor-pointer text-[11px] ${
+                              selectedModelId === m.id
+                                ? 'bg-purple-500/20 border-purple-400/60 text-white font-semibold'
+                                : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                            }`}
+                          >
+                            <span className="truncate">{m.label}</span>
+                            {selectedModelId === m.id && <Check className="w-3 h-3 text-purple-300 shrink-0" />}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <div className="flex items-center gap-1.5 pt-1">
                       <input
                         type="url"
@@ -3618,7 +3656,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                     setIsWebSearchEnabled(next);
                     showNotice(next ? 'Live Web Search grounding enabled.' : 'Live Web Search disabled.', 'info');
                   }}
-                  isProToolsActive={activePopover === 'protools' || isDeepThinkingEnabled || isSaharaEnabled || includeCodeContext}
+                  isProToolsActive={activePopover === 'protools' || isDeepThinkingEnabled || isSaharaEnabled || includeCodeContext || isWebSearchEnabled || selectedModelId !== 'auto'}
                   onToggleProTools={() => setActivePopover(activePopover === 'protools' ? 'none' : 'protools')}
                   activeModelLabel={activeModel}
                   isModelPopoverActive={activePopover === 'model'}
@@ -4675,6 +4713,41 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                     <span className="text-[10px] font-mono">{isSaharaEnabled ? 'ON' : 'OFF'}</span>
                   </button>
                 </div>
+                <div className="pt-1.5 border-t border-white/10">
+                  <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                    <Brain className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Neural Brain Route</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      { id: 'auto', label: 'Auto (Best Route)', desc: 'Smart local & cloud' },
+                      { id: 'gemini-4-hydrogen', label: 'ANNY Core (Pro)', desc: 'Deep architecture' },
+                      { id: 'gemini-3.1-flash-lite', label: 'ANNY Fast (Lite)', desc: 'Low-latency chat' },
+                      { id: 'ollama', label: 'Local Sovereign', desc: 'Offline Ollama' },
+                    ].map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedModelId(m.id);
+                          setActiveModel(m.label);
+                          showNotice(`Active model switched to ${m.label}`, 'info');
+                        }}
+                        className={`px-2.5 py-2 rounded-xl text-left flex items-center justify-between transition-all cursor-pointer ${
+                          selectedModelId === m.id
+                            ? 'bg-purple-500/20 border border-purple-400/50 text-white'
+                            : 'bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="font-semibold text-[11px] truncate">{m.label}</div>
+                          <div className="text-[10px] text-slate-400 truncate">{m.desc}</div>
+                        </div>
+                        {selectedModelId === m.id && <Check className="w-3.5 h-3.5 text-purple-300 shrink-0 ml-1" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
                   <div className="flex-1 flex items-center gap-2 bg-[#050817] border border-white/15 rounded-xl px-2.5 py-1.5 focus-within:border-cyan-400">
                     <Link2 className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
@@ -4797,7 +4870,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                 setIsWebSearchEnabled(next);
                 showNotice(next ? 'Live Web Search grounding enabled.' : 'Live Web Search disabled.', 'info');
               }}
-              isProToolsActive={activePopover === 'protools' || isDeepThinkingEnabled || isSaharaEnabled || includeCodeContext}
+              isProToolsActive={activePopover === 'protools' || isDeepThinkingEnabled || isSaharaEnabled || includeCodeContext || isWebSearchEnabled || selectedModelId !== 'auto'}
               onToggleProTools={() => setActivePopover(activePopover === 'protools' ? 'none' : 'protools')}
               activeModelLabel={activeModel}
               isModelPopoverActive={activePopover === 'model'}

@@ -1,10 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Paperclip,
-  Globe,
   Zap,
-  Brain,
-  Code2,
+  AudioLines,
   Mic,
   MicOff,
   Send,
@@ -446,86 +444,67 @@ export const AnnyPromptComposer: React.FC<AnnyPromptComposerProps> = ({
           <span>Attach</span>
         </button>
 
+        {!inModal && (
+          <button
+            type="button"
+            onClick={onToggleProTools}
+            aria-label="Open ANNY Pro Tools"
+            aria-expanded={isProToolsActive}
+            data-testid="pro-tools-btn"
+            className={`min-h-[38px] sm:min-h-[34px] px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 text-xs font-medium transition-colors cursor-pointer ${
+              isProToolsActive
+                ? isLight
+                  ? 'bg-amber-100 border-amber-400 text-amber-900'
+                  : 'bg-amber-500/20 border-amber-400/60 text-amber-200'
+                : isLight
+                ? 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-800'
+                : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
+            }`}
+          >
+            <Zap className={`w-3.5 h-3.5 shrink-0 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
+            <span className={variant === 'split' ? 'hidden sm:inline' : ''}>Pro Tools</span>
+          </button>
+        )}
+
         <button
           type="button"
-          onClick={onToggleWebSearch}
-          aria-label="Toggle web search grounding"
-          aria-pressed={isWebSearchEnabled}
-          className={`min-h-[38px] sm:min-h-[34px] px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 text-xs font-medium transition-colors cursor-pointer ${
-            isWebSearchEnabled
+          onClick={() => {
+            if (isRecordingVoiceNote) {
+              onStopVoiceNote?.();
+            } else {
+              onStartVoiceNote?.();
+            }
+          }}
+          disabled={isProcessingVoiceNote || isTranscribingAudio}
+          aria-label={isRecordingVoiceNote ? 'Stop recording voice note' : 'Record Voice Note'}
+          aria-pressed={Boolean(isRecordingVoiceNote)}
+          title={isRecordingVoiceNote ? 'Stop recording voice note' : 'Record Voice Note'}
+          data-testid="record-voice-note-btn"
+          className={`min-h-[38px] sm:min-h-[34px] px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 ${
+            isRecordingVoiceNote
               ? isLight
-                ? 'bg-blue-100 border-blue-400 text-blue-800'
-                : 'bg-blue-500/20 border-blue-400/60 text-blue-200'
+                ? 'bg-rose-100 border-rose-400 text-rose-900 shadow-[0_0_10px_rgba(244,63,94,0.25)]'
+                : 'bg-rose-500/25 border-rose-500/60 text-rose-200 shadow-[0_0_12px_rgba(239,68,68,0.45)]'
               : isLight
               ? 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-800'
               : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
           }`}
         >
-          <Globe className={`w-3.5 h-3.5 shrink-0 ${isLight ? 'text-blue-600' : 'text-blue-400'}`} />
-          <span>{isWebSearchEnabled ? 'Web Live' : 'Web'}</span>
+          <AudioLines
+            className={`w-3.5 h-3.5 shrink-0 ${
+              isRecordingVoiceNote
+                ? isLight
+                  ? 'text-rose-600 animate-pulse'
+                  : 'text-rose-400 animate-pulse'
+                : isLight
+                ? 'text-cyan-600'
+                : 'text-cyan-400'
+            }`}
+          />
+          <span className={variant === 'split' ? 'hidden sm:inline' : ''}>
+            {isRecordingVoiceNote ? 'Recording...' : 'Voice'}
+          </span>
         </button>
-
-        {!inModal && (
-          <>
-            <button
-              type="button"
-              onClick={onToggleProTools}
-              aria-label="Open ANNY Pro Tools"
-              aria-expanded={isProToolsActive}
-              className={`min-h-[38px] sm:min-h-[34px] px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 text-xs font-medium transition-colors cursor-pointer ${
-                isProToolsActive
-                  ? isLight
-                    ? 'bg-amber-100 border-amber-400 text-amber-900'
-                    : 'bg-amber-500/20 border-amber-400/60 text-amber-200'
-                  : isLight
-                  ? 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-800'
-                  : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
-              }`}
-            >
-              <Zap className={`w-3.5 h-3.5 shrink-0 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
-              <span className={variant === 'split' ? 'hidden sm:inline' : ''}>Pro Tools</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={onToggleModelPopover}
-              aria-label="Select neural model route"
-              aria-expanded={isModelPopoverActive}
-              className={`min-h-[38px] sm:min-h-[34px] px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 text-xs font-medium transition-colors cursor-pointer ${
-                isModelPopoverActive || selectedModelId !== 'auto'
-                  ? isLight
-                    ? 'bg-purple-100 border-purple-400 text-purple-900'
-                    : 'bg-purple-500/20 border-purple-400/60 text-purple-200'
-                  : isLight
-                  ? 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-800'
-                  : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
-              }`}
-            >
-              <Brain className={`w-3.5 h-3.5 shrink-0 ${isLight ? 'text-purple-600' : 'text-purple-400'}`} />
-              <span className="hidden sm:inline">{activeModelLabel.split(' ')[0]}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={onToggleCodeContext}
-              aria-label="Include workspace code context"
-              aria-pressed={includeCodeContext}
-              className={`min-h-[38px] sm:min-h-[34px] px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 text-xs font-medium transition-colors cursor-pointer ${
-                includeCodeContext
-                  ? isLight
-                    ? 'bg-emerald-100 border-emerald-400 text-emerald-900'
-                    : 'bg-emerald-500/20 border-emerald-400/60 text-emerald-200'
-                  : isLight
-                  ? 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-800'
-                  : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
-              }`}
-              title={`Workspace context (${vfsFileCount} files)`}
-            >
-              <Code2 className={`w-3.5 h-3.5 shrink-0 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
-              <span className="hidden sm:inline">Code</span>
-            </button>
-          </>
-        )}
       </div>
 
       <div className="flex items-center gap-1.5 ml-auto">
@@ -550,26 +529,28 @@ export const AnnyPromptComposer: React.FC<AnnyPromptComposerProps> = ({
         <button
           type="button"
           onClick={() => {
-            if (onStartVoiceNote) {
-              if (isRecordingVoiceNote) onStopVoiceNote?.();
-              else onStartVoiceNote();
+            if (isRecordingAudio) {
+              onStopMediaRecording(false);
+            } else if (isListening) {
+              onStopSpeechRecognition();
             } else {
               onToggleVoiceInput();
             }
           }}
-          disabled={isTranscribingAudio || isProcessingVoiceNote}
-          aria-label={isRecordingVoiceNote || isListening || isRecordingAudio ? 'Stop recording voice note' : 'Record Voice Note'}
-          title={isRecordingVoiceNote || isListening || isRecordingAudio ? 'Stop recording voice note' : 'Record Voice Note'}
-          data-testid="record-voice-note-btn"
+          disabled={isTranscribingAudio || isRecordingVoiceNote || isProcessingVoiceNote}
+          aria-label={isListening || isRecordingAudio ? 'Stop voice to text' : 'Voice to text'}
+          aria-pressed={Boolean(isListening || isRecordingAudio)}
+          title={isListening || isRecordingAudio ? 'Stop voice to text' : 'Voice to text'}
+          data-testid="voice-to-text-btn"
           className={`min-h-[44px] min-w-[44px] sm:min-h-[36px] sm:min-w-[36px] rounded-xl flex items-center justify-center shrink-0 transition-all cursor-pointer disabled:opacity-50 ${
-            isRecordingVoiceNote || isListening || isRecordingAudio
+            isListening || isRecordingAudio
               ? 'bg-rose-500/25 text-rose-300 border border-rose-500/60 shadow-[0_0_12px_rgba(239,68,68,0.45)]'
               : isLight
               ? 'bg-slate-100 hover:bg-slate-200 text-cyan-700 border border-slate-300'
               : 'bg-white/5 hover:bg-white/10 text-cyan-300 border border-white/10'
           }`}
         >
-          {isRecordingVoiceNote || isListening || isRecordingAudio ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+          {isListening || isRecordingAudio ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
         </button>
 
         <button

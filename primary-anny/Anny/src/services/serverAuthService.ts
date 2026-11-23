@@ -219,28 +219,46 @@ export async function resolveVerifiedIdentity(
     }
   }
 
-  // 2. Bearer token: check ANNY HMAC session token first
-  const candidateTokens = [bearerToken, cookies[USER_COOKIE_NAME]].filter(Boolean);
-  for (const token of candidateTokens) {
-    const session = authSecurityPlatform.verifyToken(token);
-    if (session) {
+  // 2. Explicit Bearer token: check ANNY HMAC session token first
+  if (bearerToken) {
+    const bearerSession = authSecurityPlatform.verifyToken(bearerToken);
+    if (bearerSession) {
       return {
-        uid: session.userId,
-        email: session.username?.includes('@') ? session.username : undefined,
+        uid: bearerSession.userId,
+        email: bearerSession.username?.includes('@') ? bearerSession.username : undefined,
         emailVerified: true,
-        role: session.role,
-        isAdmin: session.role === 'SOVEREIGN_ADMIN',
+        role: bearerSession.role,
+        isAdmin: bearerSession.role === 'SOVEREIGN_ADMIN',
         authMethod: 'anny-session',
-        tokenExpiresAt: session.expiresAt
+        tokenExpiresAt: bearerSession.expiresAt
       };
+    }
+
+    // 3. Explicit Bearer token: verify RS256 Firebase ID token (JWT with 3 dot-separated parts)
+    // Must be checked BEFORE falling back to a guest USER_COOKIE_NAME cookie so a stale
+    // guest session cookie never overrides an authenticated Firebase user's Bearer token.
+    if (bearerToken.split('.').length === 3) {
+      const fbIdentity = await verifyFirebaseIdToken(bearerToken);
+      if (fbIdentity) {
+        return fbIdentity;
+      }
     }
   }
 
-  // 3. Bearer token: verify RS256 Firebase ID token (JWT with 3 dot-separated parts)
-  if (bearerToken && bearerToken.split('.').length === 3) {
-    const fbIdentity = await verifyFirebaseIdToken(bearerToken);
-    if (fbIdentity) {
-      return fbIdentity;
+  // 4. Fallback to user session cookie when no valid Bearer token was resolved
+  const cookieToken = cookies[USER_COOKIE_NAME];
+  if (cookieToken) {
+    const cookieSession = authSecurityPlatform.verifyToken(cookieToken);
+    if (cookieSession) {
+      return {
+        uid: cookieSession.userId,
+        email: cookieSession.username?.includes('@') ? cookieSession.username : undefined,
+        emailVerified: true,
+        role: cookieSession.role,
+        isAdmin: cookieSession.role === 'SOVEREIGN_ADMIN',
+        authMethod: 'anny-session',
+        tokenExpiresAt: cookieSession.expiresAt
+      };
     }
   }
 

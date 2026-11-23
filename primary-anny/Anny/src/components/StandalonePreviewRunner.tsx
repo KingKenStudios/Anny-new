@@ -16,6 +16,11 @@ import {
   invalidatePreviewSessionAuthorizations,
   getProjectOwnershipRecord
 } from '../services/projectOwnershipService';
+import {
+  projectPreviewController,
+  PreviewLifecycleState,
+  hasApplicationEntryPoint,
+} from '../services/projectPreviewController';
 
 // Expose global window scope fallbacks for dynamic VFS evaluation
 if (typeof window !== 'undefined') {
@@ -345,6 +350,23 @@ export function readAuthorizedProjectVfsSnapshot(
   projectVfs.reloadFromStorage();
   let nodes = projectVfs.getAllFiles();
 
+  // If projectVfs has no nodes yet, check projectPreviewController in-memory files verified strictly for authorizedProjectId
+  if (nodes.length === 0) {
+    const controllerFiles = projectPreviewController.getControllerFilesForProject(authorizedProjectId);
+    if (Object.keys(controllerFiles).length > 0) {
+      for (const [rawPath, content] of Object.entries(controllerFiles)) {
+        if (typeof content !== 'string') continue;
+        const normalized = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+        projectVfs._unsafe_writeFile(normalized, content);
+      }
+      if (typeof (projectVfs as any).saveToStorage === 'function') {
+        (projectVfs as any).saveToStorage();
+      }
+      nodes = projectVfs.getAllFiles();
+    }
+  }
+
+  // Only read activeVfs if the active workspace ID strictly equals authorizedProjectId
   if (nodes.length === 0 && wsManager.getActiveProjectId() === authorizedProjectId) {
     const activeVfs = wsManager.getVFS();
     activeVfs.reloadFromStorage();
@@ -1468,6 +1490,19 @@ export async function loadOfflineReactVendorScript(baseOrigin?: string): Promise
   return pendingReactVendorPromise;
 }
 
+const PLACEHOLDER_PREVIEW_PROJECT_IDS = new Set([
+  '',
+  'ws_default_1',
+  'default-project',
+  'anny-project',
+  'default-session',
+]);
+
+function isPlaceholderPreviewProjectId(id: string | null | undefined): boolean {
+  const clean = String(id || '').trim();
+  return !clean || PLACEHOLDER_PREVIEW_PROJECT_IDS.has(clean);
+}
+
 export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ projectId }) => {
   const [isolatedSrcDoc, setIsolatedSrcDoc] = useState<string | null>(null);
   const [htmlContent, setHtmlContent] = useState<string | null>(null);
@@ -1479,11 +1514,19 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
   const [isolatedPreviewVfs, setIsolatedPreviewVfs] = useState<any | null>(null);
   const [reactVendorJs, setReactVendorJs] = useState<string>(cachedReactVendorScript || '');
   const [vendorLoadAttempted, setVendorLoadAttempted] = useState<boolean>(Boolean(cachedReactVendorScript));
+  const [handshakeRetryEpoch, setHandshakeRetryEpoch] = useState<number>(0);
+  const [lifecycleState, setLifecycleState] = useState<PreviewLifecycleState>(() =>
+    isPlaceholderPreviewProjectId(projectId) ? 'missing_project_id' : 'restoring_project',
+  );
+  const [lifecycleReason, setLifecycleReason] = useState<string>('');
+
   const sandboxIframeRef = React.useRef<HTMLIFrameElement>(null);
+  const acceptedHandshakeIdsRef = React.useRef<Set<string>>(new Set());
   const handshakeStateRef = React.useRef<{
     projectId: string;
     handshakeId: string;
     lastAcceptedSeq: number;
+    acknowledgedByParent: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -1538,46 +1581,130 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
     }
     const rawTargetId = projectId || 'ws_default_1';
     const targetProjId = String(rawTargetId).replace(/[^a-zA-Z0-9_-]/g, '') || 'ws_default_1';
+    const isPlaceholder = isPlaceholderPreviewProjectId(targetProjId);
 
     // Clear any stale preview VFS immediately on project switch or reload
     setIsolatedPreviewVfs(null);
     setIsolatedSrcDoc(null);
     setHtmlContent(null);
     setCompileError(null);
+    setLifecycleState(isPlaceholder ? 'missing_project_id' : 'restoring_project');
+    setLifecycleReason(
+      isPlaceholder
+        ? ''
+        : `Establishing verified VFS handshake for project ${targetProjId}...`,
+    );
 
-    let handshakeId = '';
+    acceptedHandshakeIdsRef.current.clear();
+    let initialHandshakeId = '';
     try {
-      handshakeId = generatePreviewHandshakeId();
+      initialHandshakeId = generatePreviewHandshakeId();
     } catch {
       return;
     }
+    acceptedHandshakeIdsRef.current.add(initialHandshakeId);
 
     handshakeStateRef.current = {
       projectId: targetProjId,
-      handshakeId,
-      lastAcceptedSeq: 0
+      handshakeId: initialHandshakeId,
+      lastAcceptedSeq: 0,
+      acknowledgedByParent: false,
     };
 
     const handleParentSnapshot = (event: MessageEvent) => {
       const currentHandshake = handshakeStateRef.current;
       if (!currentHandshake) return;
+      if (!event.source || event.source !== window.parent) return;
+      if (!event.data || typeof event.data !== 'object') return;
+
+      const rawData = event.data as Record<string, unknown>;
+      const incomingHandshakeId =
+        typeof rawData.handshakeId === 'string' ? rawData.handshakeId : '';
+
+      // Handle explicit lifecycle state notifications from parent WorkspacePreviewContainer
+      if (rawData.type === 'PREVIEW_LIFECYCLE_STATE') {
+        if (rawData.projectId !== currentHandshake.projectId) return;
+        if (
+          incomingHandshakeId &&
+          !acceptedHandshakeIdsRef.current.has(incomingHandshakeId) &&
+          incomingHandshakeId !== currentHandshake.handshakeId
+        ) {
+          return;
+        }
+        if (incomingHandshakeId) {
+          currentHandshake.handshakeId = incomingHandshakeId;
+          currentHandshake.acknowledgedByParent = true;
+        }
+        const incomingState = rawData.lifecycleState as PreviewLifecycleState | undefined;
+        const incomingReason =
+          typeof rawData.reason === 'string' ? rawData.reason : '';
+        if (
+          incomingState &&
+          (incomingState === 'restoring_project' ||
+            incomingState === 'metadata_not_found' ||
+            incomingState === 'no_entry_point' ||
+            incomingState === 'authorization_denied' ||
+            incomingState === 'missing_project_id')
+        ) {
+          if (currentHandshake.lastAcceptedSeq === 0 || incomingState !== 'restoring_project') {
+            setLifecycleState(incomingState);
+            setLifecycleReason(incomingReason);
+          }
+        }
+        return;
+      }
+
+      // If parent replies to one of our emitted SYN handshake IDs, bind currentHandshake.handshakeId to it
+      const candidateHandshakeId =
+        incomingHandshakeId && acceptedHandshakeIdsRef.current.has(incomingHandshakeId)
+          ? incomingHandshakeId
+          : currentHandshake.handshakeId;
 
       const validation = validateIncomingVfsSnapshotMessage(event, {
         expectedSource: window.parent,
         expectedProjectId: currentHandshake.projectId,
-        expectedHandshakeId: currentHandshake.handshakeId,
-        lastAcceptedSeq: currentHandshake.lastAcceptedSeq
+        expectedHandshakeId: candidateHandshakeId,
+        lastAcceptedSeq: currentHandshake.lastAcceptedSeq,
       });
       if (!validation.valid || !validation.files || validation.snapshotSeq === undefined) {
         return;
       }
 
+      currentHandshake.handshakeId = candidateHandshakeId;
+      currentHandshake.acknowledgedByParent = true;
       currentHandshake.lastAcceptedSeq = validation.snapshotSeq;
-      if (typeof validation.files['/__anny_react_vendor.js'] === 'string' && validation.files['/__anny_react_vendor.js']) {
+
+      if (
+        typeof validation.files['/__anny_react_vendor.js'] === 'string' &&
+        validation.files['/__anny_react_vendor.js']
+      ) {
         cachedReactVendorScript = validation.files['/__anny_react_vendor.js'];
         setReactVendorJs(validation.files['/__anny_react_vendor.js']);
         setVendorLoadAttempted(true);
       }
+
+      const hasEntry = hasApplicationEntryPoint(validation.files);
+      if (!hasEntry) {
+        const userFileKeys = Object.keys(validation.files).filter(
+          (k) => !k.startsWith('/__anny_'),
+        );
+        if (isPlaceholderPreviewProjectId(currentHandshake.projectId) && userFileKeys.length === 0) {
+          setLifecycleState('missing_project_id');
+          setLifecycleReason('');
+        } else {
+          setLifecycleState('no_entry_point');
+          setLifecycleReason(
+            userFileKeys.length === 0
+              ? `Project "${currentHandshake.projectId}" contains 0 source files.`
+              : `Project "${currentHandshake.projectId}" was loaded (${userFileKeys.length} file(s)), but no application entry file (/src/App.tsx or /index.html) was found.`,
+          );
+        }
+        setIsolatedPreviewVfs(null);
+        setIsolatedSrcDoc(null);
+        setHtmlContent(null);
+        return;
+      }
+
       const previewVfs = createIsolatedPreviewVFS(currentHandshake.projectId, validation.files);
       setIsolatedPreviewVfs(previewVfs);
       setVfsVersion((prev) => prev + 1);
@@ -1585,26 +1712,43 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
 
     window.addEventListener('message', handleParentSnapshot);
 
-    const sendSyn = () => {
+    const emitSyn = (isRetry: boolean) => {
       const currentHandshake = handshakeStateRef.current;
       if (!currentHandshake || currentHandshake.lastAcceptedSeq > 0) return;
+      if (isRetry && currentHandshake.acknowledgedByParent) return;
+
+      let synHandshakeId = currentHandshake.handshakeId;
+      if (isRetry) {
+        try {
+          synHandshakeId = generatePreviewHandshakeId();
+          acceptedHandshakeIdsRef.current.add(synHandshakeId);
+          currentHandshake.handshakeId = synHandshakeId;
+        } catch {
+          return;
+        }
+      }
+
       postPreviewMessageToParent({
         type: 'PREVIEW_VFS_SYN',
         projectId: currentHandshake.projectId,
-        handshakeId: currentHandshake.handshakeId
+        handshakeId: synHandshakeId,
       });
     };
 
-    sendSyn();
-    const retryTimer1 = setTimeout(sendSyn, 150);
-    const retryTimer2 = setTimeout(sendSyn, 450);
+    emitSyn(false);
+    const retryTimer1 = setTimeout(() => emitSyn(true), 250);
+    const retryTimer2 = setTimeout(() => emitSyn(true), 750);
+    const retryTimer3 = setTimeout(() => emitSyn(true), 1600);
+    const retryTimer4 = setTimeout(() => emitSyn(true), 3200);
 
     return () => {
       clearTimeout(retryTimer1);
       clearTimeout(retryTimer2);
+      clearTimeout(retryTimer3);
+      clearTimeout(retryTimer4);
       window.removeEventListener('message', handleParentSnapshot);
     };
-  }, [projectId]);
+  }, [projectId, handshakeRetryEpoch]);
 
   const isBuilding = isExecuting || universalExecutionController.getIsExecuting(projectId || undefined);
 
@@ -1622,10 +1766,10 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
 
     let currentVFS = wsManager.getWorkspaceVFS(targetProjId);
     currentVFS.reloadFromStorage();
-    setVfsVersion(prev => prev + 1);
+    setVfsVersion((prev) => prev + 1);
 
     let unsubscribeVFS = currentVFS.watch(() => {
-      setVfsVersion(prev => prev + 1);
+      setVfsVersion((prev) => prev + 1);
     });
 
     const handleCustomVfsEvent = (e?: any) => {
@@ -1643,12 +1787,12 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
           unsubscribeVFS();
           currentVFS = newVFS;
           unsubscribeVFS = currentVFS.watch(() => {
-            setVfsVersion(prev => prev + 1);
+            setVfsVersion((prev) => prev + 1);
           });
         }
       }
       currentVFS.reloadFromStorage();
-      setVfsVersion(prev => prev + 1);
+      setVfsVersion((prev) => prev + 1);
     };
 
     window.addEventListener('anny_vfs_changed', handleCustomVfsEvent);
@@ -1679,10 +1823,15 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
     }
 
     const wsManager = WorkspaceManager.getInstance();
-    const activeProjId = projectId || wsManager.getActiveProjectId() || 'ws_default_1';
-    const parentOrigin = typeof window !== 'undefined' && window.location.origin !== 'null'
-      ? window.location.origin
-      : resolveParentTargetOrigin();
+    const activeProjId =
+      projectId ||
+      projectPreviewController.getState().activeProjectId ||
+      wsManager.getActiveProjectId() ||
+      'ws_default_1';
+    const parentOrigin =
+      typeof window !== 'undefined' && window.location.origin !== 'null'
+        ? window.location.origin
+        : resolveParentTargetOrigin();
 
     // Embedded opaque-origin preview iframes MUST ONLY compile validated parent snapshots
     if (isEmbeddedIframe && !isolatedPreviewVfs) {
@@ -1702,7 +1851,7 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
         '/App.jsx',
         '/src/App.js',
         '/App.js',
-        '/src/main.tsx'
+        '/src/main.tsx',
       ];
 
       let appCode = '';
@@ -1725,13 +1874,13 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
           source: isolatedPreviewVfs ? 'ISOLATED_PREVIEW_SNAPSHOT' : 'PROJECT_VFS',
           path: foundPath,
           loaded: Boolean(appCode),
-          isolatedSandbox: true
+          isolatedSandbox: true,
         };
         if (!appCode) {
           postPreviewMessageToParent({
             type: 'PREVIEW_WAITING',
             projectId: activeProjId,
-            path: foundPath
+            path: foundPath,
           });
         }
       }
@@ -1744,7 +1893,18 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
           setIsolatedSrcDoc(null);
           setCompileError(null);
           setActivePath('/index.html');
-          postPreviewMessageToParent({ type: 'PREVIEW_READY', projectId: activeProjId, path: '/index.html' });
+          setLifecycleState('rendered');
+          setLifecycleReason('');
+          projectPreviewController.logPreviewHandoffDiagnostics({
+            requestedProjectId: String(projectId || activeProjId),
+            resolvedProjectId: activeProjId,
+            compilationResult: 'RENDERED_HTML_ENTRY:/index.html',
+          });
+          postPreviewMessageToParent({
+            type: 'PREVIEW_READY',
+            projectId: activeProjId,
+            path: '/index.html',
+          });
           return;
         }
       }
@@ -1754,6 +1914,15 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
         setHtmlContent(null);
         setCompileError(null);
         setActivePath('');
+        if (isPlaceholderPreviewProjectId(activeProjId)) {
+          setLifecycleState('missing_project_id');
+          setLifecycleReason('');
+        } else {
+          setLifecycleState('no_entry_point');
+          setLifecycleReason(
+            `Project "${activeProjId}" contains no application entry point (/src/App.tsx or /index.html).`,
+          );
+        }
         return;
       }
 
@@ -1781,14 +1950,29 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
           projectId: activeProjId,
           parentOrigin,
           inlineReactVendorScript: resolvedVendorScript || undefined,
-          compiledCss: compiledFileCss || undefined
+          compiledCss: compiledFileCss || undefined,
         });
         setIsolatedSrcDoc(bundle.srcDoc);
         setCompileError(null);
+        setLifecycleState('rendered');
+        setLifecycleReason('');
+        projectPreviewController.logPreviewHandoffDiagnostics({
+          requestedProjectId: String(projectId || activeProjId),
+          resolvedProjectId: activeProjId,
+          compilationResult: `RENDERED_REACT_ENTRY:${foundPath}`,
+        });
       } catch (err: any) {
         console.warn('[VFS Dynamic App Transpilation Error]:', err);
-        setCompileError(err.message || 'Failed to transpile generated React component');
+        const errMsg = err.message || 'Failed to transpile generated React component';
+        setCompileError(errMsg);
         setIsolatedSrcDoc(null);
+        setLifecycleState('compilation_failed');
+        setLifecycleReason(errMsg);
+        projectPreviewController.logPreviewHandoffDiagnostics({
+          requestedProjectId: String(projectId || activeProjId),
+          resolvedProjectId: activeProjId,
+          compilationResult: `COMPILATION_FAILED:${errMsg.slice(0, 120)}`,
+        });
       }
     };
 
@@ -1799,46 +1983,123 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
       };
     }
 
-    // In-app direct runner mode: independently verify ownership before reading VFS
-    const ownershipRecord = getProjectOwnershipRecord(activeProjId);
-    if (!ownershipRecord) {
-      setIsolatedSrcDoc(null);
-      setHtmlContent(null);
-      setCompileError(null);
-      setActivePath('');
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    if (ownershipRecord.ownershipMode === 'local-only') {
-      const localCheck = authorizeLocalOnlyProjectSync(activeProjId);
-      if (!localCheck.authorized) {
+    // In-app direct runner mode: resolve and restore project before compiling if needed
+    if (isPlaceholderPreviewProjectId(activeProjId)) {
+      const defaultVfs = wsManager.getWorkspaceVFS(activeProjId);
+      defaultVfs.reloadFromStorage();
+      if (defaultVfs.getAllFiles().length === 0) {
         setIsolatedSrcDoc(null);
         setHtmlContent(null);
         setCompileError(null);
         setActivePath('');
+        setLifecycleState('missing_project_id');
+        setLifecycleReason('');
         return () => {
           cancelled = true;
         };
       }
-      compileWithAuthorizedVfs(wsManager.getWorkspaceVFS(activeProjId));
-      return () => {
-        cancelled = true;
-      };
     }
 
-    // Cloud project in-app runner: async server verification required (fail closed)
     let sessionId = '';
-    try {
-      sessionId = generatePreviewHandshakeId(16);
-      const handshakeId = generatePreviewHandshakeId(16);
-      authorizeProjectForPreviewSnapshot({
-        projectId: activeProjId,
-        previewSessionId: sessionId,
-        expectedIframeWindow: typeof window !== 'undefined' ? window : ({} as Window),
-        handshakeId
-      }).then((result) => {
+    const runInAppProjectResolutionAndCompile = async () => {
+      const targetVfs = wsManager.getWorkspaceVFS(activeProjId);
+      targetVfs.reloadFromStorage();
+      const existingFiles = targetVfs.getAllFiles();
+      let ownershipRecord = getProjectOwnershipRecord(activeProjId);
+
+      // If local VFS is empty or ownership record is missing, restore via projectPreviewController
+      if (
+        (existingFiles.length === 0 || !ownershipRecord) &&
+        !isPlaceholderPreviewProjectId(activeProjId)
+      ) {
+        setLifecycleState('restoring_project');
+        setLifecycleReason(`Restoring project ${activeProjId} workspace...`);
+        const restored = await projectPreviewController.restoreProjectById(activeProjId, {
+          switchActiveWorkspace: false,
+        });
+        if (cancelled) return;
+
+        if (restored.status === 'authorization_denied') {
+          setIsolatedSrcDoc(null);
+          setHtmlContent(null);
+          setCompileError(null);
+          setActivePath('');
+          setLifecycleState('authorization_denied');
+          setLifecycleReason(restored.errorReason || 'Project authorization denied.');
+          return;
+        }
+        if (restored.status === 'metadata_not_found') {
+          setIsolatedSrcDoc(null);
+          setHtmlContent(null);
+          setCompileError(null);
+          setActivePath('');
+          setLifecycleState('metadata_not_found');
+          setLifecycleReason(
+            restored.errorReason || `Project "${activeProjId}" metadata was not found.`,
+          );
+          return;
+        }
+        if (restored.status === 'no_entry_point') {
+          setIsolatedSrcDoc(null);
+          setHtmlContent(null);
+          setCompileError(null);
+          setActivePath('');
+          setLifecycleState('no_entry_point');
+          setLifecycleReason(
+            restored.errorReason ||
+              `Project "${activeProjId}" has no application entry file (/src/App.tsx or /index.html).`,
+          );
+          return;
+        }
+        if (restored.status === 'missing_project_id') {
+          setIsolatedSrcDoc(null);
+          setHtmlContent(null);
+          setCompileError(null);
+          setActivePath('');
+          setLifecycleState('missing_project_id');
+          setLifecycleReason('');
+          return;
+        }
+        ownershipRecord = getProjectOwnershipRecord(activeProjId);
+      }
+
+      if (!ownershipRecord) {
+        setIsolatedSrcDoc(null);
+        setHtmlContent(null);
+        setCompileError(null);
+        setActivePath('');
+        setLifecycleState('authorization_denied');
+        setLifecycleReason('Project ownership record is missing or unverified.');
+        return;
+      }
+
+      if (ownershipRecord.ownershipMode === 'local-only') {
+        const localCheck = authorizeLocalOnlyProjectSync(activeProjId);
+        if (!localCheck.authorized) {
+          setIsolatedSrcDoc(null);
+          setHtmlContent(null);
+          setCompileError(null);
+          setActivePath('');
+          setLifecycleState('authorization_denied');
+          setLifecycleReason(
+            `Local project authorization denied (${localCheck.reason || 'UNAUTHORIZED'}).`,
+          );
+          return;
+        }
+        compileWithAuthorizedVfs(wsManager.getWorkspaceVFS(activeProjId));
+        return;
+      }
+
+      // Cloud project in-app runner: async server verification required (fail closed)
+      try {
+        sessionId = generatePreviewHandshakeId(16);
+        const handshakeId = generatePreviewHandshakeId(16);
+        const result = await authorizeProjectForPreviewSnapshot({
+          projectId: activeProjId,
+          previewSessionId: sessionId,
+          expectedIframeWindow: typeof window !== 'undefined' ? window : ({} as Window),
+          handshakeId,
+        });
         if (cancelled) return;
         if (!result.authorized || !result.context) {
           invalidatePreviewSessionAuthorizations(sessionId);
@@ -1846,36 +2107,55 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
           setHtmlContent(null);
           setCompileError(null);
           setActivePath('');
+          setLifecycleState('authorization_denied');
+          setLifecycleReason(
+            `Server ownership authorization denied (${result.reason || 'UNAUTHORIZED'}).`,
+          );
           return;
         }
         const authorizedFiles = readAuthorizedProjectVfsSnapshot(result.context);
         invalidatePreviewSessionAuthorizations(sessionId);
-        if (Object.keys(authorizedFiles).length === 0) {
+        if (!hasApplicationEntryPoint(authorizedFiles)) {
           setIsolatedSrcDoc(null);
           setHtmlContent(null);
           setActivePath('');
+          setLifecycleState('no_entry_point');
+          setLifecycleReason(
+            `Project "${activeProjId}" contains no application entry point (/src/App.tsx or /index.html).`,
+          );
           return;
         }
         compileWithAuthorizedVfs(createIsolatedPreviewVFS(activeProjId, authorizedFiles));
-      }).catch(() => {
+      } catch {
         if (!cancelled) {
-          invalidatePreviewSessionAuthorizations(sessionId);
+          if (sessionId) invalidatePreviewSessionAuthorizations(sessionId);
           setIsolatedSrcDoc(null);
           setHtmlContent(null);
+          setLifecycleState('authorization_denied');
+          setLifecycleReason('Unable to complete cloud project authorization check.');
         }
-      });
-    } catch {
-      setIsolatedSrcDoc(null);
-      setHtmlContent(null);
-    }
+      }
+    };
+
+    void runInAppProjectResolutionAndCompile();
 
     return () => {
       cancelled = true;
-      invalidatePreviewSessionAuthorizations(sessionId);
+      if (sessionId) {
+        invalidatePreviewSessionAuthorizations(sessionId);
+      }
     };
-  }, [vfsVersion, projectId, isBuilding, isolatedPreviewVfs, reactVendorJs, vendorLoadAttempted]);
+  }, [vfsVersion, projectId, isBuilding, isolatedPreviewVfs, reactVendorJs, vendorLoadAttempted, handshakeRetryEpoch]);
 
-  /* legacy compiler block replaced */
+  const handleRetryProjectHandoff = () => {
+    setCompileError(null);
+    if (!isPlaceholderPreviewProjectId(projectId)) {
+      setLifecycleState('restoring_project');
+      setLifecycleReason(`Retrying project restoration for ${projectId}...`);
+    }
+    setHandshakeRetryEpoch((prev) => prev + 1);
+    setVfsVersion((prev) => prev + 1);
+  };
 
   // 1. Render HTML inside strict opaque-origin sandbox (NO allow-same-origin, NO allow-top-navigation)
   if (htmlContent) {
@@ -1910,7 +2190,7 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
   }
 
   // 3. Render Compilation Error Diagnostic (NO MOCKUPS)
-  if (compileError) {
+  if (compileError || lifecycleState === 'compilation_failed') {
     return (
       <div className="flex flex-col items-center justify-center min-h-[500px] p-8 bg-[#090308] text-red-100 font-sans">
         <div className="max-w-xl w-full p-6 bg-red-950/40 border border-red-500/30 rounded-3xl shadow-2xl space-y-4">
@@ -1920,7 +2200,7 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
           </div>
 
           <p className="text-xs text-red-300/90 leading-relaxed font-mono bg-black/50 p-4 rounded-xl border border-red-500/20 overflow-x-auto whitespace-pre-wrap">
-            {compileError}
+            {compileError || lifecycleReason || 'Compilation failed.'}
           </p>
 
           <div className="flex items-center justify-between pt-2">
@@ -1928,9 +2208,9 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
               Source file: <strong className="text-white">{activePath || '/src/App.tsx'}</strong>
             </span>
 
-            <button 
-              onClick={() => setVfsVersion(v => v + 1)}
-              className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 rounded-xl text-xs font-mono font-bold flex items-center gap-2 transition-all active:scale-95"
+            <button
+              onClick={handleRetryProjectHandoff}
+              className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 rounded-xl text-xs font-mono font-bold flex items-center gap-2 transition-all active:scale-95 cursor-pointer"
             >
               <RefreshCw className="w-3.5 h-3.5" /> Retry Execution
             </button>
@@ -1940,8 +2220,8 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
     );
   }
 
-  // 4. Render Clean Execution Engine Building Screen or Empty State (NO MOCKUPS)
-  if (isBuilding && !isolatedSrcDoc) {
+  // 4. Render Active Build or Project Restoration Progress (Never show "No Application Built Yet" while restoring)
+  if ((isBuilding || lifecycleState === 'restoring_project') && !isolatedSrcDoc) {
     return (
       <div className="w-full h-full min-h-[400px] flex items-center justify-center bg-slate-950/95 p-8 text-center text-white overflow-hidden">
         <div className="relative w-full max-w-md rounded-[28px] border border-white/10 bg-white/[0.045] p-7 shadow-2xl backdrop-blur-2xl">
@@ -1949,9 +2229,18 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
           <div className="relative mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl border border-cyan-300/20 bg-cyan-300/10">
             <Loader2 className="h-6 w-6 animate-spin text-cyan-200" />
           </div>
-          <p className="relative text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-300">ANNY Preview Runtime</p>
-          <h3 className="relative mt-2 text-xl font-semibold text-white">Preparing the real project</h3>
-          <p className="relative mt-2 text-xs leading-relaxed text-slate-400">{currentMessage || 'Loading generated source from the active project workspace.'}</p>
+          <p className="relative text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-300">
+            ANNY Preview Runtime
+          </p>
+          <h3 className="relative mt-2 text-xl font-semibold text-white">
+            {isBuilding ? 'Preparing the real project' : 'Restoring Project Workspace'}
+          </h3>
+          <p className="relative mt-2 text-xs leading-relaxed text-slate-400">
+            {isBuilding
+              ? currentMessage || 'Loading generated source from the active project workspace.'
+              : lifecycleReason ||
+                `Synchronizing verified files for ${projectId || 'active project'}...`}
+          </p>
           <div className="relative mt-5 h-1.5 overflow-hidden rounded-full bg-white/10">
             <div className="h-full w-2/5 animate-pulse rounded-full bg-gradient-to-r from-indigo-400 via-cyan-300 to-emerald-300" />
           </div>
@@ -1960,6 +2249,88 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
     );
   }
 
+  // 5. Render Authorization Denied State
+  if (lifecycleState === 'authorization_denied') {
+    return (
+      <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center bg-[#07091e] p-8 text-center">
+        <div className="max-w-md p-8 bg-amber-950/20 border border-amber-500/30 rounded-3xl shadow-2xl space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400">
+            <AlertTriangle className="w-7 h-7" />
+          </div>
+          <h3 className="text-lg font-bold text-white font-sans tracking-tight">
+            Project Authorization Denied
+          </h3>
+          <p className="text-xs text-slate-300 leading-relaxed font-mono">
+            {lifecycleReason ||
+              'Access to this project was blocked by ANNY ownership verification. Zero files were transferred.'}
+          </p>
+          <button
+            type="button"
+            onClick={handleRetryProjectHandoff}
+            className="px-4 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-xs font-mono font-bold inline-flex items-center gap-2 cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> Retry Verification
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // 6. Render Project Metadata Not Found State
+  if (lifecycleState === 'metadata_not_found') {
+    return (
+      <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center bg-[#07091e] p-8 text-center">
+        <div className="max-w-md p-8 bg-white/[0.03] border border-amber-500/30 rounded-3xl shadow-2xl space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto text-amber-300">
+            <AlertTriangle className="w-7 h-7" />
+          </div>
+          <h3 className="text-lg font-bold text-white font-sans tracking-tight">
+            Project Metadata Not Found
+          </h3>
+          <p className="text-xs text-slate-400 leading-relaxed font-sans">
+            {lifecycleReason ||
+              `Project "${projectId || ''}" could not be found in local workspace storage or server persistence.`}
+          </p>
+          <button
+            type="button"
+            onClick={handleRetryProjectHandoff}
+            className="px-4 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-mono font-bold inline-flex items-center gap-2 cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> Retry Project Restoration
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // 7. Render Project Restored But Missing Entry Point State
+  if (lifecycleState === 'no_entry_point') {
+    return (
+      <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center bg-[#07091e] p-8 text-center">
+        <div className="max-w-md p-8 bg-white/[0.03] border border-cyan-500/30 rounded-3xl shadow-2xl space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center mx-auto text-cyan-300">
+            <Code2 className="w-7 h-7" />
+          </div>
+          <h3 className="text-lg font-bold text-white font-sans tracking-tight">
+            No Application Entry Point Found
+          </h3>
+          <p className="text-xs text-slate-400 leading-relaxed font-sans">
+            {lifecycleReason ||
+              `Project "${projectId || ''}" was restored, but it does not contain a runnable entry file (/src/App.tsx or /index.html).`}
+          </p>
+          <button
+            type="button"
+            onClick={handleRetryProjectHandoff}
+            className="px-4 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-xs font-mono font-bold inline-flex items-center gap-2 cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> Reload Project VFS
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // 8. Genuine Empty Session State (only when no project ID has been built for this session)
   return (
     <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center bg-[#07091e] p-8 text-center">
       <div className="max-w-md p-8 bg-white/[0.02] border border-white/10 rounded-3xl shadow-2xl space-y-4">

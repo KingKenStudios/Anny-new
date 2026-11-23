@@ -177,8 +177,23 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
     legacyEligible?: boolean;
   } | null>(null);
 
+  const resolvedTargetProjectId = (() => {
+    const raw = String(activeProjectId || '').trim();
+    if (raw.startsWith('proj_')) {
+      return raw;
+    }
+    // If activeProjectId is a chat session ID that has a mapped project build, resolve to that session's proj_* ID
+    if (raw && raw !== 'ws_default_1' && raw !== 'anny-project' && raw !== 'default-project') {
+      const mapped = projectPreviewController.getSessionProjectMeta(raw);
+      if (mapped?.projectId && mapped.projectId.startsWith('proj_')) {
+        return mapped.projectId;
+      }
+    }
+    return raw || 'ws_default_1';
+  })();
+
   const sanitizedAuthorizedId =
-    String(activeProjectId || 'ws_default_1').replace(/[^a-zA-Z0-9_-]/g, '') || 'ws_default_1';
+    String(resolvedTargetProjectId || 'ws_default_1').replace(/[^a-zA-Z0-9_-]/g, '') || 'ws_default_1';
 
   useEffect(() => {
     setRuntimeVerified(false);
@@ -203,6 +218,33 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
     }
     previewSessionIdRef.current = previewSessionId;
 
+    const postLifecycleStateToIframe = (
+      expectedWindow: Window,
+      handshakeId: string,
+      lifecycleState:
+        | 'restoring_project'
+        | 'metadata_not_found'
+        | 'no_entry_point'
+        | 'authorization_denied'
+        | 'missing_project_id',
+      reason?: string,
+    ) => {
+      try {
+        expectedWindow.postMessage(
+          {
+            type: 'PREVIEW_LIFECYCLE_STATE',
+            projectId: sanitizedAuthorizedId,
+            handshakeId,
+            lifecycleState,
+            reason: reason || '',
+          },
+          '*',
+        );
+      } catch {
+        // Ignore postMessage failure if iframe unmounted
+      }
+    };
+
     const pushSnapshotToPreview = async (
       handshakeId: string,
       nextSeq: number,
@@ -212,6 +254,116 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
       if (authEpochRef.current !== effectEpoch) return;
       const targetWin = iframeRef.current?.contentWindow;
       if (!targetWin || targetWin !== expectedWindow) return;
+
+      const isPlaceholder =
+        !sanitizedAuthorizedId ||
+        sanitizedAuthorizedId === 'ws_default_1' ||
+        sanitizedAuthorizedId === 'default-project' ||
+        sanitizedAuthorizedId === 'anny-project' ||
+        sanitizedAuthorizedId === 'default-session';
+
+      if (isPlaceholder) {
+        const defaultVfs = WorkspaceManager.getInstance().getWorkspaceVFS(sanitizedAuthorizedId);
+        defaultVfs.reloadFromStorage();
+        if (defaultVfs.getAllFiles().length === 0) {
+          postLifecycleStateToIframe(expectedWindow, handshakeId, 'missing_project_id');
+          projectPreviewController.logPreviewHandoffDiagnostics({
+            requestedProjectId: String(activeProjectId || ''),
+            resolvedProjectId: sanitizedAuthorizedId,
+            ownershipResult: 'MISSING_PROJECT_ID',
+            localVfsFileCount: 0,
+            controllerFileCount: 0,
+            restoredServerFileCount: 0,
+            selectedVfsSource: 'none',
+            snapshotFileCount: 0,
+            handshakeAccepted: true,
+            compilationResult: 'NO_PROJECT_BUILT_YET',
+          });
+          return;
+        }
+      } else {
+        // Notify preview runner that handshake was accepted and project restoration is in progress
+        postLifecycleStateToIframe(
+          expectedWindow,
+          handshakeId,
+          'restoring_project',
+          `Restoring verified project ${sanitizedAuthorizedId}...`,
+        );
+
+        const restoration = await projectPreviewController.restoreProjectById(
+          sanitizedAuthorizedId,
+          { switchActiveWorkspace: false },
+        );
+
+        if (authEpochRef.current !== effectEpoch) return;
+        if (iframeRef.current?.contentWindow !== expectedWindow) return;
+
+        if (restoration.status === 'authorization_denied') {
+          activeHandshakeRef.current = null;
+          setRuntimeVerified(false);
+          setAuthDenialState({
+            reason: restoration.errorReason || 'PROJECT_AUTHORIZATION_DENIED',
+          });
+          postLifecycleStateToIframe(
+            expectedWindow,
+            handshakeId,
+            'authorization_denied',
+            restoration.errorReason,
+          );
+          projectPreviewController.logPreviewHandoffDiagnostics({
+            requestedProjectId: String(activeProjectId || ''),
+            resolvedProjectId: sanitizedAuthorizedId,
+            handshakeAccepted: false,
+            compilationResult: 'AUTHORIZATION_DENIED',
+          });
+          return;
+        }
+
+        if (restoration.status === 'metadata_not_found') {
+          setRuntimeVerified(false);
+          postLifecycleStateToIframe(
+            expectedWindow,
+            handshakeId,
+            'metadata_not_found',
+            restoration.errorReason,
+          );
+          projectPreviewController.logPreviewHandoffDiagnostics({
+            requestedProjectId: String(activeProjectId || ''),
+            resolvedProjectId: sanitizedAuthorizedId,
+            handshakeAccepted: true,
+            compilationResult: 'METADATA_NOT_FOUND',
+          });
+          return;
+        }
+
+        if (restoration.status === 'no_entry_point') {
+          setRuntimeVerified(false);
+          postLifecycleStateToIframe(
+            expectedWindow,
+            handshakeId,
+            'no_entry_point',
+            restoration.errorReason,
+          );
+          projectPreviewController.logPreviewHandoffDiagnostics({
+            requestedProjectId: String(activeProjectId || ''),
+            resolvedProjectId: sanitizedAuthorizedId,
+            handshakeAccepted: true,
+            compilationResult: 'NO_ENTRY_POINT',
+          });
+          return;
+        }
+
+        if (restoration.status === 'missing_project_id') {
+          setRuntimeVerified(false);
+          postLifecycleStateToIframe(
+            expectedWindow,
+            handshakeId,
+            'missing_project_id',
+            restoration.errorReason,
+          );
+          return;
+        }
+      }
 
       const authResult = await authorizeProjectForPreviewSnapshot({
         projectId: sanitizedAuthorizedId,
@@ -231,6 +383,20 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
           reason: authResult.reason || 'PROJECT_AUTHORIZATION_DENIED',
           legacyEligible: authResult.legacyMigrationEligible,
         });
+        postLifecycleStateToIframe(
+          expectedWindow,
+          handshakeId,
+          'authorization_denied',
+          authResult.reason || 'PROJECT_AUTHORIZATION_DENIED',
+        );
+        projectPreviewController.logPreviewHandoffDiagnostics({
+          requestedProjectId: String(activeProjectId || ''),
+          resolvedProjectId: sanitizedAuthorizedId,
+          ownershipResult: authResult.reason || 'PROJECT_AUTHORIZATION_DENIED',
+          snapshotFileCount: 0,
+          handshakeAccepted: false,
+          compilationResult: 'AUTHORIZATION_DENIED',
+        });
         console.warn('[ANNY Preview] Snapshot authorization denied', {
           projectId: sanitizedAuthorizedId,
           reason: authResult.reason || 'PROJECT_AUTHORIZATION_DENIED',
@@ -241,9 +407,31 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
       setAuthDenialState(null);
       setRuntimeErrorState(null);
       const rawFiles = readAuthorizedProjectVfsSnapshot(authResult.context);
+      const userFileCount = Object.keys(rawFiles).length;
+
+      if (userFileCount === 0) {
+        postLifecycleStateToIframe(
+          expectedWindow,
+          handshakeId,
+          isPlaceholder ? 'missing_project_id' : 'no_entry_point',
+          isPlaceholder
+            ? ''
+            : `Project "${sanitizedAuthorizedId}" contains 0 source files after authorization.`,
+        );
+        projectPreviewController.logPreviewHandoffDiagnostics({
+          requestedProjectId: String(activeProjectId || ''),
+          resolvedProjectId: sanitizedAuthorizedId,
+          ownershipResult: 'AUTHORIZED',
+          snapshotFileCount: 0,
+          handshakeAccepted: true,
+          compilationResult: isPlaceholder ? 'NO_PROJECT_BUILT_YET' : 'EMPTY_SNAPSHOT',
+        });
+        return;
+      }
+
       let snapshotFiles = { ...rawFiles };
 
-      if (Object.keys(rawFiles).length > 0) {
+      if (userFileCount > 0) {
         const hash = hashFilesSnapshot(rawFiles);
         const [vendorJs] = await Promise.all([
           loadOfflineReactVendorScript(typeof window !== 'undefined' ? window.location.origin : ''),
@@ -287,6 +475,22 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
       });
       if (built.valid && built.payload) {
         expectedWindow.postMessage(built.payload, '*');
+        projectPreviewController.logPreviewHandoffDiagnostics({
+          requestedProjectId: String(activeProjectId || ''),
+          resolvedProjectId: sanitizedAuthorizedId,
+          ownershipResult: 'AUTHORIZED',
+          snapshotFileCount: userFileCount,
+          handshakeAccepted: true,
+        });
+      } else {
+        projectPreviewController.logPreviewHandoffDiagnostics({
+          requestedProjectId: String(activeProjectId || ''),
+          resolvedProjectId: sanitizedAuthorizedId,
+          ownershipResult: 'AUTHORIZED',
+          snapshotFileCount: 0,
+          handshakeAccepted: false,
+          compilationResult: `SNAPSHOT_VALIDATION_REJECTED:${built.reason || 'UNKNOWN'}`,
+        });
       }
     };
 
@@ -312,6 +516,12 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
           consumedHandshakeIdsRef.current
         );
         if (!synCheck.valid || !synCheck.handshakeId) {
+          projectPreviewController.logPreviewHandoffDiagnostics({
+            requestedProjectId: String(activeProjectId || ''),
+            resolvedProjectId: sanitizedAuthorizedId,
+            handshakeAccepted: false,
+            compilationResult: `SYN_REJECTED:${synCheck.reason || 'INVALID_SYN'}`,
+          });
           return;
         }
         activeHandshakeRef.current = {
@@ -406,16 +616,22 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
   const resolveStandalonePreviewUrl = async (): Promise<string> => {
     const filesMap: Record<string, string> = {};
     try {
-      const mgr = WorkspaceManager.getInstance();
-      const projectVfs = mgr.getWorkspaceVFS(sanitizedAuthorizedId);
-      projectVfs.reloadFromStorage();
-      let vfsFiles = projectVfs.getAllFiles();
-      if (vfsFiles.length === 0) {
-        vfsFiles = mgr.getVFS().getAllFiles();
-      }
-      vfsFiles.forEach((f) => {
-        filesMap[f.path] = f.content;
+      const restored = await projectPreviewController.restoreProjectById(sanitizedAuthorizedId, {
+        switchActiveWorkspace: false,
       });
+      if (restored.status === 'restored' && Object.keys(restored.files).length > 0) {
+        Object.assign(filesMap, restored.files);
+      } else {
+        const mgr = WorkspaceManager.getInstance();
+        const projectVfs = mgr.getWorkspaceVFS(sanitizedAuthorizedId);
+        projectVfs.reloadFromStorage();
+        const vfsFiles = projectVfs.getAllFiles();
+        vfsFiles.forEach((f) => {
+          if (!f.path.startsWith('/__anny_')) {
+            filesMap[f.path] = f.content;
+          }
+        });
+      }
     } catch {
       // ignore
     }
@@ -798,10 +1014,10 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
           <div className="w-full h-full bg-slate-950 rounded-xl overflow-hidden border border-white/10 shadow-2xl relative">
             <iframe
               ref={iframeRef}
-              key={`${activeProjectId}-${reloadKey}`}
+              key={`${sanitizedAuthorizedId}-${reloadKey}`}
               src={
                 typeof window !== 'undefined'
-                  ? `${window.location.origin}?preview=standalone&project=${encodeURIComponent(activeProjectId)}&v=${reloadKey}`
+                  ? `${window.location.origin}?preview=standalone&project=${encodeURIComponent(sanitizedAuthorizedId)}&v=${reloadKey}`
                   : 'http://localhost:3000'
               }
               title="ANNY Live Generated Application"
@@ -822,10 +1038,10 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
           >
             <iframe
               ref={iframeRef}
-              key={`${activeProjectId}-${reloadKey}`}
+              key={`${sanitizedAuthorizedId}-${reloadKey}`}
               src={
                 typeof window !== 'undefined'
-                  ? `${window.location.origin}?preview=standalone&project=${encodeURIComponent(activeProjectId)}&v=${reloadKey}`
+                  ? `${window.location.origin}?preview=standalone&project=${encodeURIComponent(sanitizedAuthorizedId)}&v=${reloadKey}`
                   : 'http://localhost:3000'
               }
               title="ANNY Live Generated Application"
@@ -847,7 +1063,7 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
             Scale: <strong className="text-slate-200">{Math.round(scaleFactor * 100)}%</strong>
           </span>
           <span className="hidden sm:inline">
-            Project: <strong className="text-slate-200">{activeProjectId}</strong>
+            Project: <strong className="text-slate-200">{sanitizedAuthorizedId}</strong>
           </span>
         </div>
         <div className="flex items-center gap-3">

@@ -69,6 +69,12 @@ export interface AuthorizePreviewOptions {
   ) => Promise<ServerProjectAuthorizationResponse>;
 }
 
+export function sanitizePreviewProjectId(id: string | null | undefined): string {
+  const clean = String(id || '').trim();
+  if (!clean || !VALID_PROJECT_ID_REGEX.test(clean)) return '';
+  return clean;
+}
+
 const VALID_PROJECT_ID_REGEX = /^[a-zA-Z0-9_-]{1,128}$/;
 const VALID_HANDSHAKE_ID_REGEX = /^[a-f0-9]{32,128}$/i;
 const VALID_LOCAL_PROFILE_REGEX = /^local_[a-f0-9]{16,64}$/i;

@@ -13,6 +13,7 @@ import {
   invalidatePreviewSessionAuthorizations,
   migrateLegacyLocalProjectOwnership
 } from '../services/projectOwnershipService';
+import { projectPreviewController } from '../services/projectPreviewController';
 
 interface LiveAppPreviewCardProps {
   content: string;
@@ -56,7 +57,9 @@ export const LiveAppPreviewCard: React.FC<LiveAppPreviewCardProps> = ({ content 
     ? window.location.origin
     : 'http://localhost:3000';
 
+  const controllerProjectId = projectPreviewController.getState().activeProjectId;
   const rawProjectId =
+    (controllerProjectId && controllerProjectId.startsWith('proj_') ? controllerProjectId : '') ||
     WorkspaceManager.getInstance().getCurrentWorkspace()?.id ||
     WorkspaceManager.getInstance().getActiveProjectId() ||
     'ws_default_1';
@@ -89,6 +92,15 @@ export const LiveAppPreviewCard: React.FC<LiveAppPreviewCardProps> = ({ content 
       if (authEpochRef.current !== effectEpoch) return;
       const targetWin = iframeRef.current?.contentWindow;
       if (!targetWin || targetWin !== expectedWindow) return;
+
+      if (currentProjectId && currentProjectId !== 'ws_default_1') {
+        await projectPreviewController.restoreProjectById(currentProjectId, {
+          switchActiveWorkspace: false,
+        });
+      }
+
+      if (authEpochRef.current !== effectEpoch) return;
+      if (iframeRef.current?.contentWindow !== expectedWindow) return;
 
       const authResult = await authorizeProjectForPreviewSnapshot({
         projectId: currentProjectId,
