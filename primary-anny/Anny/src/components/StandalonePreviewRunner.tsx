@@ -21,6 +21,7 @@ import {
   PreviewLifecycleState,
   hasApplicationEntryPoint,
 } from '../services/projectPreviewController';
+import { fetchWithAuth } from '../lib/apiUtils';
 
 // Expose global window scope fallbacks for dynamic VFS evaluation
 if (typeof window !== 'undefined') {
@@ -132,8 +133,31 @@ const ALLOWED_PREVIEW_MESSAGE_TYPES = new Set([
   'PREVIEW_LOG',
   'PREVIEW_RUNTIME_ERROR',
   'PREVIEW_VFS_SYN',
-  'PREVIEW_NAVIGATION'
+  'PREVIEW_NAVIGATION',
+  'PREVIEW_LAYERS'
 ]);
+
+/**
+ * Returns true ONLY when this window is running as a dedicated standalone preview iframe
+ * (`?preview=standalone` / opaque origin), and NOT when the full ANNY workspace itself
+ * happens to be embedded inside an outer host iframe (e.g. AI Studio preview frame).
+ */
+export function isStandaloneEmbeddedPreviewIframe(): boolean {
+  if (typeof window === 'undefined') return false;
+  const hasParentFrame = Boolean(window.parent && window.parent !== window);
+  if (!hasParentFrame) return false;
+  try {
+    if (window.location.origin === 'null') return true;
+    const params = new URLSearchParams(window.location.search || '');
+    return (
+      params.get('preview') === 'standalone' ||
+      params.get('preview_mode') === 'true' ||
+      (params.get('preview') === 'true' && params.get('showPreview') !== 'true')
+    );
+  } catch {
+    return true;
+  }
+}
 
 const ALLOWED_SNAPSHOT_KEYS = new Set([
   'type',
@@ -248,6 +272,25 @@ export function sanitizePreviewFrameMessage(raw: unknown): Record<string, unknow
       path: navPath,
       canGoBack: Boolean(data.canGoBack),
       canGoForward: Boolean(data.canGoForward)
+    };
+  }
+  if (msgType === 'PREVIEW_LAYERS') {
+    const rawLayers = Array.isArray(data.layers) ? data.layers.slice(0, 40) : [];
+    const safeLayers = rawLayers
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+      .map((item, idx) => ({
+        id: typeof item.id === 'string' ? item.id.slice(0, 64) : `layer-${idx}`,
+        name: typeof item.name === 'string' ? item.name.slice(0, 60) : 'element',
+        tagName: typeof item.tagName === 'string' ? item.tagName.slice(0, 24).toUpperCase() : 'DIV',
+        targetFile: typeof item.targetFile === 'string' ? item.targetFile.slice(0, 180) : '/src/App.tsx',
+        targetLine: typeof item.targetLine === 'number' && Number.isFinite(item.targetLine) ? item.targetLine : 0,
+        className: typeof item.className === 'string' ? item.className.slice(0, 200) : '',
+        textContent: typeof item.textContent === 'string' ? item.textContent.slice(0, 120) : '',
+      }));
+    return {
+      type: 'PREVIEW_LAYERS',
+      projectId: typeof data.projectId === 'string' ? data.projectId.slice(0, 128) : '',
+      layers: safeLayers,
     };
   }
   return null;
@@ -1162,6 +1205,31 @@ ${inlineVendorTag}
         }
         emitNavState();
         notifyParent({ type: 'PREVIEW_READY', projectId: payload.projectId, path: entry });
+        setTimeout(function() {
+          try {
+            var rootNode = document.getElementById('root');
+            if (!rootNode) return;
+            var nodes = rootNode.querySelectorAll('[data-vfs-file]');
+            var layers = [];
+            for (var li = 0; li < nodes.length && layers.length < 36; li++) {
+              var el = nodes[li];
+              if (!el || !el.tagName) continue;
+              var txt = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+              layers.push({
+                id: 'sandbox-layer-' + li,
+                name: (txt ? txt.slice(0, 32) : el.tagName.toLowerCase()),
+                tagName: String(el.tagName || 'DIV').toUpperCase(),
+                targetFile: String(el.getAttribute('data-vfs-file') || entry),
+                targetLine: parseInt(el.getAttribute('data-vfs-line') || '0', 10) || 0,
+                className: typeof el.className === 'string' ? el.className.slice(0, 160) : '',
+                textContent: txt.slice(0, 96)
+              });
+            }
+            if (layers.length > 0) {
+              notifyParent({ type: 'PREVIEW_LAYERS', projectId: payload.projectId, layers: layers });
+            }
+          } catch (_layerErr) {}
+        }, 120);
       } catch (err) {
         var errMsg = (err && err.message) ? err.message : String(err);
         document.getElementById('root').innerHTML = '<div style="padding:24px;background:#1a0612;color:#fecdd3;font-family:monospace;border:1px solid #f43f5e44;margin:16px;border-radius:16px;"><strong>VFS Sandbox Runtime Error</strong><pre style="white-space:pre-wrap;font-size:12px;margin-top:12px;">' + errMsg.replace(/[<>&]/g, '') + '</pre></div>';
@@ -1335,7 +1403,9 @@ export function bundleVFSForIsolatedPreview(
     if (
       normalizedPath.endsWith('.d.ts') ||
       normalizedPath.includes('vite.config') ||
-      normalizedPath.includes('server.')
+      normalizedPath.includes('server.') ||
+      normalizedPath.startsWith('/server/') ||
+      normalizedPath.startsWith('/api/')
     ) {
       continue;
     }
@@ -1490,6 +1560,53 @@ export async function loadOfflineReactVendorScript(baseOrigin?: string): Promise
   return pendingReactVendorPromise;
 }
 
+const runnerCompiledCssCache = new Map<string, string>();
+
+async function resolveCompiledCssForVfs(vfs: {
+  exists?: (p: string) => boolean;
+  readFile?: (p: string) => string;
+  getAllFiles?: () => Array<{ path: string; content: string }>;
+}): Promise<string> {
+  if (typeof vfs.exists === 'function' && vfs.exists('/__anny_compiled_tailwind.css')) {
+    return vfs.readFile?.('/__anny_compiled_tailwind.css') || '';
+  }
+  if (typeof window === 'undefined' || window.location.origin === 'null' || typeof vfs.getAllFiles !== 'function') {
+    return '';
+  }
+  const filesMap: Record<string, string> = {};
+  let sigLen = 0;
+  for (const node of vfs.getAllFiles()) {
+    if (!node || typeof node.path !== 'string' || typeof node.content !== 'string') continue;
+    if (node.path.startsWith('/__anny_')) continue;
+    filesMap[node.path] = node.content;
+    sigLen += node.path.length + node.content.length;
+  }
+  const cacheKey = `${Object.keys(filesMap).sort().join('|')}:${sigLen}`;
+  if (runnerCompiledCssCache.has(cacheKey)) {
+    return runnerCompiledCssCache.get(cacheKey) || '';
+  }
+  try {
+    const res = await fetchWithAuth('/api/preview/runtime/compile-css', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: filesMap }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success && typeof data.css === 'string') {
+        if (runnerCompiledCssCache.size > 24) {
+          runnerCompiledCssCache.clear();
+        }
+        runnerCompiledCssCache.set(cacheKey, data.css);
+        return data.css;
+      }
+    }
+  } catch {
+    // Non-fatal: custom CSS in VFS still applies
+  }
+  return '';
+}
+
 const PLACEHOLDER_PREVIEW_PROJECT_IDS = new Set([
   '',
   'ws_default_1',
@@ -1574,9 +1691,9 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
     return () => window.removeEventListener('message', handleMessageBridge);
   }, []);
 
-  // Parent-to-Preview VFS Snapshot Handshake Protocol (for opaque-origin outer iframes)
+  // Parent-to-Preview VFS Snapshot Handshake Protocol (ONLY for dedicated standalone preview iframes)
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.parent || window.parent === window) {
+    if (!isStandaloneEmbeddedPreviewIframe()) {
       return;
     }
     const rawTargetId = projectId || 'ws_default_1';
@@ -1763,10 +1880,9 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
 
   const isBuilding = isExecuting || universalExecutionController.getIsExecuting(projectId || undefined);
 
-  // 1. Listen for VFS change events ONLY in trusted same-origin in-app mode (never inside embedded iframes)
+  // 1. Listen for VFS change events in same-origin in-app mode (never inside dedicated standalone preview iframes)
   useEffect(() => {
-    const isEmbeddedIframe =
-      typeof window !== 'undefined' && Boolean(window.parent && window.parent !== window);
+    const isEmbeddedIframe = isStandaloneEmbeddedPreviewIframe();
     if (isEmbeddedIframe) {
       return;
     }
@@ -1821,8 +1937,7 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
   // 2. Compilation and Transpilation Pipeline (Transpiles only; never executes generated code on main origin)
   useEffect(() => {
     let cancelled = false;
-    const isEmbeddedIframe =
-      typeof window !== 'undefined' && Boolean(window.parent && window.parent !== window);
+    const isEmbeddedIframe = isStandaloneEmbeddedPreviewIframe();
 
     if (isBuilding) {
       if (!isolatedSrcDoc && !htmlContent) {
@@ -1957,21 +2072,40 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
           typeof vfs.exists === 'function' && vfs.exists('/__anny_compiled_tailwind.css')
             ? vfs.readFile('/__anny_compiled_tailwind.css')
             : '';
-        const bundle = bundleVFSForIsolatedPreview(vfs, {
-          projectId: activeProjId,
-          parentOrigin,
-          inlineReactVendorScript: resolvedVendorScript || undefined,
-          compiledCss: compiledFileCss || undefined,
-        });
-        setIsolatedSrcDoc(bundle.srcDoc);
-        setCompileError(null);
-        setLifecycleState('rendered');
-        setLifecycleReason('');
-        projectPreviewController.logPreviewHandoffDiagnostics({
-          requestedProjectId: String(projectId || activeProjId),
-          resolvedProjectId: activeProjId,
-          compilationResult: `RENDERED_REACT_ENTRY:${foundPath}`,
-        });
+        const runBundleWithCss = (cssStr: string) => {
+          if (cancelled) return;
+          const bundle = bundleVFSForIsolatedPreview(vfs, {
+            projectId: activeProjId,
+            parentOrigin,
+            inlineReactVendorScript: resolvedVendorScript || undefined,
+            compiledCss: cssStr || undefined,
+          });
+          setIsolatedSrcDoc(bundle.srcDoc);
+          setCompileError(null);
+          setLifecycleState('rendered');
+          setLifecycleReason('');
+          projectPreviewController.logPreviewHandoffDiagnostics({
+            requestedProjectId: String(projectId || activeProjId),
+            resolvedProjectId: activeProjId,
+            compilationResult: `RENDERED_REACT_ENTRY:${foundPath}`,
+          });
+        };
+
+        if (compiledFileCss || isEmbeddedIframe) {
+          runBundleWithCss(compiledFileCss);
+        } else {
+          // Render immediately with local VFS styles so there is zero blank delay, then upgrade with compiled Tailwind CSS if present
+          runBundleWithCss('');
+          void resolveCompiledCssForVfs(vfs).then((twCss) => {
+            if (!cancelled && twCss) {
+              try {
+                runBundleWithCss(twCss);
+              } catch {
+                // Keep already-rendered preview
+              }
+            }
+          });
+        }
       } catch (err: any) {
         console.warn('[VFS Dynamic App Transpilation Error]:', err);
         const errMsg = err.message || 'Failed to transpile generated React component';
@@ -2185,7 +2319,7 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
   // 2. Render transpiled React application inside strict opaque-origin sandbox (NO allow-same-origin, NO allow-top-navigation)
   if (isolatedSrcDoc) {
     return (
-      <div className="w-full min-h-screen h-full bg-slate-950 text-slate-100 relative isolate flex flex-col overflow-hidden">
+      <div className="w-full h-full min-h-full bg-slate-950 text-slate-100 relative isolate flex flex-col overflow-hidden">
         <VFSAppErrorBoundary>
           <iframe
             ref={sandboxIframeRef}
@@ -2193,7 +2327,7 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
             title="VFS Isolated Application Sandbox"
             sandbox="allow-scripts allow-forms allow-modals"
             referrerPolicy="no-referrer"
-            className="w-full flex-1 min-h-[500px] h-full border-none bg-slate-950"
+            className="w-full flex-1 h-full min-h-full border-none bg-slate-950"
           />
         </VFSAppErrorBoundary>
       </div>

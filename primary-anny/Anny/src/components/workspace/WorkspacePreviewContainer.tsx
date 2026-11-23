@@ -23,19 +23,20 @@ import { AnnyBuildPreviewOverlay, type BuildStageItem } from '../AnnyBuildPrevie
 import { WorkspaceManager } from '../../core/workspaceManager';
 import { fetchWithAuth } from '../../lib/apiUtils';
 import {
-  validatePreviewVfsSynMessage,
   readAuthorizedProjectVfsSnapshot,
-  buildValidatedVfsSnapshotPayload,
   isValidPreviewFrameMessage,
   generatePreviewHandshakeId,
   loadOfflineReactVendorScript,
+  bundleVFSForIsolatedPreview,
+  sanitizeHtmlPreviewSrcDoc,
+  createIsolatedPreviewVFS,
 } from '../StandalonePreviewRunner';
 import {
   authorizeProjectForPreviewSnapshot,
   invalidatePreviewSessionAuthorizations,
   migrateLegacyLocalProjectOwnership,
 } from '../../services/projectOwnershipService';
-import { projectPreviewController } from '../../services/projectPreviewController';
+import { projectPreviewController, hasApplicationEntryPoint } from '../../services/projectPreviewController';
 
 export interface WorkspacePreviewContainerProps {
   isPreviewFullScreen: boolean;
@@ -128,6 +129,11 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
   } | null>(null);
   const [isOpeningTab, setIsOpeningTab] = useState<boolean>(false);
   const [shareCopied, setShareCopied] = useState<boolean>(false);
+  const [compiledSrcDoc, setCompiledSrcDoc] = useState<string | null>(null);
+  const [previewStatusNote, setPreviewStatusNote] = useState<string>('');
+  const [previewPhase, setPreviewPhase] = useState<
+    'loading' | 'ready' | 'empty' | 'no_entry_point' | 'metadata_not_found' | 'compilation_failed'
+  >('loading');
   const compiledCssCacheRef = useRef<{ hash: string; css: string } | null>(null);
 
   // Target viewport dimensions
@@ -165,13 +171,6 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
   }, [deviceMode, mobilePreset, isFluid, targetWidth, targetHeight]);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const consumedHandshakeIdsRef = useRef<Set<string>>(new Set());
-  const activeHandshakeRef = useRef<{
-    projectId: string;
-    handshakeId: string;
-    seq: number;
-    expectedWindow: Window;
-  } | null>(null);
   const authEpochRef = useRef<number>(0);
   const previewSessionIdRef = useRef<string>('');
   const [authDenialState, setAuthDenialState] = useState<{
@@ -204,7 +203,8 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
     setCurrentRoute('/');
     setCanGoBack(false);
     setCanGoForward(false);
-    activeHandshakeRef.current = null;
+    setPreviewPhase('loading');
+    setPreviewStatusNote('');
     authEpochRef.current += 1;
     const effectEpoch = authEpochRef.current;
 
@@ -220,42 +220,9 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
     }
     previewSessionIdRef.current = previewSessionId;
 
-    const postLifecycleStateToIframe = (
-      expectedWindow: Window,
-      handshakeId: string,
-      lifecycleState:
-        | 'restoring_project'
-        | 'metadata_not_found'
-        | 'no_entry_point'
-        | 'authorization_denied'
-        | 'missing_project_id',
-      reason?: string,
-    ) => {
-      try {
-        expectedWindow.postMessage(
-          {
-            type: 'PREVIEW_LIFECYCLE_STATE',
-            projectId: sanitizedAuthorizedId,
-            handshakeId,
-            lifecycleState,
-            reason: reason || '',
-          },
-          '*',
-        );
-      } catch {
-        // Ignore postMessage failure if iframe unmounted
-      }
-    };
-
-    const pushSnapshotToPreview = async (
-      handshakeId: string,
-      nextSeq: number,
-      expectedWindow: Window,
-      isRefreshOnActiveHandshake = false
-    ) => {
+    const compileDirectSandboxPreview = async (isRefresh = false) => {
       if (authEpochRef.current !== effectEpoch) return;
-      const targetWin = iframeRef.current?.contentWindow;
-      if (!targetWin || targetWin !== expectedWindow) return;
+      if (buildState === 'in_progress') return;
 
       const isPlaceholder =
         !sanitizedAuthorizedId ||
@@ -268,7 +235,9 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
         const defaultVfs = WorkspaceManager.getInstance().getWorkspaceVFS(sanitizedAuthorizedId);
         defaultVfs.reloadFromStorage();
         if (defaultVfs.getAllFiles().length === 0) {
-          postLifecycleStateToIframe(expectedWindow, handshakeId, 'missing_project_id');
+          setCompiledSrcDoc(null);
+          setPreviewPhase('empty');
+          setPreviewStatusNote('');
           projectPreviewController.logPreviewHandoffDiagnostics({
             requestedProjectId: String(activeProjectId || ''),
             resolvedProjectId: sanitizedAuthorizedId,
@@ -284,13 +253,10 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
           return;
         }
       } else {
-        // Notify preview runner that handshake was accepted and project restoration is in progress
-        postLifecycleStateToIframe(
-          expectedWindow,
-          handshakeId,
-          'restoring_project',
-          `Restoring verified project ${sanitizedAuthorizedId}...`,
-        );
+        if (!isRefresh) {
+          setPreviewPhase('loading');
+          setPreviewStatusNote(`Loading ${projectName || sanitizedAuthorizedId}...`);
+        }
 
         const restoration = await projectPreviewController.restoreProjectById(
           sanitizedAuthorizedId,
@@ -298,20 +264,13 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
         );
 
         if (authEpochRef.current !== effectEpoch) return;
-        if (iframeRef.current?.contentWindow !== expectedWindow) return;
 
         if (restoration.status === 'authorization_denied') {
-          activeHandshakeRef.current = null;
           setRuntimeVerified(false);
+          setCompiledSrcDoc(null);
           setAuthDenialState({
             reason: restoration.errorReason || 'PROJECT_AUTHORIZATION_DENIED',
           });
-          postLifecycleStateToIframe(
-            expectedWindow,
-            handshakeId,
-            'authorization_denied',
-            restoration.errorReason,
-          );
           projectPreviewController.logPreviewHandoffDiagnostics({
             requestedProjectId: String(activeProjectId || ''),
             resolvedProjectId: sanitizedAuthorizedId,
@@ -323,74 +282,52 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
 
         if (restoration.status === 'metadata_not_found') {
           setRuntimeVerified(false);
-          postLifecycleStateToIframe(
-            expectedWindow,
-            handshakeId,
-            'metadata_not_found',
-            restoration.errorReason,
-          );
-          projectPreviewController.logPreviewHandoffDiagnostics({
-            requestedProjectId: String(activeProjectId || ''),
-            resolvedProjectId: sanitizedAuthorizedId,
-            handshakeAccepted: true,
-            compilationResult: 'METADATA_NOT_FOUND',
-          });
+          setCompiledSrcDoc(null);
+          setPreviewPhase('metadata_not_found');
+          setPreviewStatusNote(restoration.errorReason || `Project "${sanitizedAuthorizedId}" metadata not found.`);
           return;
         }
 
         if (restoration.status === 'no_entry_point') {
           setRuntimeVerified(false);
-          postLifecycleStateToIframe(
-            expectedWindow,
-            handshakeId,
-            'no_entry_point',
-            restoration.errorReason,
-          );
-          projectPreviewController.logPreviewHandoffDiagnostics({
-            requestedProjectId: String(activeProjectId || ''),
-            resolvedProjectId: sanitizedAuthorizedId,
-            handshakeAccepted: true,
-            compilationResult: 'NO_ENTRY_POINT',
-          });
+          setCompiledSrcDoc(null);
+          setPreviewPhase('no_entry_point');
+          setPreviewStatusNote(restoration.errorReason || 'No /src/App.tsx or /index.html entry point found.');
           return;
         }
 
         if (restoration.status === 'missing_project_id') {
           setRuntimeVerified(false);
-          postLifecycleStateToIframe(
-            expectedWindow,
-            handshakeId,
-            'missing_project_id',
-            restoration.errorReason,
-          );
+          setCompiledSrcDoc(null);
+          setPreviewPhase('empty');
           return;
         }
+      }
+
+      let handshakeId = '';
+      try {
+        handshakeId = generatePreviewHandshakeId(16);
+      } catch {
+        return;
       }
 
       const authResult = await authorizeProjectForPreviewSnapshot({
         projectId: sanitizedAuthorizedId,
         previewSessionId,
-        expectedIframeWindow: expectedWindow,
+        expectedIframeWindow: typeof window !== 'undefined' ? window : ({} as Window),
         handshakeId,
-        isRefreshOnActiveHandshake,
+        isRefreshOnActiveHandshake: false,
       });
 
       if (authEpochRef.current !== effectEpoch) return;
-      if (iframeRef.current?.contentWindow !== expectedWindow) return;
 
       if (!authResult.authorized || !authResult.context) {
-        activeHandshakeRef.current = null;
         setRuntimeVerified(false);
+        setCompiledSrcDoc(null);
         setAuthDenialState({
           reason: authResult.reason || 'PROJECT_AUTHORIZATION_DENIED',
           legacyEligible: authResult.legacyMigrationEligible,
         });
-        postLifecycleStateToIframe(
-          expectedWindow,
-          handshakeId,
-          'authorization_denied',
-          authResult.reason || 'PROJECT_AUTHORIZATION_DENIED',
-        );
         projectPreviewController.logPreviewHandoffDiagnostics({
           requestedProjectId: String(activeProjectId || ''),
           resolvedProjectId: sanitizedAuthorizedId,
@@ -398,10 +335,6 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
           snapshotFileCount: 0,
           handshakeAccepted: false,
           compilationResult: 'AUTHORIZATION_DENIED',
-        });
-        console.warn('[ANNY Preview] Snapshot authorization denied', {
-          projectId: sanitizedAuthorizedId,
-          reason: authResult.reason || 'PROJECT_AUTHORIZATION_DENIED',
         });
         return;
       }
@@ -412,89 +345,119 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
       const userFileCount = Object.keys(rawFiles).length;
 
       if (userFileCount === 0) {
-        postLifecycleStateToIframe(
-          expectedWindow,
-          handshakeId,
-          isPlaceholder ? 'missing_project_id' : 'no_entry_point',
-          isPlaceholder
-            ? ''
-            : `Project "${sanitizedAuthorizedId}" contains 0 source files after authorization.`,
+        setCompiledSrcDoc(null);
+        setPreviewPhase(isPlaceholder ? 'empty' : 'no_entry_point');
+        setPreviewStatusNote(
+          isPlaceholder ? '' : `Project "${sanitizedAuthorizedId}" contains 0 source files.`
         );
-        projectPreviewController.logPreviewHandoffDiagnostics({
-          requestedProjectId: String(activeProjectId || ''),
-          resolvedProjectId: sanitizedAuthorizedId,
-          ownershipResult: 'AUTHORIZED',
-          snapshotFileCount: 0,
-          handshakeAccepted: true,
-          compilationResult: isPlaceholder ? 'NO_PROJECT_BUILT_YET' : 'EMPTY_SNAPSHOT',
-        });
         return;
       }
 
-      let snapshotFiles = { ...rawFiles };
-
-      if (userFileCount > 0) {
-        const hash = hashFilesSnapshot(rawFiles);
-        const [vendorJs] = await Promise.all([
-          loadOfflineReactVendorScript(typeof window !== 'undefined' ? window.location.origin : ''),
-          (async () => {
-            if (compiledCssCacheRef.current?.hash !== hash) {
-              try {
-                const cssRes = await fetchWithAuth('/api/preview/runtime/compile-css', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ files: rawFiles }),
-                });
-                if (cssRes.ok) {
-                  const cssData = await cssRes.json().catch(() => null);
-                  if (cssData?.success && typeof cssData.css === 'string') {
-                    compiledCssCacheRef.current = { hash, css: cssData.css };
-                  }
-                }
-              } catch {
-                // Non-fatal: iframe still has base CSS + utility fallbacks
-              }
-            }
-          })(),
-        ]);
-
-        if (authEpochRef.current !== effectEpoch) return;
-        if (iframeRef.current?.contentWindow !== expectedWindow) return;
-
-        if (compiledCssCacheRef.current?.hash === hash && compiledCssCacheRef.current.css) {
-          snapshotFiles['/__anny_compiled_tailwind.css'] = compiledCssCacheRef.current.css;
-        }
-        if (vendorJs) {
-          snapshotFiles['/__anny_react_vendor.js'] = vendorJs;
-        }
+      if (!hasApplicationEntryPoint(rawFiles)) {
+        setCompiledSrcDoc(null);
+        setPreviewPhase('no_entry_point');
+        setPreviewStatusNote(
+          `Project "${sanitizedAuthorizedId}" loaded (${userFileCount} files), but no /src/App.tsx or /index.html entry file was found.`
+        );
+        return;
       }
 
-      const built = buildValidatedVfsSnapshotPayload({
-        projectId: sanitizedAuthorizedId,
-        handshakeId,
-        files: snapshotFiles,
-        snapshotSeq: nextSeq,
-      });
-      if (built.valid && built.payload) {
-        expectedWindow.postMessage(built.payload, '*');
+      const hash = hashFilesSnapshot(rawFiles);
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const [vendorJs] = await Promise.all([
+        loadOfflineReactVendorScript(origin),
+        (async () => {
+          if (compiledCssCacheRef.current?.hash !== hash) {
+            try {
+              const cssRes = await fetchWithAuth('/api/preview/runtime/compile-css', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ files: rawFiles }),
+              });
+              if (cssRes.ok) {
+                const cssData = await cssRes.json().catch(() => null);
+                if (cssData?.success && typeof cssData.css === 'string') {
+                  compiledCssCacheRef.current = { hash, css: cssData.css };
+                }
+              }
+            } catch {
+              // Non-fatal: iframe still has VFS CSS + base utility styles
+            }
+          }
+        })(),
+      ]);
+
+      if (authEpochRef.current !== effectEpoch) return;
+
+      const isolatedVfs = createIsolatedPreviewVFS(sanitizedAuthorizedId, rawFiles);
+      const hasReactEntry = [
+        '/src/App.tsx',
+        '/src/App.jsx',
+        '/App.tsx',
+        '/App.jsx',
+        '/src/App.js',
+        '/App.js',
+        '/src/main.tsx',
+      ].some((p) => isolatedVfs.exists(p) && isolatedVfs.readFile(p).trim().length > 0);
+
+      try {
+        if (!hasReactEntry && isolatedVfs.exists('/index.html')) {
+          const rawHtml = isolatedVfs.readFile('/index.html');
+          const safeHtml = sanitizeHtmlPreviewSrcDoc(rawHtml, sanitizedAuthorizedId, origin);
+          setCompiledSrcDoc(safeHtml);
+          setPreviewPhase('ready');
+          setPreviewStatusNote('');
+          projectPreviewController.logPreviewHandoffDiagnostics({
+            requestedProjectId: String(activeProjectId || ''),
+            resolvedProjectId: sanitizedAuthorizedId,
+            ownershipResult: 'AUTHORIZED',
+            snapshotFileCount: userFileCount,
+            handshakeAccepted: true,
+            compilationResult: 'RENDERED_HTML_ENTRY:/index.html',
+          });
+          return;
+        }
+
+        const compiledCss =
+          compiledCssCacheRef.current?.hash === hash ? compiledCssCacheRef.current.css : '';
+        const bundle = bundleVFSForIsolatedPreview(isolatedVfs, {
+          projectId: sanitizedAuthorizedId,
+          parentOrigin: origin,
+          inlineReactVendorScript: vendorJs || undefined,
+          compiledCss: compiledCss || undefined,
+        });
+        if (authEpochRef.current !== effectEpoch) return;
+        setCompiledSrcDoc(bundle.srcDoc);
+        setPreviewPhase('ready');
+        setPreviewStatusNote('');
         projectPreviewController.logPreviewHandoffDiagnostics({
           requestedProjectId: String(activeProjectId || ''),
           resolvedProjectId: sanitizedAuthorizedId,
           ownershipResult: 'AUTHORIZED',
           snapshotFileCount: userFileCount,
           handshakeAccepted: true,
+          compilationResult: `RENDERED_REACT_ENTRY:${bundle.entryFile}`,
         });
-      } else {
+      } catch (err: any) {
+        if (authEpochRef.current !== effectEpoch) return;
+        const errMsg = err?.message || 'Failed to transpile application preview.';
+        setCompiledSrcDoc(null);
+        setPreviewPhase('compilation_failed');
+        setPreviewStatusNote(errMsg);
+        setRuntimeErrorState({ message: errMsg });
+        projectPreviewController.setRuntimeError(errMsg);
         projectPreviewController.logPreviewHandoffDiagnostics({
           requestedProjectId: String(activeProjectId || ''),
           resolvedProjectId: sanitizedAuthorizedId,
           ownershipResult: 'AUTHORIZED',
-          snapshotFileCount: 0,
-          handshakeAccepted: false,
-          compilationResult: `SNAPSHOT_VALIDATION_REJECTED:${built.reason || 'UNKNOWN'}`,
+          snapshotFileCount: userFileCount,
+          handshakeAccepted: true,
+          compilationResult: `COMPILATION_FAILED:${errMsg.slice(0, 120)}`,
         });
       }
     };
+
+    void compileDirectSandboxPreview(false);
 
     const onPreviewMessage = (event: MessageEvent) => {
       const expectedWindow = iframeRef.current?.contentWindow;
@@ -509,32 +472,6 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
       }
       const data = event.data as Record<string, unknown>;
       const msgType = data.type;
-
-      if (msgType === 'PREVIEW_VFS_SYN') {
-        const synCheck = validatePreviewVfsSynMessage(
-          event,
-          expectedWindow,
-          sanitizedAuthorizedId,
-          consumedHandshakeIdsRef.current
-        );
-        if (!synCheck.valid || !synCheck.handshakeId) {
-          projectPreviewController.logPreviewHandoffDiagnostics({
-            requestedProjectId: String(activeProjectId || ''),
-            resolvedProjectId: sanitizedAuthorizedId,
-            handshakeAccepted: false,
-            compilationResult: `SYN_REJECTED:${synCheck.reason || 'INVALID_SYN'}`,
-          });
-          return;
-        }
-        activeHandshakeRef.current = {
-          projectId: sanitizedAuthorizedId,
-          handshakeId: synCheck.handshakeId,
-          seq: 1,
-          expectedWindow,
-        };
-        void pushSnapshotToPreview(synCheck.handshakeId, 1, expectedWindow, false);
-        return;
-      }
 
       if (msgType === 'PREVIEW_READY' && data.projectId === sanitizedAuthorizedId) {
         setRuntimeVerified(true);
@@ -580,17 +517,7 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
       if (eventProjectId && eventProjectId !== sanitizedAuthorizedId) {
         return;
       }
-      const currentHandshake = activeHandshakeRef.current;
-      if (!currentHandshake || currentHandshake.projectId !== sanitizedAuthorizedId) {
-        return;
-      }
-      currentHandshake.seq += 1;
-      void pushSnapshotToPreview(
-        currentHandshake.handshakeId,
-        currentHandshake.seq,
-        currentHandshake.expectedWindow,
-        true
-      );
+      void compileDirectSandboxPreview(true);
     };
 
     window.addEventListener('message', onPreviewMessage);
@@ -600,14 +527,13 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
 
     return () => {
       authEpochRef.current += 1;
-      activeHandshakeRef.current = null;
       invalidatePreviewSessionAuthorizations(previewSessionId);
       window.removeEventListener('message', onPreviewMessage);
       window.removeEventListener('anny_vfs_changed', onParentVfsUpdated);
       window.removeEventListener('anny_project_generated', onParentVfsUpdated);
       window.removeEventListener('storage', onParentVfsUpdated);
     };
-  }, [activeProjectId, reloadKey, sanitizedAuthorizedId]);
+  }, [activeProjectId, reloadKey, sanitizedAuthorizedId, buildState]);
 
   const sendNavigationCommand = (action: 'back' | 'forward') => {
     const win = iframeRef.current?.contentWindow;
@@ -778,14 +704,15 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
         </button>
       )}
 
-      {/* Browser Toolbar Bar */}
-      <div className="min-h-10 bg-[#0e1022] border-b border-white/10 px-3 sm:px-4 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs font-mono shrink-0">
-        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
+      {/* Browser Toolbar Bar — Mobile-first two-row on narrow screens, single clean bar on desktop */}
+      <div className="bg-[#0e1022] border-b border-white/10 px-2.5 sm:px-4 py-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs font-mono shrink-0">
+        {/* Row 1: Navigation + Address/Status Pill */}
+        <div className="flex items-center gap-1.5 min-w-0 w-full sm:flex-1">
           <button
             type="button"
             disabled={!canGoBack}
             onClick={() => sendNavigationCommand('back')}
-            className="p-1.5 text-slate-400 hover:text-white disabled:opacity-35 disabled:cursor-not-allowed rounded cursor-pointer"
+            className="p-1.5 min-w-[30px] min-h-[30px] flex items-center justify-center text-slate-400 hover:text-white disabled:opacity-35 disabled:cursor-not-allowed rounded-lg cursor-pointer shrink-0"
             title="Navigate Back"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
@@ -794,7 +721,7 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
             type="button"
             disabled={!canGoForward}
             onClick={() => sendNavigationCommand('forward')}
-            className="p-1.5 text-slate-400 hover:text-white disabled:opacity-35 disabled:cursor-not-allowed rounded cursor-pointer"
+            className="p-1.5 min-w-[30px] min-h-[30px] flex items-center justify-center text-slate-400 hover:text-white disabled:opacity-35 disabled:cursor-not-allowed rounded-lg cursor-pointer shrink-0"
             title="Navigate Forward"
           >
             <ArrowRight className="w-3.5 h-3.5" />
@@ -802,33 +729,33 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
           <button
             type="button"
             onClick={() => (onRebuild ? onRebuild() : setReloadKey((k) => k + 1))}
-            className="p-1.5 text-slate-400 hover:text-white rounded cursor-pointer"
+            className="p-1.5 min-w-[30px] min-h-[30px] flex items-center justify-center text-slate-400 hover:text-white rounded-lg cursor-pointer shrink-0"
             title="Reload Preview"
           >
             <RotateCw className="w-3.5 h-3.5" />
           </button>
 
-          <div className="flex items-center gap-2 bg-[#14162e] px-3 py-1 rounded-lg border border-white/10 text-slate-300 min-w-0 flex-1 max-w-md">
-            <span className="truncate text-[11px] text-slate-200">
+          <div className="flex items-center justify-between gap-2 bg-[#14162e] px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 min-w-0 flex-1 overflow-hidden">
+            <span className="truncate text-[11px] text-slate-200 min-w-0">
               {projectName ? projectName : 'Preview'}
               {typeof projectVersion === 'number' && projectVersion > 0 ? ` · v${projectVersion}` : ''}
               <span className="text-cyan-300 ml-1.5">{currentRoute}</span>
             </span>
-            <span className="text-slate-600">·</span>
-            <span className={`inline-flex items-center gap-1 text-[11px] font-semibold whitespace-nowrap shrink-0 ${statusMeta.colorClass}`}>
+            <span className={`inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-semibold whitespace-nowrap shrink-0 pl-2 border-l border-white/10 ${statusMeta.colorClass}`}>
               {statusMeta.icon}
               <span>{statusMeta.label}</span>
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-2 text-slate-400 flex-wrap">
+        {/* Row 2 on mobile / Right actions on desktop */}
+        <div className="flex items-center justify-between sm:justify-end gap-1.5 text-slate-400 overflow-x-auto no-scrollbar shrink-0">
           {/* Device Toggles */}
-          <div className="flex items-center gap-1 bg-[#14162e] p-1 rounded-lg border border-white/10">
+          <div className="flex items-center gap-0.5 bg-[#14162e] p-1 rounded-lg border border-white/10 shrink-0">
             <button
               type="button"
               onClick={() => setDeviceMode('desktop')}
-              className={`p-1 rounded transition cursor-pointer ${
+              className={`p-1.5 rounded-md transition cursor-pointer ${
                 deviceMode === 'desktop' ? 'bg-indigo-600 text-white' : 'hover:text-white'
               }`}
               title="Desktop View (Fluid / 1440x900)"
@@ -838,7 +765,7 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
             <button
               type="button"
               onClick={() => setDeviceMode('tablet')}
-              className={`p-1 rounded transition cursor-pointer ${
+              className={`p-1.5 rounded-md transition cursor-pointer ${
                 deviceMode === 'tablet' ? 'bg-indigo-600 text-white' : 'hover:text-white'
               }`}
               title="Tablet View (768x1024)"
@@ -848,7 +775,7 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
             <button
               type="button"
               onClick={() => setDeviceMode('mobile')}
-              className={`p-1 rounded transition cursor-pointer ${
+              className={`p-1.5 rounded-md transition cursor-pointer ${
                 deviceMode === 'mobile' ? 'bg-indigo-600 text-white' : 'hover:text-white'
               }`}
               title="Mobile View"
@@ -862,7 +789,7 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
             <select
               value={mobilePreset}
               onChange={(e) => setMobilePreset(e.target.value as any)}
-              className="bg-[#14162e] border border-white/10 text-slate-200 text-[11px] rounded-lg px-2 py-1 focus:outline-none"
+              className="bg-[#14162e] border border-white/10 text-slate-200 text-[11px] rounded-lg px-2 py-1.5 focus:outline-none shrink-0"
             >
               <option value="390x844">390 × 844</option>
               <option value="375x812">375 × 812</option>
@@ -870,58 +797,61 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
             </select>
           )}
 
-          {/* Share Project */}
-          {hasExistingProject && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* Share Project */}
+            {hasExistingProject && (
+              <button
+                type="button"
+                onClick={() => void handleShareProject()}
+                disabled={isOpeningTab || buildState === 'in_progress'}
+                className="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-200 font-semibold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-45 whitespace-nowrap shrink-0"
+                title="Open and copy standalone shareable preview link"
+              >
+                {shareCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5 text-emerald-400" />}
+                <span className="hidden md:inline">{shareCopied ? 'Shared!' : 'Share'}</span>
+              </button>
+            )}
+
+            {/* Open in New Tab */}
+            {hasExistingProject && (
+              <button
+                type="button"
+                onClick={() => void handleOpenInNewTab()}
+                disabled={isOpeningTab || buildState === 'in_progress'}
+                className="px-2.5 py-1.5 rounded-lg bg-[#14162e] hover:bg-white/10 border border-white/10 text-slate-200 font-semibold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-45 whitespace-nowrap shrink-0"
+                title="Open standalone sandboxed preview in new browser tab"
+              >
+                {isOpeningTab ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5 text-cyan-300" />}
+                <span className="hidden lg:inline">Open in New Tab</span>
+              </button>
+            )}
+
+            {/* Visual Edit Quick Button */}
+            {onOpenVisualEdit && (
+              <button
+                type="button"
+                onClick={onOpenVisualEdit}
+                className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[11px] flex items-center gap-1.5 shadow-md transition-all cursor-pointer whitespace-nowrap shrink-0"
+                title="Open Visual Editor"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">Open Editor</span>
+              </button>
+            )}
+
             <button
               type="button"
-              onClick={() => void handleShareProject()}
-              disabled={isOpeningTab || buildState === 'in_progress'}
-              className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-200 font-semibold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-45 whitespace-nowrap shrink-0"
-              title="Open and copy standalone shareable preview link"
+              onClick={() => setIsPreviewFullScreen(!isPreviewFullScreen)}
+              className={`p-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-[#14162e] border transition cursor-pointer shrink-0 ${
+                isPreviewFullScreen
+                  ? 'border-purple-500/50 text-purple-300 bg-purple-950/40'
+                  : 'border-white/10 hover:text-white'
+              }`}
+              title={isPreviewFullScreen ? 'Exit Full Screen' : 'Full Screen Preview Mode'}
             >
-              {shareCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Share2 className="w-3 h-3 text-emerald-400" />}
-              <span className="hidden sm:inline">{shareCopied ? 'Shared!' : 'Share'}</span>
+              {isPreviewFullScreen ? <Minimize2 className="w-3.5 h-3.5 text-purple-400" /> : <Maximize2 className="w-3.5 h-3.5" />}
             </button>
-          )}
-
-          {/* Open in New Tab */}
-          {hasExistingProject && (
-            <button
-              type="button"
-              onClick={() => void handleOpenInNewTab()}
-              disabled={isOpeningTab || buildState === 'in_progress'}
-              className="px-2.5 py-1 rounded-lg bg-[#14162e] hover:bg-white/10 border border-white/10 text-slate-200 font-semibold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-45 whitespace-nowrap shrink-0"
-              title="Open standalone sandboxed preview in new browser tab"
-            >
-              {isOpeningTab ? <Loader2 className="w-3 h-3 animate-spin" /> : <ExternalLink className="w-3 h-3 text-cyan-300" />}
-              <span className="hidden sm:inline">Open in New Tab</span>
-            </button>
-          )}
-
-          {/* Visual Edit Quick Button */}
-          {onOpenVisualEdit && (
-            <button
-              type="button"
-              onClick={onOpenVisualEdit}
-              className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[11px] flex items-center gap-1 shadow-md transition-all cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <Pencil className="w-3 h-3" />
-              <span className="hidden sm:inline">Open Editor</span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={() => setIsPreviewFullScreen(!isPreviewFullScreen)}
-            className={`p-1.5 rounded bg-[#14162e] border transition cursor-pointer ${
-              isPreviewFullScreen
-                ? 'border-purple-500/50 text-purple-300 bg-purple-950/40'
-                : 'border-white/10 hover:text-white'
-            }`}
-            title={isPreviewFullScreen ? 'Exit Full Screen' : 'Full Screen Preview Mode'}
-          >
-            {isPreviewFullScreen ? <Minimize2 className="w-3.5 h-3.5 text-purple-400" /> : <Maximize2 className="w-3.5 h-3.5" />}
-          </button>
+          </div>
         </div>
       </div>
 
@@ -1014,45 +944,91 @@ export const WorkspacePreviewContainer: React.FC<WorkspacePreviewContainerProps>
         )}
 
         {/* Viewport Frame with Logical Dimensions & Transform Scaling */}
-        {isFluid ? (
-          <div className="w-full h-full bg-slate-950 rounded-xl overflow-hidden border border-white/10 shadow-2xl relative">
-            <iframe
-              ref={iframeRef}
-              key={`${sanitizedAuthorizedId}-${reloadKey}`}
-              src={
-                typeof window !== 'undefined'
-                  ? `${window.location.origin}?preview=standalone&project=${encodeURIComponent(sanitizedAuthorizedId)}&v=${reloadKey}`
-                  : 'http://localhost:3000'
-              }
-              title="ANNY Live Generated Application"
-              className="w-full h-full border-none bg-slate-950"
-              sandbox="allow-forms allow-modals allow-scripts"
-              referrerPolicy="same-origin"
-            />
-          </div>
+        {compiledSrcDoc ? (
+          isFluid ? (
+            <div className="w-full h-full bg-slate-950 rounded-xl overflow-hidden border border-white/10 shadow-2xl relative">
+              <iframe
+                ref={iframeRef}
+                key={`${sanitizedAuthorizedId}-${reloadKey}`}
+                srcDoc={compiledSrcDoc}
+                title="ANNY Live Generated Application"
+                className="w-full h-full border-none bg-slate-950"
+                sandbox="allow-forms allow-modals allow-scripts"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          ) : (
+            <div
+              style={{
+                width: `${targetWidth}px`,
+                height: `${targetHeight}px`,
+                transform: `scale(${scaleFactor})`,
+                transformOrigin: 'top center',
+              }}
+              className="bg-slate-950 rounded-2xl border-2 border-slate-700/60 shadow-2xl overflow-hidden shrink-0 transition-all duration-300 relative"
+            >
+              <iframe
+                ref={iframeRef}
+                key={`${sanitizedAuthorizedId}-${reloadKey}`}
+                srcDoc={compiledSrcDoc}
+                title="ANNY Live Generated Application"
+                className="w-full h-full border-none bg-slate-950"
+                sandbox="allow-forms allow-modals allow-scripts"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          )
         ) : (
-          <div
-            style={{
-              width: `${targetWidth}px`,
-              height: `${targetHeight}px`,
-              transform: `scale(${scaleFactor})`,
-              transformOrigin: 'top center',
-            }}
-            className="bg-slate-950 rounded-2xl border-2 border-slate-700/60 shadow-2xl overflow-hidden shrink-0 transition-all duration-300 relative"
-          >
-            <iframe
-              ref={iframeRef}
-              key={`${sanitizedAuthorizedId}-${reloadKey}`}
-              src={
-                typeof window !== 'undefined'
-                  ? `${window.location.origin}?preview=standalone&project=${encodeURIComponent(sanitizedAuthorizedId)}&v=${reloadKey}`
-                  : 'http://localhost:3000'
-              }
-              title="ANNY Live Generated Application"
-              className="w-full h-full border-none bg-slate-950"
-              sandbox="allow-forms allow-modals allow-scripts"
-              referrerPolicy="same-origin"
-            />
+          <div className="w-full h-full bg-slate-950 rounded-xl border border-white/10 flex items-center justify-center p-5 text-center">
+            {previewPhase === 'loading' ? (
+              <div className="flex flex-col items-center gap-3 max-w-xs">
+                <Loader2 className="w-7 h-7 animate-spin text-cyan-400" />
+                <p className="text-sm font-semibold text-white">Compiling Live Preview</p>
+                <p className="text-xs text-slate-400 font-mono">
+                  {previewStatusNote || `Preparing ${projectName || 'application'} runtime...`}
+                </p>
+              </div>
+            ) : previewPhase === 'empty' ? (
+              <div className="flex flex-col items-center gap-3 max-w-sm">
+                <Code2 className="w-8 h-8 text-indigo-400" />
+                <p className="text-sm font-semibold text-white">Ready to Build</p>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Describe the website or app you want ANNY to build in AI Chat and your real compiled application will appear here.
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-3 max-w-sm">
+                <AlertTriangle className="w-7 h-7 text-amber-400" />
+                <p className="text-sm font-semibold text-white">
+                  {previewPhase === 'compilation_failed'
+                    ? 'Preview Compilation Error'
+                    : previewPhase === 'metadata_not_found'
+                      ? 'Project Metadata Unavailable'
+                      : 'No Preview Entry Point Found'}
+                </p>
+                {previewStatusNote && (
+                  <p className="text-xs text-slate-400 font-mono break-words">{previewStatusNote}</p>
+                )}
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setReloadKey((k) => k + 1)}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <RotateCw className="w-3.5 h-3.5" />
+                    Retry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRightTab('code')}
+                    className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Code2 className="w-3.5 h-3.5" />
+                    View Code
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

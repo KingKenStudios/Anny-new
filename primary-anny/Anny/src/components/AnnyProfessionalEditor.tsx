@@ -249,9 +249,12 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
     const [activePropertiesTab, setActivePropertiesTab] = useState<'Properties' | 'Adjust' | 'Effects' | 'Transform'>('Properties');
     const [activeLayerTab, setActiveLayerTab] = useState<'Layers' | 'Channels' | 'Paths' | 'History' | 'Log'>('Layers');
     
-    // Viewport & document state
-    const [zoom, setZoom] = useState(0.6667);
-    const [viewportWidth, setViewportWidth] = useState<'100%' | '1920px' | '768px' | '375px'>('1920px');
+    // Viewport & document state (fluid 100% on narrow viewports so mobile displays the full real build)
+    const [zoom, setZoom] = useState(() => (typeof window !== 'undefined' && window.innerWidth < 1024 ? 1 : 0.6667));
+    const [viewportWidth, setViewportWidth] = useState<'100%' | '1920px' | '768px' | '375px'>(() =>
+        typeof window !== 'undefined' && window.innerWidth < 1024 ? '100%' : '1920px'
+    );
+    const [mobilePanel, setMobilePanel] = useState<'none' | 'tools' | 'inspector'>('none');
     const [docWidth, setDocWidth] = useState(1920);
     const [docHeight, setDocHeight] = useState(1080);
     const [docResolution] = useState(72);
@@ -506,39 +509,152 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
         }
     }, [selectedElement]);
 
-    // Real Layers from DOM
-    const [realLayers, setRealLayers] = useState<{ id: string, name: string, type: string, visible: boolean, ref: HTMLElement }[]>([]);
-    
+    // Real Layers from DOM, Sandboxed Preview telemetry, or VFS JSX source fallback
+    const [realLayers, setRealLayers] = useState<{
+        id: string;
+        name: string;
+        type: string;
+        visible: boolean;
+        ref: HTMLElement | null;
+        targetFile?: string;
+        targetLine?: number;
+        className?: string;
+        textContent?: string;
+    }[]>([]);
+    const [sandboxLayers, setSandboxLayers] = useState<Array<{
+        id: string;
+        name: string;
+        tagName: string;
+        targetFile: string;
+        targetLine: number;
+        className: string;
+        textContent: string;
+    }>>([]);
+
     useEffect(() => {
-        const interval = setInterval(() => {
+        const handleSandboxLayerMessage = (event: MessageEvent) => {
+            if (!event.data || typeof event.data !== 'object') return;
+            const payload = event.data as Record<string, unknown>;
+            if (payload.type === 'PREVIEW_LAYERS' && Array.isArray(payload.layers)) {
+                const parsed = payload.layers
+                    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+                    .slice(0, 40)
+                    .map((item, idx) => ({
+                        id: typeof item.id === 'string' ? item.id : `sandbox-layer-${idx}`,
+                        name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : String(item.tagName || 'element').toLowerCase(),
+                        tagName: typeof item.tagName === 'string' ? item.tagName.toUpperCase() : 'DIV',
+                        targetFile: typeof item.targetFile === 'string' ? item.targetFile : '/src/App.tsx',
+                        targetLine: typeof item.targetLine === 'number' ? item.targetLine : 0,
+                        className: typeof item.className === 'string' ? item.className : '',
+                        textContent: typeof item.textContent === 'string' ? item.textContent : '',
+                    }));
+                if (parsed.length > 0) {
+                    setSandboxLayers(parsed);
+                }
+            }
+        };
+        window.addEventListener('message', handleSandboxLayerMessage);
+        return () => window.removeEventListener('message', handleSandboxLayerMessage);
+    }, []);
+
+    useEffect(() => {
+        const extractLayersFromSource = (): typeof realLayers => {
+            const entryPath = vfsFileMap['/src/App.tsx']
+                ? '/src/App.tsx'
+                : vfsFileMap['/src/App.jsx']
+                  ? '/src/App.jsx'
+                  : vfsFiles.find(f => /\.(tsx|jsx)$/.test(f)) || '';
+            const src = entryPath ? vfsFileMap[entryPath] : '';
+            if (!src) return [];
+            const lines = src.split('\n');
+            const extracted: typeof realLayers = [];
+            const tagRegex = /<(nav|header|main|section|article|aside|footer|h1|h2|h3|p|button|a|form|ul|div)\b([^>]*)>([^<]*)/i;
+            for (let i = 0; i < lines.length && extracted.length < 32; i++) {
+                const match = tagRegex.exec(lines[i]);
+                if (!match) continue;
+                const tag = match[1].toLowerCase();
+                const attrs = match[2] || '';
+                const inlineText = (match[3] || '').replace(/\{[^}]*\}/g, '').trim();
+                const classMatch = /className\s*=\s*["']([^"']+)["']/.exec(attrs);
+                const className = classMatch ? classMatch[1] : '';
+                const label = inlineText
+                    ? inlineText.slice(0, 32)
+                    : className
+                      ? `${tag}.${className.split(/\s+/)[0]}`
+                      : tag;
+                extracted.push({
+                    id: `src-layer-${i + 1}`,
+                    name: label,
+                    type: tag,
+                    visible: true,
+                    ref: null,
+                    targetFile: entryPath,
+                    targetLine: i + 1,
+                    className,
+                    textContent: inlineText.slice(0, 80) || label,
+                });
+            }
+            return extracted;
+        };
+
+        const syncLayers = () => {
             if (canvasRef.current) {
                 const elements = canvasRef.current.querySelectorAll('[data-vfs-file]');
-                const layers = Array.from(elements).map((el, idx) => {
-                    const htmlEl = el as HTMLElement;
-                    return {
-                        id: `layer-${idx}`,
-                        name: htmlEl.innerText?.slice(0, 20) || htmlEl.tagName.toLowerCase(),
-                        type: htmlEl.tagName.toLowerCase(),
-                        visible: htmlEl.style.display !== 'none',
-                        ref: htmlEl
-                    };
-                }).slice(0, 40); 
-                setRealLayers(layers);
+                if (elements.length > 0) {
+                    const layers = Array.from(elements).map((el, idx) => {
+                        const htmlEl = el as HTMLElement;
+                        return {
+                            id: `layer-${idx}`,
+                            name: htmlEl.innerText?.slice(0, 28) || htmlEl.tagName.toLowerCase(),
+                            type: htmlEl.tagName.toLowerCase(),
+                            visible: htmlEl.style.display !== 'none',
+                            ref: htmlEl,
+                            targetFile: htmlEl.getAttribute('data-vfs-file') || undefined,
+                            targetLine: parseInt(htmlEl.getAttribute('data-vfs-line') || '0', 10) || undefined,
+                            className: typeof htmlEl.className === 'string' ? htmlEl.className : '',
+                            textContent: htmlEl.innerText?.slice(0, 60) || '',
+                        };
+                    }).slice(0, 40);
+                    setRealLayers(layers);
+                    return;
+                }
             }
-        }, 500);
+            if (sandboxLayers.length > 0) {
+                setRealLayers(
+                    sandboxLayers.map((sl) => ({
+                        id: sl.id,
+                        name: sl.name,
+                        type: sl.tagName.toLowerCase(),
+                        visible: true,
+                        ref: null,
+                        targetFile: sl.targetFile,
+                        targetLine: sl.targetLine,
+                        className: sl.className,
+                        textContent: sl.textContent,
+                    }))
+                );
+                return;
+            }
+            const sourceLayers = extractLayersFromSource();
+            setRealLayers(sourceLayers);
+        };
+
+        syncLayers();
+        const interval = setInterval(syncLayers, 1000);
         return () => clearInterval(interval);
-    }, []);
+    }, [sandboxLayers, vfsFileMap, vfsFiles]);
 
     // History log state
     const [actionHistory, setActionHistory] = useState<string[]>([
         'Initial Session Loaded',
         'VFS Runtime Initialized',
         'Professional Editor Ready',
-        'Canvas Scale set to 66.67%'
     ]);
 
-    // Anny AI Assistant State
-    const [showAiAssistant, setShowAiAssistant] = useState(true);
+    // Anny AI Assistant State (closed by default on mobile so canvas has 100% focus)
+    const [showAiAssistant, setShowAiAssistant] = useState(() =>
+        typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
+    );
     const [aiPrompt, setAiPrompt] = useState('');
     const [aiMessages, setAiMessages] = useState<{ role: 'user' | 'model'; text: string }[]>([
         { role: 'model', text: 'Hello! I am Anny AI, your professional design and code assistant. I can inspect DOM elements, generate JSX layouts, adjust styles, or optimize your VFS code.' }
@@ -1186,55 +1302,73 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
     };
 
     return (
-        <div className="flex flex-col h-screen w-screen bg-[#05060a] text-slate-200 overflow-hidden select-none">
-            {/* REAL PROFESSIONAL MENU BAR */}
-            <ProfessionalMenuBar onAction={handleMenuAction} />
+        <div className="flex flex-col h-[100dvh] w-screen bg-[#05060a] text-slate-200 overflow-hidden select-none">
+            {/* REAL PROFESSIONAL MENU BAR (Desktop only so mobile never overflows) */}
+            <div className="hidden lg:block shrink-0">
+                <ProfessionalMenuBar onAction={handleMenuAction} />
+            </div>
 
-            {/* TOP ACTIONS BAR (Vite/Save/Viewport) */}
-            <div className="h-12 bg-[#0c0e17] border-b border-white/10 flex items-center justify-between px-4 shrink-0 z-20">
-                <div className="flex items-center gap-3">
-                    {onBackToSplitView && (
+            {/* TOP ACTIONS BAR — Clean two-row responsive on mobile, single spacious bar on desktop */}
+            <div className="bg-[#0c0e17] border-b border-white/10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 px-2.5 sm:px-4 py-2 shrink-0 z-20 min-w-0">
+                {/* Row 1 on mobile / Left group on desktop */}
+                <div className="flex items-center justify-between lg:justify-start gap-2 min-w-0">
+                    <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 overflow-x-auto no-scrollbar">
+                        {onBackToSplitView && (
+                            <button 
+                                onClick={onBackToSplitView}
+                                data-testid="editor-back-to-preview"
+                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-400/30 text-indigo-200 hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                                title="Return to Live Split Preview"
+                            >
+                                <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
+                                <span className="text-[11px] font-bold uppercase tracking-wider">Preview</span>
+                            </button>
+                        )}
+
                         <button 
-                            onClick={onBackToSplitView}
-                            data-testid="editor-back-to-preview"
-                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-400/30 text-indigo-200 hover:text-white transition-colors cursor-pointer"
-                            title="Return to Live Split Preview"
+                            onClick={onBackToWorkspace || onBack || onBackToSplitView}
+                            data-testid="editor-back-to-chat"
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                            title="Return to Chat Conversation"
                         >
-                            <ArrowLeft className="w-3.5 h-3.5" />
-                            <span className="text-[11px] font-bold uppercase tracking-wider">Back to Preview</span>
+                            <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
+                            <span className="text-[11px] font-bold uppercase tracking-wider">Chat</span>
                         </button>
-                    )}
 
-                    <button 
-                        onClick={onBackToWorkspace || onBack || onBackToSplitView}
-                        data-testid="editor-back-to-chat"
-                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                        title="Return to Chat Conversation"
-                    >
-                        <ArrowLeft className="w-3.5 h-3.5" />
-                        <span className="text-[11px] font-bold uppercase tracking-wider">Back to Chat</span>
-                    </button>
-
-                    <div className="flex items-center gap-2 px-3 py-1 bg-white/5 rounded-full border border-white/10">
-                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                        <span className="text-[10px] font-bold text-slate-200 truncate max-w-[180px]" title={effectiveProjectId}>
-                            {projectTitle}
-                        </span>
-                        <span className="px-1.5 py-0.2 rounded bg-purple-500/20 border border-purple-400/30 text-[9px] font-mono text-purple-300">
-                            v{projectVersion}
-                        </span>
-                        <span className="text-[9px] font-mono text-slate-400">
-                            ({vfsFiles.length} files)
-                        </span>
+                        <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white/5 rounded-full border border-white/10 min-w-0 shrink">
+                            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                            <span className="text-[11px] font-bold text-slate-200 truncate max-w-[120px] sm:max-w-[180px]" title={effectiveProjectId}>
+                                {projectTitle}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-purple-500/20 border border-purple-400/30 text-[9px] font-mono text-purple-300 shrink-0">
+                                v{projectVersion}
+                            </span>
+                            <span className="hidden sm:inline text-[9px] font-mono text-slate-400 shrink-0">
+                                ({vfsFiles.length} files)
+                            </span>
+                        </div>
                     </div>
 
+                    {/* Quick Mobile Save Button */}
+                    <button 
+                        onClick={handleSave}
+                        disabled={isSaving}
+                        className="lg:hidden px-2.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-[11px] rounded-lg shadow transition-all flex items-center gap-1 disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
+                    >
+                        <Save className="w-3.5 h-3.5" />
+                        <span>{isSaving ? '...' : 'Save'}</span>
+                    </button>
+                </div>
+
+                {/* Row 2 on mobile (clean single-line horizontal scroll) / Center & Right on desktop */}
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0 py-0.5">
                     {/* Canvas vs Code & Files Mode Switcher */}
-                    <div className="flex items-center gap-1 bg-[#121524] p-0.5 rounded-lg border border-white/10 text-xs">
+                    <div className="flex items-center gap-0.5 bg-[#121524] p-0.5 rounded-lg border border-white/10 text-xs shrink-0">
                         <button
                             type="button"
                             onClick={() => setEditorViewMode('canvas')}
                             data-testid="editor-mode-canvas"
-                            className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                            className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
                                 editorViewMode === 'canvas'
                                     ? 'bg-purple-600 text-white shadow'
                                     : 'text-slate-400 hover:text-white'
@@ -1246,13 +1380,13 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
                             type="button"
                             onClick={() => setEditorViewMode('code')}
                             data-testid="editor-mode-code"
-                            className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                            className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
                                 editorViewMode === 'code'
                                     ? 'bg-indigo-600 text-white shadow'
                                     : 'text-slate-400 hover:text-white'
                             }`}
                         >
-                            <FileText className="w-3 h-3" />
+                            <FileText className="w-3 h-3 shrink-0" />
                             <span>Code &amp; Files</span>
                             {hasUnsavedCodeChanges && (
                                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
@@ -1260,14 +1394,54 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
                         </button>
                     </div>
 
+                    {/* Mobile Drawer Triggers (Tools / Inspector / AI) */}
+                    <div className="flex lg:hidden items-center gap-1 shrink-0">
+                        <button
+                            type="button"
+                            onClick={() => setMobilePanel(prev => prev === 'tools' ? 'none' : 'tools')}
+                            className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                                mobilePanel === 'tools'
+                                    ? 'bg-purple-600/30 border-purple-400 text-white'
+                                    : 'bg-white/5 border-white/10 text-slate-300'
+                            }`}
+                        >
+                            <MousePointer2 className="w-3 h-3" />
+                            <span>Tools</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setMobilePanel(prev => prev === 'inspector' ? 'none' : 'inspector')}
+                            className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                                mobilePanel === 'inspector'
+                                    ? 'bg-purple-600/30 border-purple-400 text-white'
+                                    : 'bg-white/5 border-white/10 text-slate-300'
+                            }`}
+                        >
+                            <Sliders className="w-3 h-3" />
+                            <span>Inspector</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setShowAiAssistant(prev => !prev)}
+                            className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                                showAiAssistant
+                                    ? 'bg-indigo-600/30 border-indigo-400 text-white'
+                                    : 'bg-white/5 border-white/10 text-slate-300'
+                            }`}
+                        >
+                            <Bot className="w-3 h-3" />
+                            <span>AI</span>
+                        </button>
+                    </div>
+
                     {/* Quick Undo/Redo */}
-                    <div className="flex items-center gap-1 border-l border-white/10 pl-3">
+                    <div className="flex items-center gap-1 border-l border-white/10 pl-2 shrink-0">
                         <button 
                             onClick={() => {
                                 const success = RealProjectSourcePatcher.undo();
                                 if (success) setActionHistory(prev => ['Undo Source Change', ...prev]);
                             }} 
-                            className="p-1.5 hover:bg-white/10 rounded transition-colors" 
+                            className="p-1.5 hover:bg-white/10 rounded transition-colors cursor-pointer" 
                             title="Undo (Ctrl+Z)"
                         >
                             <Undo2 className="w-3.5 h-3.5" />
@@ -1277,91 +1451,94 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
                                 const success = RealProjectSourcePatcher.redo();
                                 if (success) setActionHistory(prev => ['Redo Source Change', ...prev]);
                             }} 
-                            className="p-1.5 hover:bg-white/10 rounded transition-colors" 
+                            className="p-1.5 hover:bg-white/10 rounded transition-colors cursor-pointer" 
                             title="Redo (Ctrl+Shift+Z)"
                         >
                             <Redo2 className="w-3.5 h-3.5" />
                         </button>
                     </div>
-                </div>
 
-                {/* Center Viewport Selector */}
-                <div className="flex items-center gap-1 bg-[#121524] p-0.5 rounded-lg border border-white/10 text-xs">
-                    {(['1920px', '768px', '375px', '100%'] as const).map(w => (
-                        <button
-                            key={w}
-                            onClick={() => setViewportWidth(w)}
-                            className={`px-2.5 py-0.5 rounded-md text-[11px] font-medium transition-all cursor-pointer ${viewportWidth === w ? 'bg-purple-600 text-white font-bold shadow' : 'text-slate-400 hover:text-white'}`}
-                        >
-                            {w === '1920px' ? 'Desktop' : w === '768px' ? 'Tablet' : w === '375px' ? 'Mobile' : 'Fluid'}
-                        </button>
-                    ))}
-                </div>
+                    {/* Center Viewport Selector */}
+                    <div className="flex items-center gap-0.5 bg-[#121524] p-0.5 rounded-lg border border-white/10 text-xs shrink-0">
+                        {(['100%', '1920px', '768px', '375px'] as const).map(w => (
+                            <button
+                                key={w}
+                                onClick={() => {
+                                    setViewportWidth(w);
+                                    if (w === '100%') setZoom(1);
+                                }}
+                                className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition-all cursor-pointer whitespace-nowrap ${viewportWidth === w ? 'bg-purple-600 text-white font-bold shadow' : 'text-slate-400 hover:text-white'}`}
+                            >
+                                {w === '1920px' ? 'Desktop' : w === '768px' ? 'Tablet' : w === '375px' ? 'Mobile' : 'Fluid'}
+                            </button>
+                        ))}
+                    </div>
 
-                {/* Right Actions */}
-                <div className="flex items-center gap-2">
-                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded flex items-center gap-1 ${
-                        hasUnsavedCodeChanges
-                            ? 'text-amber-300 bg-amber-500/15 border border-amber-400/30'
-                            : saveStatus === 'saved'
-                              ? 'text-emerald-400 bg-emerald-500/10'
-                              : 'text-amber-400 bg-amber-500/10'
-                    }`}>
-                        <div className={`w-1.5 h-1.5 rounded-full ${
+                    {/* Right Actions */}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                        <span className={`hidden xl:flex text-[10px] font-mono px-2 py-0.5 rounded items-center gap-1 whitespace-nowrap ${
                             hasUnsavedCodeChanges
-                                ? 'bg-amber-400 animate-pulse'
+                                ? 'text-amber-300 bg-amber-500/15 border border-amber-400/30'
                                 : saveStatus === 'saved'
-                                  ? 'bg-emerald-400'
-                                  : 'bg-amber-400 animate-pulse'
-                        }`} />
-                        {hasUnsavedCodeChanges ? 'UNSAVED EDITS' : saveStatus === 'saved' ? 'LIVE VFS SYNC' : 'SAVING...'}
-                    </span>
+                                  ? 'text-emerald-400 bg-emerald-500/10'
+                                  : 'text-amber-400 bg-amber-500/10'
+                        }`}>
+                            <div className={`w-1.5 h-1.5 rounded-full ${
+                                hasUnsavedCodeChanges
+                                    ? 'bg-amber-400 animate-pulse'
+                                    : saveStatus === 'saved'
+                                      ? 'bg-emerald-400'
+                                      : 'bg-amber-400 animate-pulse'
+                            }`} />
+                            {hasUnsavedCodeChanges ? 'UNSAVED EDITS' : saveStatus === 'saved' ? 'LIVE VFS SYNC' : 'SAVING...'}
+                        </span>
 
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setCanvasReloadKey(prev => prev + 1);
-                            window.dispatchEvent(new CustomEvent('anny_vfs_changed', { detail: { projectId: effectiveProjectId } }));
-                            setActionHistory(prev => ['Refreshed Live Preview Canvas', ...prev]);
-                        }}
-                        className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 font-bold text-xs rounded shadow transition-all flex items-center gap-1.5 cursor-pointer"
-                        title="Rebuild and Refresh Live Preview"
-                    >
-                        <RotateCcw className="w-3.5 h-3.5 text-cyan-400" />
-                        <span>Rebuild Preview</span>
-                    </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setCanvasReloadKey(prev => prev + 1);
+                                window.dispatchEvent(new CustomEvent('anny_vfs_changed', { detail: { projectId: effectiveProjectId } }));
+                                setActionHistory(prev => ['Refreshed Live Preview Canvas', ...prev]);
+                            }}
+                            className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 font-bold text-[11px] rounded-lg shadow transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+                            title="Rebuild and Refresh Live Preview"
+                        >
+                            <RotateCcw className="w-3.5 h-3.5 text-cyan-400" />
+                            <span>Rebuild</span>
+                        </button>
 
-                    <button 
-                        onClick={() => {
-                            if (universalUploadInputRef.current) {
-                                universalUploadInputRef.current.click();
-                            }
-                        }}
-                        disabled={!!uploadProgress}
-                        className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs rounded shadow transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                    >
-                        {uploadProgress ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
-                        ) : (
-                            <Upload className="w-3.5 h-3.5" />
-                        )}
-                        <span>{uploadProgress ? 'Uploading...' : 'Upload'}</span>
-                    </button>
-                    <button 
-                        onClick={handleSave}
-                        disabled={isSaving}
-                        data-testid="editor-save-project"
-                        className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded shadow transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                    >
-                        <Save className="w-3.5 h-3.5" />
-                        {isSaving ? 'Saving...' : `Save Project (v${projectVersion})`}
-                    </button>
+                        <button 
+                            onClick={() => {
+                                if (universalUploadInputRef.current) {
+                                    universalUploadInputRef.current.click();
+                                }
+                            }}
+                            disabled={!!uploadProgress}
+                            className="px-2.5 py-1 bg-slate-700 hover:bg-slate-600 text-white font-bold text-[11px] rounded-lg shadow transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
+                        >
+                            {uploadProgress ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
+                            ) : (
+                                <Upload className="w-3.5 h-3.5" />
+                            )}
+                            <span>{uploadProgress ? 'Uploading...' : 'Upload'}</span>
+                        </button>
+                        <button 
+                            onClick={handleSave}
+                            disabled={isSaving}
+                            data-testid="editor-save-project"
+                            className="hidden lg:flex px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-lg shadow transition-all items-center gap-1.5 disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
+                        >
+                            <Save className="w-3.5 h-3.5" />
+                            {isSaving ? 'Saving...' : `Save Project (v${projectVersion})`}
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            {/* DYNAMIC OPTIONS BAR (Top Photoshop Style Options Panel) */}
-            <div className="h-8 bg-[#090b12] border-b border-white/10 flex items-center justify-between px-3 text-xs shrink-0 z-20">
-                <div className="flex items-center gap-4">
+            {/* DYNAMIC OPTIONS BAR (Single-line horizontally scrollable on mobile — zero wrapping overlap) */}
+            <div className="min-h-9 bg-[#090b12] border-b border-white/10 flex items-center justify-between gap-4 px-3 py-1 text-xs shrink-0 z-20 overflow-x-auto no-scrollbar whitespace-nowrap">
+                <div className="flex items-center gap-3 shrink-0">
                     <span className="font-bold text-purple-400 uppercase tracking-wider text-[10px]">
                         Tool Options [{activeSubTool.toUpperCase()}]
                     </span>
@@ -1473,9 +1650,31 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
             </div>
 
             {/* MAIN WORKSPACE AREA */}
-            <div className="flex-1 flex overflow-hidden relative">
-                {/* LEFT TOOLBAR: Professional Photoshop-style Scrollable Toolbar */}
-                <div className="w-12 bg-[#0c0e17] border-r border-white/10 flex flex-col items-center py-2 gap-1 shrink-0 z-30 overflow-y-auto overflow-x-hidden custom-scrollbar pb-12">
+            <div className="flex-1 flex overflow-hidden relative min-h-0">
+                {/* Mobile Drawer Backdrop */}
+                {mobilePanel !== 'none' && (
+                    <div
+                        className="lg:hidden fixed inset-0 bg-black/60 backdrop-blur-xs z-[110]"
+                        onClick={() => setMobilePanel('none')}
+                    />
+                )}
+
+                {/* LEFT TOOLBAR: Always visible on desktop; slide-over drawer on mobile when toggled */}
+                <div className={`${
+                    mobilePanel === 'tools'
+                        ? 'flex fixed inset-y-0 left-0 z-[120] w-16 shadow-2xl'
+                        : 'hidden lg:flex w-12'
+                } bg-[#0c0e17] border-r border-white/10 flex-col items-center py-2 gap-1 shrink-0 lg:z-30 overflow-y-auto overflow-x-hidden custom-scrollbar pb-12`}>
+                    {mobilePanel === 'tools' && (
+                        <button
+                            type="button"
+                            onClick={() => setMobilePanel('none')}
+                            className="lg:hidden mb-1 p-1.5 rounded-lg bg-white/10 text-slate-200 cursor-pointer"
+                            title="Close Tools"
+                        >
+                            <X className="w-4 h-4" />
+                        </button>
+                    )}
                     {toolGroups.map(group => (
                         <ToolGroup 
                             key={group.id}
@@ -1507,9 +1706,9 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
 
                 {/* CANVAS OR CODE & FILES CENTER STAGE */}
                 {editorViewMode === 'code' ? (
-                    <div className="flex-1 bg-[#050711] flex overflow-hidden min-w-0" data-testid="editor-code-view">
-                        {/* Project File Tree Sidebar */}
-                        <div className="w-64 bg-[#090c1a] border-r border-white/10 flex flex-col shrink-0">
+                    <div className="flex-1 bg-[#050711] flex flex-col lg:flex-row overflow-hidden min-w-0 min-h-0" data-testid="editor-code-view">
+                        {/* Project File Tree Sidebar (top bar on mobile, left sidebar on desktop) */}
+                        <div className="w-full lg:w-64 max-h-44 lg:max-h-none bg-[#090c1a] border-b lg:border-b-0 lg:border-r border-white/10 flex flex-col shrink-0">
                             <div className="p-3 border-b border-white/10 flex items-center justify-between">
                                 <div className="flex items-center gap-2">
                                     <FolderOpen className="w-4 h-4 text-indigo-400" />
@@ -1646,30 +1845,32 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
                     </div>
                 ) : (
                 <div 
-                    className="flex-1 bg-[#05060a] overflow-auto p-8 relative flex flex-col items-start justify-start select-none"
+                    className="flex-1 bg-[#05060a] overflow-auto p-2 sm:p-4 lg:p-8 relative flex flex-col items-stretch justify-start select-none min-w-0 min-h-0"
                     style={{ cursor: activeTool === 'hand' || activeSubTool === 'hand' ? 'grab' : 'default' }}
                 >
                     <div
                         style={{
                             width: viewportWidth === '100%' ? '100%' : `${parseInt(viewportWidth, 10) * zoom}px`,
-                            height: `${docHeight * zoom}px`,
+                            height: viewportWidth === '100%' ? '100%' : `${docHeight * zoom}px`,
+                            minHeight: viewportWidth === '100%' ? '100%' : undefined,
                             position: 'relative',
                             margin: '0 auto',
+                            flex: viewportWidth === '100%' ? '1 1 auto' : undefined,
                         }}
                     >
                         <div 
                             ref={canvasRef}
                             style={{
                                 width: viewportWidth === '100%' ? '100%' : viewportWidth,
-                                height: `${docHeight}px`,
-                                transform: `scale(${zoom})`,
+                                height: viewportWidth === '100%' ? '100%' : `${docHeight}px`,
+                                transform: viewportWidth === '100%' ? 'none' : `scale(${zoom})`,
                                 transformOrigin: 'top left',
                                 transition: 'transform 0.15s ease-out',
                                 position: 'absolute',
                                 top: 0,
                                 left: 0
                             }}
-                            className="bg-[#0b0d17] border border-purple-500/30 rounded-lg shadow-2xl"
+                            className="bg-[#0b0d17] border border-purple-500/30 rounded-lg shadow-2xl overflow-hidden flex flex-col"
                         >
                             {/* BRIDGE ENGINE INTERACTION OVERLAY */}
                             <RealProjectEditorBridge
@@ -1686,17 +1887,36 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
                             />
 
                             {/* LIVE RUNTIME RENDERER */}
-                            <DynamicVFSAppRunner
-                                key={`canvas-runner-${effectiveProjectId}-${canvasReloadKey}`}
-                                projectId={effectiveProjectId}
-                            />
+                            <div className="flex-1 w-full h-full min-h-0">
+                                <DynamicVFSAppRunner
+                                    key={`canvas-runner-${effectiveProjectId}-${canvasReloadKey}`}
+                                    projectId={effectiveProjectId}
+                                />
+                            </div>
                         </div>
                     </div>
                 </div>
                 )}
 
-                {/* RIGHT DOCK: 13 Photoshop Tabs Across 3 Panels - Entire Dock Vertically Scrollable */}
-                <div className="w-80 bg-[#0c0e17] border-l border-white/10 flex flex-col shrink-0 z-30 h-full min-h-0 overflow-y-auto custom-scrollbar p-0">
+                {/* RIGHT DOCK: Always visible on desktop; slide-over sheet on mobile so canvas keeps 100% width */}
+                <div className={`${
+                    mobilePanel === 'inspector'
+                        ? 'flex fixed inset-y-0 right-0 z-[120] w-[88vw] max-w-sm shadow-2xl'
+                        : 'hidden lg:flex w-80'
+                } bg-[#0c0e17] border-l border-white/10 flex-col shrink-0 lg:z-30 h-full min-h-0 overflow-y-auto custom-scrollbar p-0`}>
+                    {mobilePanel === 'inspector' && (
+                        <div className="lg:hidden flex items-center justify-between px-3 py-2 bg-[#121526] border-b border-white/10 shrink-0 sticky top-0 z-20">
+                            <span className="text-xs font-bold uppercase tracking-wider text-purple-300">Inspector &amp; Layers</span>
+                            <button
+                                type="button"
+                                onClick={() => setMobilePanel('none')}
+                                className="p-1.5 rounded-lg bg-white/10 text-slate-200 cursor-pointer"
+                                title="Close Inspector"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+                    )}
                     <div className="flex flex-col flex-1 pb-32">
                         {/* SECTION 1: TOP TABS (Color, Swatches, Gradients, Patterns, Export) */}
                     <div className="flex border-b border-white/10 bg-[#0e101b] text-[11px] shrink-0 sticky top-0 z-10 overflow-x-auto custom-scrollbar no-scrollbar">
@@ -2385,29 +2605,54 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
                                     <button 
                                         key={layer.id} 
                                         onClick={() => {
-                                            const computed = window.getComputedStyle(layer.ref);
-                                            const meta = {
-                                                targetFile: layer.ref.getAttribute('data-vfs-file') || undefined,
-                                                targetLine: parseInt(layer.ref.getAttribute('data-vfs-line') || '0', 10) || undefined
-                                            };
-                                            setSelectedElement({
-                                                tagName: layer.ref.tagName,
-                                                textContent: layer.ref.innerText?.slice(0, 50) || '',
-                                                className: layer.ref.className || '',
-                                                id: layer.ref.id || '',
-                                                color: computed.color || '#ffffff',
-                                                backgroundColor: computed.backgroundColor || 'transparent',
-                                                fontSize: computed.fontSize || '16px',
-                                                padding: computed.padding || '0px',
-                                                margin: computed.margin || '0px',
-                                                width: `${layer.ref.offsetWidth}px`,
-                                                height: `${layer.ref.offsetHeight}px`,
-                                                borderRadius: computed.borderRadius || '0px',
-                                                elementRef: layer.ref,
-                                                ...meta
-                                            });
+                                            if (layer.ref) {
+                                                const computed = window.getComputedStyle(layer.ref);
+                                                const meta = {
+                                                    targetFile: layer.ref.getAttribute('data-vfs-file') || layer.targetFile,
+                                                    targetLine: parseInt(layer.ref.getAttribute('data-vfs-line') || '0', 10) || layer.targetLine
+                                                };
+                                                setSelectedElement({
+                                                    tagName: layer.ref.tagName,
+                                                    textContent: layer.ref.innerText?.slice(0, 50) || layer.textContent || '',
+                                                    className: layer.ref.className || layer.className || '',
+                                                    id: layer.ref.id || '',
+                                                    color: computed.color || '#ffffff',
+                                                    backgroundColor: computed.backgroundColor || 'transparent',
+                                                    fontSize: computed.fontSize || '16px',
+                                                    padding: computed.padding || '0px',
+                                                    margin: computed.margin || '0px',
+                                                    width: `${layer.ref.offsetWidth}px`,
+                                                    height: `${layer.ref.offsetHeight}px`,
+                                                    borderRadius: computed.borderRadius || '0px',
+                                                    elementRef: layer.ref,
+                                                    ...meta
+                                                });
+                                            } else {
+                                                setSelectedElement({
+                                                    tagName: layer.type.toUpperCase(),
+                                                    textContent: layer.textContent || layer.name || '',
+                                                    className: layer.className || '',
+                                                    id: layer.id,
+                                                    color: '#ffffff',
+                                                    backgroundColor: 'transparent',
+                                                    fontSize: '16px',
+                                                    padding: '0px',
+                                                    margin: '0px',
+                                                    width: 'auto',
+                                                    height: 'auto',
+                                                    borderRadius: '0px',
+                                                    elementRef: null as any,
+                                                    targetFile: layer.targetFile || '/src/App.tsx',
+                                                    targetLine: layer.targetLine,
+                                                });
+                                            }
                                         }}
-                                        className={`flex items-center justify-between p-2 rounded border transition-colors group ${selectedElement?.elementRef === layer.ref ? 'bg-purple-600/20 border-purple-500' : 'bg-[#121524] border-white/10 hover:border-white/30'}`}
+                                        className={`flex items-center justify-between p-2 rounded border transition-colors group ${
+                                            (layer.ref && selectedElement?.elementRef === layer.ref) ||
+                                            (!layer.ref && selectedElement?.id === layer.id)
+                                                ? 'bg-purple-600/20 border-purple-500'
+                                                : 'bg-[#121524] border-white/10 hover:border-white/30'
+                                        }`}
                                     >
                                         <div className="flex items-center gap-2 overflow-hidden">
                                             <div className="flex items-center gap-1 shrink-0">
@@ -2416,7 +2661,9 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
                                             </div>
                                             <div className="flex flex-col items-start overflow-hidden">
                                                 <span className="text-[10px] font-bold text-slate-200 truncate w-full">{layer.name || layer.type}</span>
-                                                <span className="text-[8px] text-slate-500 uppercase font-mono">{layer.type}</span>
+                                                <span className="text-[8px] text-slate-500 uppercase font-mono">
+                                                    {layer.type}{layer.targetLine ? ` · L${layer.targetLine}` : ''}
+                                                </span>
                                             </div>
                                         </div>
                                         <div className="opacity-0 group-hover:opacity-100 transition-opacity">
@@ -2424,10 +2671,13 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
                                                 className="w-3 h-3 text-red-400 hover:text-red-300" 
                                                 onClick={(e) => {
                                                     e.stopPropagation();
-                                                    RealProjectSourcePatcher.deleteElementFromProject(layer.ref.innerText || '', {
-                                                        targetFile: layer.ref.getAttribute('data-vfs-file') || undefined,
-                                                        targetLine: parseInt(layer.ref.getAttribute('data-vfs-line') || '0', 10) || undefined
-                                                    });
+                                                    RealProjectSourcePatcher.deleteElementFromProject(
+                                                        layer.ref?.innerText || layer.textContent || layer.name || '',
+                                                        {
+                                                            targetFile: layer.ref?.getAttribute('data-vfs-file') || layer.targetFile,
+                                                            targetLine: parseInt(layer.ref?.getAttribute('data-vfs-line') || '0', 10) || layer.targetLine
+                                                        }
+                                                    );
                                                 }}
                                             />
                                         </div>
@@ -2482,9 +2732,9 @@ export const AnnyProfessionalEditor: React.FC<AnnyProfessionalEditorProps> = ({
                 </div>
             </div>
 
-            {/* FLOATING AI ASSISTANT PANEL */}
+            {/* FLOATING AI ASSISTANT PANEL — Responsive bottom sheet on mobile, floating dock on desktop */}
             {showAiAssistant && (
-                <div className="fixed bottom-6 right-[336px] w-80 h-96 bg-[#151828] border border-purple-500/30 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.6)] flex flex-col z-[200] overflow-hidden animate-in slide-in-from-bottom-4 duration-300">
+                <div className="fixed bottom-3 left-3 right-3 sm:left-auto sm:right-4 lg:right-[336px] sm:w-80 h-[60vh] sm:h-96 max-h-[520px] bg-[#151828] border border-purple-500/30 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.6)] flex flex-col z-[200] overflow-hidden animate-in slide-in-from-bottom-4 duration-300">
                     <div className="h-10 bg-[#1a1e2e] border-b border-white/10 flex items-center justify-between px-4 shrink-0">
                         <div className="flex items-center gap-2">
                             <Bot className="w-4 h-4 text-purple-400" />

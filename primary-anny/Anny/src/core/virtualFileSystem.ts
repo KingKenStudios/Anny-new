@@ -129,6 +129,7 @@ export class VirtualFileSystem {
   private root: VFSDirectoryNode;
   private listeners: Set<VFSEventListener> = new Set();
   private storageKey: string;
+  private activeWriteDepth: number = 0;
 
   constructor(storageKey: string = 'anny_anny_vfs_default') {
     this.storageKey = storageKey;
@@ -144,6 +145,23 @@ export class VirtualFileSystem {
     this.loadFromStorage();
   }
 
+  /**
+   * Executes a synchronous batch of VFS mutations while preventing re-entrant
+   * reloadFromStorage() calls from replacing this.root mid-write.
+   */
+  public withWriteLock<T>(fn: () => T): T {
+    this.activeWriteDepth++;
+    try {
+      return fn();
+    } finally {
+      this.activeWriteDepth = Math.max(0, this.activeWriteDepth - 1);
+    }
+  }
+
+  public isWriteInProgress(): boolean {
+    return this.activeWriteDepth > 0;
+  }
+
   // --- Event Subscription ---
   public watch(listener: VFSEventListener): () => void {
     this.listeners.add(listener);
@@ -151,10 +169,10 @@ export class VirtualFileSystem {
   }
 
   private notify(event: VFSChangeEvent): void {
+    this.saveToStorage();
     this.listeners.forEach(fn => {
       try { fn(event); } catch (e) { console.error('[VFS Event Error]', e); }
     });
-    this.saveToStorage();
   }
 
   // --- Directory Operations ---
@@ -163,33 +181,39 @@ export class VirtualFileSystem {
     throw new Error("PHANTOM_WRITE_ERROR: Unauthorized project mutation attempt. Direct VFS mutations are prohibited. Use vfsTransactionManager.");
   }
   public _unsafe_mkdir(path: string): VFSDirectoryNode {
-    const norm = PathUtils.normalize(path);
-    if (norm === '/') return this.root;
+    return this.withWriteLock(() => {
+      const norm = PathUtils.normalize(path);
+      if (norm === '/') return this.root;
 
-    const parts = norm.split('/').filter(Boolean);
-    let current: VFSDirectoryNode = this.root;
-    let currentPath = '';
+      const parts = norm.split('/').filter(Boolean);
+      let current: VFSDirectoryNode = this.root;
+      let currentPath = '';
+      const createdDirs: Array<{ path: string; node: VFSDirectoryNode }> = [];
 
-    for (const part of parts) {
-      currentPath += '/' + part;
-      if (!current.children[part] || current.children[part].type !== 'directory') {
-        const newDir: VFSDirectoryNode = {
-          id: `dir_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-          name: part,
-          path: currentPath,
-          type: 'directory',
-          children: current.children[part] && current.children[part].type === 'directory' ? (current.children[part] as VFSDirectoryNode).children : {},
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        };
-        current.children[part] = newDir;
-        this.notify({ type: 'create', path: currentPath, node: newDir, timestamp: Date.now() });
+      for (const part of parts) {
+        currentPath += '/' + part;
+        if (!current.children[part] || current.children[part].type !== 'directory') {
+          const newDir: VFSDirectoryNode = {
+            id: `dir_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            name: part,
+            path: currentPath,
+            type: 'directory',
+            children: current.children[part] && current.children[part].type === 'directory' ? (current.children[part] as VFSDirectoryNode).children : {},
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+          };
+          current.children[part] = newDir;
+          createdDirs.push({ path: currentPath, node: newDir });
+        }
+        current = current.children[part] as VFSDirectoryNode;
       }
-      current = current.children[part] as VFSDirectoryNode;
-    }
 
-    this.saveToStorage();
-    return current;
+      this.saveToStorage();
+      for (const created of createdDirs) {
+        this.notify({ type: 'create', path: created.path, node: created.node, timestamp: Date.now() });
+      }
+      return current;
+    });
   }
 
   // --- Write File ---
@@ -198,92 +222,93 @@ export class VirtualFileSystem {
     throw new Error("PHANTOM_WRITE_ERROR: Unauthorized project mutation attempt. Direct VFS mutations are prohibited. Use vfsTransactionManager.");
   }
   public _unsafe_writeFile(path: string, rawContent: any, isExecutable: boolean = false): VFSFileNode {
-    const safePath = typeof path === 'string' && path.trim() ? path : (path != null ? String(path) : '/untitled.tsx');
-    const stringContent = typeof rawContent === 'string' 
-      ? rawContent 
-      : (rawContent != null 
-          ? (typeof rawContent === 'object' ? JSON.stringify(rawContent, null, 2) : String(rawContent)) 
-          : '');
-    let norm = PathUtils.normalize(safePath);
-    if (!norm || norm === '/') {
-      norm = '/untitled.txt';
-    }
-    const parentPath = PathUtils.getParent(norm);
-    const fileName = PathUtils.getName(norm);
-    if (!fileName || fileName === '/') {
-      throw new Error(`[VFS Invalid Path] Cannot write file at directory path: ${norm}`);
-    }
+    return this.withWriteLock(() => {
+      const safePath = typeof path === 'string' && path.trim() ? path : (path != null ? String(path) : '/untitled.tsx');
+      const stringContent = typeof rawContent === 'string' 
+        ? rawContent 
+        : (rawContent != null 
+            ? (typeof rawContent === 'object' ? JSON.stringify(rawContent, null, 2) : String(rawContent)) 
+            : '');
+      let norm = PathUtils.normalize(safePath);
+      if (!norm || norm === '/') {
+        norm = '/untitled.txt';
+      }
+      const parentPath = PathUtils.getParent(norm);
+      const fileName = PathUtils.getName(norm);
+      if (!fileName || fileName === '/') {
+        throw new Error(`[VFS Invalid Path] Cannot write file at directory path: ${norm}`);
+      }
 
-    const isScript = norm.endsWith('.ts') || norm.endsWith('.tsx') || norm.endsWith('.js') || norm.endsWith('.jsx');
-    const content = isScript ? sanitizeConstDeclarations(stringContent) : stringContent;
+      const isScript = norm.endsWith('.ts') || norm.endsWith('.tsx') || norm.endsWith('.js') || norm.endsWith('.jsx');
+      const content = isScript ? sanitizeConstDeclarations(stringContent) : stringContent;
 
-    const parentDir = this._unsafe_mkdir(parentPath);
-    const existing = parentDir.children[fileName];
+      const preExisting = this.getNode(norm);
+      const eventType: 'create' | 'update' = preExisting && preExisting.type === 'file' ? 'update' : 'create';
+      const language = PathUtils.detectLanguage(fileName);
+      const hash = PathUtils.computeHash(content);
+      const now = Date.now();
 
-    const language = PathUtils.detectLanguage(fileName);
-    const hash = PathUtils.computeHash(content);
-    const now = Date.now();
-
-    let node: VFSFileNode;
-    let eventType: 'create' | 'update' = 'create';
-
-    if (existing && existing.type === 'file') {
-      eventType = 'update';
-    }
-
-    try {
-      systemBus.publish('FILE_OPERATION_STARTED', 'VirtualFileSystem', { filePath: norm, operation: eventType === 'create' ? 'create' : 'edit' });
-      executionStreamManager.touchFile(norm, 'active', eventType === 'create' ? 'create' : 'edit');
-    } catch (_e) {}
-
-    if (existing && existing.type === 'file') {
-      node = {
-        ...existing,
-        content,
-        size: content.length,
-        hash,
-        language,
-        isExecutable,
-        updatedAt: now
-      };
-    } else {
-      node = {
-        id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-        name: fileName,
-        path: norm,
-        type: 'file',
-        content,
-        language,
-        size: content.length,
-        hash,
-        isExecutable,
-        createdAt: now,
-        updatedAt: now
-      };
-    }
-
-    parentDir.children[fileName] = node;
-
-    // MANDATORY READ-BACK VERIFICATION (supports legitimate empty files such as "" / .keep / .env.example)
-    // Verify BEFORE firing watch() listeners so synchronous subscribers cannot invalidate the read-back check.
-    const readBackNode = this.getNode(norm);
-    const readBackContent = readBackNode && readBackNode.type === 'file' ? readBackNode.content : null;
-    const readBackHash = readBackContent !== null ? PathUtils.computeHash(readBackContent) : '';
-    if (readBackContent === null || readBackHash !== hash) {
+      // Emit pre-write lifecycle signals BEFORE acquiring parentDir so subscribers
+      // cannot detach parentDir from this.root.
       try {
-        systemBus.publish('FILE_OPERATION_FAILED', 'VirtualFileSystem', { filePath: norm, error: `Read-back verification failed for ${norm}` });
-        executionStreamManager.failFile(norm, `Read-back verification failed for ${norm}`);
+        systemBus.publish('FILE_OPERATION_STARTED', 'VirtualFileSystem', { filePath: norm, operation: eventType === 'create' ? 'create' : 'edit' });
+        executionStreamManager.touchFile(norm, 'active', eventType === 'create' ? 'create' : 'edit');
       } catch (_e) {}
-      throw new Error(`[VFS Write Verification Failure] File write verification failed for ${norm}`);
-    }
 
-    this.notify({ type: eventType, path: norm, node, timestamp: now });
-    try {
-      systemBus.publish('FILE_OPERATION_COMPLETED', 'VirtualFileSystem', { filePath: norm, operation: eventType === 'create' ? 'create' : 'edit' });
-      executionStreamManager.completeFile(norm, eventType === 'create' ? 'create' : 'edit');
-    } catch (_e) {}
-    this.saveToStorage();
-    return node;
+      // Atomic tree mutation + read-back verification (zero external callbacks between mkdir, write, and getNode).
+      const parentDir = this._unsafe_mkdir(parentPath);
+      const existing = parentDir.children[fileName];
+
+      let node: VFSFileNode;
+      if (existing && existing.type === 'file') {
+        node = {
+          ...existing,
+          content,
+          size: content.length,
+          hash,
+          language,
+          isExecutable,
+          updatedAt: now
+        };
+      } else {
+        node = {
+          id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          name: fileName,
+          path: norm,
+          type: 'file',
+          content,
+          language,
+          size: content.length,
+          hash,
+          isExecutable,
+          createdAt: now,
+          updatedAt: now
+        };
+      }
+
+      parentDir.children[fileName] = node;
+
+      // MANDATORY READ-BACK VERIFICATION (supports legitimate empty files such as "" / .keep / .env.example)
+      const readBackNode = this.getNode(norm);
+      const readBackContent = readBackNode && readBackNode.type === 'file' ? readBackNode.content : null;
+      const readBackHash = readBackContent !== null ? PathUtils.computeHash(readBackContent) : '';
+      if (readBackContent === null || readBackHash !== hash) {
+        try {
+          systemBus.publish('FILE_OPERATION_FAILED', 'VirtualFileSystem', { filePath: norm, error: `Read-back verification failed for ${norm}` });
+          executionStreamManager.failFile(norm, `Read-back verification failed for ${norm}`);
+        } catch (_e) {}
+        throw new Error(`[VFS Write Verification Failure] File write verification failed for ${norm}`);
+      }
+
+      // Persist before notifying listeners so any listener reading storage sees the committed write.
+      this.saveToStorage();
+      this.notify({ type: eventType, path: norm, node, timestamp: now });
+      try {
+        systemBus.publish('FILE_OPERATION_COMPLETED', 'VirtualFileSystem', { filePath: norm, operation: eventType === 'create' ? 'create' : 'edit' });
+        executionStreamManager.completeFile(norm, eventType === 'create' ? 'create' : 'edit');
+      } catch (_e) {}
+      return node;
+    });
   }
 
   // --- Read File ---
@@ -507,7 +532,7 @@ export class VirtualFileSystem {
       }
       if (data) {
         const parsed = JSON.parse(data);
-        if (parsed && parsed.type === 'directory' && parsed.children && typeof parsed.children === 'object') {
+        if (parsed && parsed.type === 'directory' && parsed.children && typeof parsed.children === 'object' && !Array.isArray(parsed.children)) {
           const packageNode = parsed.children?.package?.children?.json;
           const appNode = parsed.children?.src?.children?.App?.children?.tsx;
           const packageName = packageNode?.type === 'file' ? (() => {
@@ -554,6 +579,8 @@ export class VirtualFileSystem {
   }
 
   public reloadFromStorage(): void {
+    // Never replace this.root from storage while an in-flight write or batch mutation is active.
+    if (this.activeWriteDepth > 0) return;
     this.loadFromStorage();
   }
 

@@ -2577,7 +2577,9 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     }
 
     let statusPollTimer: ReturnType<typeof setInterval> | null = null;
+    let pollingStopped = false;
     const stopStatusPolling = () => {
+      pollingStopped = true;
       if (statusPollTimer) {
         clearInterval(statusPollTimer);
         statusPollTimer = null;
@@ -2676,15 +2678,15 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         let lastSyncedStageKey = '';
         let pollInFlight = false;
         const pollLivePipelineStatus = async () => {
-          if (pollInFlight) return;
+          if (pollingStopped || pollInFlight) return;
           pollInFlight = true;
           try {
             const statusRes = await fetchWithAuth(`/api/anny/pipeline/status/${encodeURIComponent(execId)}`, {
               method: 'GET',
             });
-            if (!statusRes.ok) return;
+            if (pollingStopped || !statusRes.ok) return;
             const live = await statusRes.json().catch(() => null);
-            if (!live || !live.success) return;
+            if (pollingStopped || !live || !live.success) return;
 
             const liveStage = typeof live.stage === 'string' ? live.stage : 'planning';
             const liveStatus = typeof live.status === 'string' ? live.status : 'running';
@@ -3885,13 +3887,13 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
             <div className={`flex-1 bg-[#030511] flex-col h-full overflow-hidden min-w-0 ${
               mobileSplitView === 'preview' ? 'flex' : 'hidden lg:flex'
             }`}>
-              {/* Preview Controls Top Bar */}
-              <div className="px-4 py-2 bg-[#060818] border-b border-white/10 flex items-center justify-between gap-4 z-10 shrink-0">
-                {/* Left Tabs */}
-                <div className="flex items-center gap-2">
+              {/* Preview Controls Top Bar — Clean horizontally scrollable on mobile, spacious on desktop */}
+              <div className="px-2.5 sm:px-4 py-2 bg-[#060818] border-b border-white/10 flex items-center justify-between gap-2 sm:gap-3 z-10 shrink-0 min-w-0">
+                {/* Left Tabs (scrollable on narrow viewports so labels never stack or clip) */}
+                <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar min-w-0 flex-1 py-0.5">
                   <button
                     onClick={() => setPreviewTab('preview')}
-                    className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                       previewTab === 'preview'
                         ? 'bg-indigo-600 text-white shadow-md'
                         : 'text-slate-400 hover:text-white hover:bg-white/5'
@@ -3902,49 +3904,49 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
 
                   <button
                     onClick={() => setPreviewTab('code')}
-                    className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                       previewTab === 'code'
                         ? 'bg-indigo-600 text-white shadow-md'
                         : 'text-slate-400 hover:text-white hover:bg-white/5'
                     }`}
                   >
-                    <Code2 className="w-3.5 h-3.5" />
+                    <Code2 className="w-3.5 h-3.5 shrink-0" />
                     <span>Code &amp; Files</span>
                   </button>
                   <button
                     onClick={() => setPreviewTab('logs')}
-                    className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                       previewTab === 'logs'
                         ? 'bg-indigo-600 text-white shadow-md'
                         : 'text-slate-400 hover:text-white hover:bg-white/5'
                     }`}
                   >
-                    <Terminal className="w-3.5 h-3.5" />
+                    <Terminal className="w-3.5 h-3.5 shrink-0" />
                     <span>Logs &amp; Tests</span>
                   </button>
                   <button
                     onClick={() => setPreviewTab('intelligence')}
-                    className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                       previewTab === 'intelligence'
                         ? 'bg-indigo-600 text-white shadow-md'
                         : 'text-slate-400 hover:text-white hover:bg-white/5'
                     }`}
                   >
-                    <Brain className="w-3.5 h-3.5" />
+                    <Brain className="w-3.5 h-3.5 shrink-0" />
                     <span>Intelligence</span>
                   </button>
 
                   <button
                     onClick={() => setIsVisualEditor(true)}
-                    className="px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md hover:brightness-110"
+                    className="px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md hover:brightness-110 whitespace-nowrap shrink-0"
                   >
-                    <Pencil className="w-3.5 h-3.5" />
+                    <Pencil className="w-3.5 h-3.5 shrink-0" />
                     <span>Visual Edit</span>
                   </button>
                 </div>
 
-                {/* Center Device Responsive Toggles */}
-                <div className="flex items-center gap-1 bg-[#0a0d28] p-1 rounded-lg border border-white/10">
+                {/* Center Device Responsive Toggles (hidden on mobile in Preview tab because toolbar below already shows them) */}
+                <div className="hidden xl:flex items-center gap-1 bg-[#0a0d28] p-1 rounded-lg border border-white/10 shrink-0">
                   <button
                     onClick={() => setDeviceViewport('desktop')}
                     className={`p-1 rounded ${deviceViewport === 'desktop' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
@@ -3965,78 +3967,79 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                   </button>
                 </div>
 
-                    {/* Right Action Buttons */}
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setReloadKey((k) => k + 1);
-                          showNotice('Live preview refreshed.', 'info');
-                        }}
-                        title="Refresh live preview"
-                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 cursor-pointer"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                      </button>
+                {/* Right Action Buttons */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReloadKey((k) => k + 1);
+                      showNotice('Live preview refreshed.', 'info');
+                    }}
+                    title="Refresh live preview"
+                    className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 cursor-pointer shrink-0"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
 
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const files = Object.entries(vfsFiles);
-                          if (files.length === 0) {
-                            showNotice('Generate a project first before downloading a ZIP bundle.', 'warning');
-                            return;
-                          }
-                          try {
-                            const zip = new JSZip();
-                            for (const [filePath, fileContent] of files) {
-                              if (filePath.startsWith('/__anny_')) continue;
-                              const cleanPath = filePath.replace(/^\/+/, '');
-                              if (cleanPath) zip.file(cleanPath, String(fileContent ?? ''));
-                            }
-                            const blob = await zip.generateAsync({ type: 'blob' });
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            const slug = (projectMetaState.name || projectMetaState.projectId || 'anny-project')
-                              .toLowerCase()
-                              .replace(/[^a-z0-9._-]+/g, '-')
-                              .replace(/^-|-$/g, '');
-                            a.href = url;
-                            a.download = `${slug || 'anny-project'}.zip`;
-                            document.body.appendChild(a);
-                            a.click();
-                            document.body.removeChild(a);
-                            URL.revokeObjectURL(url);
-                            showNotice(`Downloaded ${files.length} workspace files as ${slug || 'anny-project'}.zip`, 'success');
-                          } catch (err: any) {
-                            showNotice(err?.message || 'Unable to package workspace ZIP bundle.', 'error');
-                          }
-                        }}
-                        title="Download generated project files (.zip)"
-                        className="px-3 py-1 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white font-semibold text-xs shadow-md hover:brightness-110 flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Download ZIP</span>
-                      </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const files = Object.entries(vfsFiles);
+                      if (files.length === 0) {
+                        showNotice('Generate a project first before downloading a ZIP bundle.', 'warning');
+                        return;
+                      }
+                      try {
+                        const zip = new JSZip();
+                        for (const [filePath, fileContent] of files) {
+                          if (filePath.startsWith('/__anny_')) continue;
+                          const cleanPath = filePath.replace(/^\/+/, '');
+                          if (cleanPath) zip.file(cleanPath, String(fileContent ?? ''));
+                        }
+                        const blob = await zip.generateAsync({ type: 'blob' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        const slug = (projectMetaState.name || projectMetaState.projectId || 'anny-project')
+                          .toLowerCase()
+                          .replace(/[^a-z0-9._-]+/g, '-')
+                          .replace(/^-|-$/g, '');
+                        a.href = url;
+                        a.download = `${slug || 'anny-project'}.zip`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        showNotice(`Downloaded ${files.length} workspace files as ${slug || 'anny-project'}.zip`, 'success');
+                      } catch (err: any) {
+                        showNotice(err?.message || 'Unable to package workspace ZIP bundle.', 'error');
+                      }
+                    }}
+                    title="Download generated project files (.zip)"
+                    className="px-2 sm:px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white font-semibold text-xs shadow-md hover:brightness-110 flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    <Download className="w-3.5 h-3.5 shrink-0" />
+                    <span className="hidden md:inline">Download ZIP</span>
+                  </button>
 
-                      <button
-                        type="button"
-                        onClick={() => setIsFullscreenPreview(true)}
-                        className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs flex items-center gap-1 border border-white/10 cursor-pointer hover:border-indigo-500/50 hover:text-white transition-all shadow-sm whitespace-nowrap"
-                      >
-                        <Maximize2 className="w-3 h-3 text-indigo-400" />
-                        <span className="hidden sm:inline">Fullscreen</span>
-                      </button>
-                    </div>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsFullscreenPreview(true)}
+                    title="Open Fullscreen Preview"
+                    className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs flex items-center gap-1 border border-white/10 cursor-pointer hover:border-indigo-500/50 hover:text-white transition-all shadow-sm whitespace-nowrap shrink-0"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                    <span className="hidden sm:inline">Fullscreen</span>
+                  </button>
+                </div>
+              </div>
 
-                  {/* Main Content Stage */}
-                  <div className="flex-1 overflow-hidden flex flex-col min-h-0 bg-[#02030d]">
-                    {previewTab === 'preview' ? (
-                      <WorkspacePreviewContainer
-                        isPreviewFullScreen={isFullscreenPreview}
-                        setIsPreviewFullScreen={setIsFullscreenPreview}
-                        setReloadKey={setReloadKey}
+              {/* Main Content Stage */}
+              <div className="flex-1 overflow-hidden flex flex-col min-h-0 bg-[#02030d]">
+                {previewTab === 'preview' ? (
+                  <WorkspacePreviewContainer
+                    isPreviewFullScreen={false}
+                    setIsPreviewFullScreen={setIsFullscreenPreview}
+                    setReloadKey={setReloadKey}
                         buildState={
                           isGenerating
                             ? 'in_progress'
@@ -5110,86 +5113,99 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         </div>
       )}
 
-      {/* FULLSCREEN LIVE PREVIEW MODAL */}
+      {/* FULLSCREEN LIVE PREVIEW MODAL — Unified, zero-overlap responsive header & full-height real build */}
       {isFullscreenPreview && (
-        <div className="fixed inset-0 z-[9999] bg-[#02030e] flex flex-col w-screen h-screen overflow-hidden">
-          {/* Persistent Floating Backup Exit Button */}
-          <button
-            onClick={() => setIsFullscreenPreview(false)}
-            className="fixed top-3 right-4 z-[999999] px-3.5 py-1.5 rounded-xl bg-red-600/90 hover:bg-red-500 text-white text-xs font-bold border border-red-400/50 flex items-center gap-1.5 transition-all cursor-pointer shadow-2xl backdrop-blur-md"
-            title="Exit Fullscreen Preview"
-          >
-            <Minimize2 className="w-4 h-4" />
-            <span>Exit Fullscreen</span>
-          </button>
-
-          {/* Top Header Bar */}
-          <div className="px-4 sm:px-6 py-3 bg-[#060818] border-b border-white/10 flex items-center justify-between gap-4 shrink-0 z-[10000] relative">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="flex items-center gap-2">
+        <div className="fixed inset-0 z-[9999] bg-[#02030e] flex flex-col w-screen h-[100dvh] overflow-hidden">
+          {/* Responsive Top Header Bar (zero fixed button collisions) */}
+          <div className="px-3 sm:px-5 py-2.5 bg-[#060818] border-b border-white/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shrink-0 z-20">
+            {/* Top Row on mobile / Left side on desktop: Project Title + Exit button on mobile */}
+            <div className="flex items-center justify-between gap-2 min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                <span className="text-sm font-extrabold text-white tracking-wide truncate font-heading">
-                  {activeProj?.id ? `Project: ${activeProj.id}` : 'ANNY Generated Application'} — Live Fullscreen
+                <span className="text-xs sm:text-sm font-extrabold text-white tracking-wide truncate font-heading">
+                  {projectMetaState.name || activeProj?.id || 'ANNY Application'}
+                  {projectMetaState.version ? ` · v${projectMetaState.version}` : ''}
+                </span>
+                <span className="hidden md:inline-block px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-[10px] font-bold uppercase tracking-wider shrink-0">
+                  Fullscreen
                 </span>
               </div>
-              <span className="hidden sm:inline-block px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-[10px] font-bold uppercase tracking-wider shrink-0">
-                Fullscreen Mode
-              </span>
+
+              {/* Mobile-visible Exit Fullscreen button (in-flow, never overlaps) */}
+              <button
+                type="button"
+                onClick={() => setIsFullscreenPreview(false)}
+                className="sm:hidden px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold border border-rose-400/50 flex items-center gap-1.5 transition-all cursor-pointer shadow-md shrink-0 whitespace-nowrap"
+                title="Exit Fullscreen Preview"
+              >
+                <Minimize2 className="w-3.5 h-3.5" />
+                <span>Exit</span>
+              </button>
             </div>
 
-            <div className="flex items-center gap-3 shrink-0 pr-36">
+            {/* Bottom Row on mobile / Right side on desktop: Device Switcher + Tabs + Desktop Exit */}
+            <div className="flex items-center justify-between sm:justify-end gap-2 overflow-x-auto no-scrollbar shrink-0">
               {/* Responsive Device Viewport Switcher */}
-              <div className="flex items-center gap-1 bg-[#0a0d28] p-1 rounded-lg border border-white/10">
+              <div className="flex items-center gap-0.5 bg-[#0a0d28] p-1 rounded-lg border border-white/10 shrink-0">
                 <button
+                  type="button"
                   onClick={() => setDeviceViewport('desktop')}
-                  className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                  className={`px-2 py-1 rounded text-xs flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
                     deviceViewport === 'desktop' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'
                   }`}
+                  title="Desktop View"
                 >
                   <Monitor className="w-3.5 h-3.5" />
-                  <span className="hidden md:inline">Desktop</span>
+                  <span className="hidden lg:inline">Desktop</span>
                 </button>
                 <button
+                  type="button"
                   onClick={() => setDeviceViewport('tablet')}
-                  className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                  className={`px-2 py-1 rounded text-xs flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
                     deviceViewport === 'tablet' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'
                   }`}
+                  title="Tablet View"
                 >
                   <Tablet className="w-3.5 h-3.5" />
-                  <span className="hidden md:inline">Tablet</span>
+                  <span className="hidden lg:inline">Tablet</span>
                 </button>
                 <button
+                  type="button"
                   onClick={() => setDeviceViewport('mobile')}
-                  className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                  className={`px-2 py-1 rounded text-xs flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
                     deviceViewport === 'mobile' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'
                   }`}
+                  title="Mobile View"
                 >
                   <Smartphone className="w-3.5 h-3.5" />
-                  <span className="hidden md:inline">Mobile</span>
+                  <span className="hidden lg:inline">Mobile</span>
                 </button>
               </div>
 
               {/* View Tab Switcher */}
-              <div className="flex items-center gap-1 bg-[#0a0d28] p-1 rounded-lg border border-white/10">
+              <div className="flex items-center gap-0.5 bg-[#0a0d28] p-1 rounded-lg border border-white/10 shrink-0">
                 <button
+                  type="button"
                   onClick={() => setPreviewTab('preview')}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                  className={`px-2.5 sm:px-3 py-1 rounded-md text-xs font-semibold cursor-pointer transition-all whitespace-nowrap ${
                     previewTab === 'preview' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                   }`}
                 >
                   Preview
                 </button>
                 <button
+                  type="button"
                   onClick={() => setPreviewTab('code')}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                  className={`px-2.5 sm:px-3 py-1 rounded-md text-xs font-semibold cursor-pointer transition-all whitespace-nowrap ${
                     previewTab === 'code' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                   }`}
                 >
                   Code
                 </button>
                 <button
+                  type="button"
                   onClick={() => setPreviewTab('intelligence')}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                  className={`px-2.5 sm:px-3 py-1 rounded-md text-xs font-semibold cursor-pointer transition-all whitespace-nowrap ${
                     previewTab === 'intelligence' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                   }`}
                 >
@@ -5197,34 +5213,38 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                 </button>
               </div>
 
-              {/* Close Fullscreen Button */}
+              {/* Desktop Close Fullscreen Button (in-flow, never collides) */}
               <button
+                type="button"
                 onClick={() => setIsFullscreenPreview(false)}
-                className="px-3.5 py-1.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 hover:text-red-100 text-xs font-bold border border-red-500/40 flex items-center gap-1.5 transition-all cursor-pointer shadow-lg"
+                className="hidden sm:flex px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold border border-rose-400/50 items-center gap-1.5 transition-all cursor-pointer shadow-lg shrink-0 whitespace-nowrap"
+                title="Exit Fullscreen Preview"
               >
-                <Minimize2 className="w-4 h-4" />
+                <Minimize2 className="w-3.5 h-3.5" />
                 <span>Exit Fullscreen</span>
               </button>
             </div>
           </div>
 
           {/* Fullscreen Body Stage */}
-          <div className="flex-1 p-2 sm:p-4 bg-[#01020a] flex items-start justify-center overflow-y-auto min-h-0 custom-scrollbar">
+          <div className="flex-1 p-1.5 sm:p-4 bg-[#01020a] flex items-stretch justify-center overflow-hidden min-h-0">
             <div
-              className={`transition-all duration-300 min-h-full w-full bg-[#080b22] border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-y-auto custom-scrollbar ${
+              className={`transition-all duration-300 h-full w-full bg-[#080b22] border border-white/10 rounded-xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden min-h-0 ${
                 deviceViewport === 'mobile'
-                  ? 'max-w-sm h-[88vh]'
+                  ? 'max-w-[400px] mx-auto'
                   : deviceViewport === 'tablet'
-                  ? 'max-w-3xl h-[90vh]'
-                  : 'w-full h-full max-w-7xl mx-auto'
+                  ? 'max-w-3xl mx-auto'
+                  : 'w-full max-w-[1600px] mx-auto'
               }`}
             >
               {previewTab === 'preview' ? (
-                <div className="flex-1 flex flex-col h-full bg-white relative overflow-y-auto custom-scrollbar isolate [transform:translateZ(0)]">
+                <div className="flex-1 flex flex-col h-full min-h-0 bg-slate-950 relative overflow-hidden isolate">
                   <DynamicVFSAppRunner projectId={resolveBestProjectId(currentChatId, projectMetaState.projectId)} />
                 </div>
               ) : previewTab === 'intelligence' ? (
-                <AnnyIntelligenceWorkspacePanel />
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+                  <AnnyIntelligenceWorkspacePanel />
+                </div>
               ) : (
                 /* IDE Code View Fullscreen with File & Folder Explorer */
                 <WorkspaceCodeEditor 

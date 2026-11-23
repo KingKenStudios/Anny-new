@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-23T10:01:03.003Z",
+  "updatedAt": "2026-11-23T11:10:30.044Z",
   "projects": [
     {
       "id": "proj_mwt3gsxe_4ata6hv",
@@ -91,6 +91,50 @@
       "updatedAt": "2026-11-23T10:01:03.003Z",
       "created_at": "2026-11-23T10:01:02.986Z",
       "updated_at": "2026-11-23T10:01:03.003Z"
+    },
+    {
+      "id": "proj_diag_king_ken",
+      "projectId": "proj_diag_king_ken",
+      "project_id": "proj_diag_king_ken",
+      "ownerUserId": "guest_85b1ab3e0f304ba0e1329ba7",
+      "userId": "guest_85b1ab3e0f304ba0e1329ba7",
+      "sessionId": "sess_diag",
+      "name": "king-ken-nation",
+      "description": "A high-end, editorial landing page for King Ken Nation, featuring a charcoal-and-gold aesthetic, media showcase, and immersive brand experience.",
+      "projectType": "landing_page",
+      "category": "landing_page",
+      "model": "Anny Core",
+      "status": "Active",
+      "version": 2,
+      "buildStatus": "READY",
+      "previewStatus": "RUNNING",
+      "files": {
+        "/package.json": "{\"name\":\"king-ken-nation\",\"version\":\"1.0.0\",\"type\":\"module\",\"scripts\":{\"dev\":\"vite\",\"build\":\"vite build\"},\"dependencies\":{\"react\":\"^18.2.0\",\"react-dom\":\"^18.2.0\",\"lucide-react\":\"^0.344.0\"},\"devDependencies\":{\"vite\":\"^5.0.0\",\"@types/react\":\"^18.2.0\",\"@types/react-dom\":\"^18.2.0\",\"typescript\":\"^5.0.0\"}}",
+        "/index.html": "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"/><title>King Ken Nation | The Sovereign Aesthetic</title></head><body><div id=\"root\"></div><script type=\"module\" src=\"/src/main.tsx\"></script></body></html>",
+        "/src/main.tsx": "import React from 'react'; import ReactDOM from 'react-dom/client'; import App from './App'; import './styles.css'; ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);",
+        "/src/styles.css": ":root { --bg: #0C0D12; --gold: #E5A93C; --text: #F4F4F4; } body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; margin: 0; } .nav { padding: 2rem; display: flex; justify-content: space-between; align-items: center; } .hero { height: 80vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; } .btn { border: 1px solid var(--gold); color: var(--gold); padding: 1rem 2.5rem; text-decoration: none; text-transform: uppercase; letter-spacing: 0.15em; transition: 0.3s; } .btn:hover { background: var(--gold); color: var(--bg); } .card { border: 1px solid #222; padding: 2rem; background: #15161d; } .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; padding: 4rem; } footer { text-align: center; padding: 4rem; border-top: 1px solid #222; color: #666; }",
+        "/src/App.tsx": "import React, { useState } from 'react'; import { Crown, Music, Mail, ChevronRight, Menu } from 'lucide-react'; const App = () => { const [menuOpen, setMenuOpen] = useState(false); return (<div className=\"app\"> <nav className=\"nav\"> <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#E5A93C' }}>KING KEN</div> <div className=\"menu-toggle\" onClick={() => setMenuOpen(!menuOpen)}><Menu /></div> </nav> <header className=\"hero\"> <h1 style={{ fontSize: '4rem', marginBottom: '1rem' }}>SOVEREIGN SOUNDS</h1> <p style={{ maxWidth: '600px', marginBottom: '3rem', color: '#888' }}>The official digital empire of King Ken. Immerse yourself in the new wave of rhythm and legacy.</p> <a href=\"#media\" className=\"btn\">Explore Library</a> </header> <section id=\"media\" className=\"grid\"> <div className=\"card\"> <Music size={48} color=\"#E5A93C\"/> <h3>NEW RELEASE</h3> <p>Out now on all platforms. Experience the gold standard.</p> </div> <div className=\"card\"> <Crown size={48} color=\"#E5A93C\"/> <h3>LEGACY</h3> <p>Tracing the evolution of the nation since inception.</p> </div> </section> <footer> <p>&copy; 2024 King Ken Nation. All Rights Reserved.</p> </footer> </div>); }; export default App;"
+      },
+      "files_count": 5,
+      "manifest": {
+        "projectName": "king-ken-nation",
+        "projectType": "landing_page",
+        "description": "A high-end, editorial landing page for King Ken Nation, featuring a charcoal-and-gold aesthetic, media showcase, and immersive brand experience.",
+        "entryPoint": "/src/main.tsx",
+        "dependencies": [
+          "react",
+          "react-dom",
+          "lucide-react"
+        ],
+        "buildInstructions": "npm install && npm run build",
+        "envVars": []
+      },
+      "buildLogs": [],
+      "lastError": null,
+      "createdAt": "2026-11-23T11:10:29.875Z",
+      "updatedAt": "2026-11-23T11:10:30.044Z",
+      "created_at": "2026-11-23T11:10:29.875Z",
+      "updated_at": "2026-11-23T11:10:30.044Z"
     }
   ]
 }

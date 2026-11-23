@@ -395,7 +395,8 @@ class ProjectPreviewController {
     if (!targetId) return {};
 
     const vfs = mgr.getWorkspaceVFS(targetId);
-    if (typeof vfs.reloadFromStorage === 'function') {
+    const writeBusy = typeof (vfs as any).isWriteInProgress === 'function' && (vfs as any).isWriteInProgress();
+    if (!writeBusy && typeof vfs.reloadFromStorage === 'function') {
       vfs.reloadFromStorage();
     }
     const allFiles = vfs.getAllFiles();
@@ -437,60 +438,67 @@ class ProjectPreviewController {
 
     const mgr = WorkspaceManager.getInstance();
     const vfs = mgr.getWorkspaceVFS(cleanId);
-    if (typeof vfs.clearAll === 'function') {
-      vfs.clearAll();
-    } else {
-      for (const f of vfs.getAllFiles()) {
-        if (typeof vfs._unsafe_remove === 'function') {
-          vfs._unsafe_remove(f.path);
-        }
-      }
-    }
-
-    // First normalize and prune any corrupted file-vs-directory conflicts (e.g. /package.json AND /package.json/name)
-    const stagedFiles: Record<string, string> = {};
-    for (const [rawPath, content] of Object.entries(files || {})) {
-      if (typeof rawPath !== 'string' || !rawPath.trim()) continue;
-      if (typeof content !== 'string') continue;
-      const trimmed = rawPath.trim().replace(/\\/g, '/').replace(/^\.\/+/, '');
-      const normalized = (trimmed.startsWith('/') ? trimmed : `/${trimmed}`).replace(/\/+/g, '/').replace(/\/$/, '');
-      if (!normalized || normalized === '/' || normalized.startsWith('/__anny_')) continue;
-      const segs = normalized.split('/').filter(Boolean);
-      // Drop impossible child paths nested inside a JSON/config file (e.g. /package.json/name)
-      const hasJsonAncestor = segs.slice(0, -1).some((s) => /\.(?:json|jsonc|webmanifest)$/i.test(s));
-      if (hasJsonAncestor) continue;
-      stagedFiles[normalized] = content;
-    }
-
-    const stagedKeys = Object.keys(stagedFiles);
-    const stagedSet = new Set(stagedKeys);
-    for (const p of stagedKeys) {
-      const segs = p.split('/').filter(Boolean);
-      let prefix = '';
-      for (let i = 0; i < segs.length - 1; i++) {
-        prefix += '/' + segs[i];
-        if (stagedSet.has(prefix)) {
-          if (/\.[a-z0-9]{1,10}$/i.test(segs[i]) && !segs[i].startsWith('.')) {
-            delete stagedFiles[p];
-          } else {
-            delete stagedFiles[prefix];
+    const executeWrite = (): Record<string, string> => {
+      if (typeof vfs.clearAll === 'function') {
+        vfs.clearAll();
+      } else {
+        for (const f of vfs.getAllFiles()) {
+          if (typeof vfs._unsafe_remove === 'function') {
+            vfs._unsafe_remove(f.path);
           }
         }
       }
-    }
 
-    const resolvedFiles: Record<string, string> = {};
-    for (const [normalized, content] of Object.entries(stagedFiles)) {
-      vfs._unsafe_writeFile(normalized, content);
-      resolvedFiles[normalized] = content;
-    }
+      // First normalize and prune any corrupted file-vs-directory conflicts (e.g. /package.json AND /package.json/name)
+      const stagedFiles: Record<string, string> = {};
+      for (const [rawPath, content] of Object.entries(files || {})) {
+        if (typeof rawPath !== 'string' || !rawPath.trim()) continue;
+        if (typeof content !== 'string') continue;
+        const trimmed = rawPath.trim().replace(/\\/g, '/').replace(/^\.\/+/, '');
+        const normalized = (trimmed.startsWith('/') ? trimmed : `/${trimmed}`).replace(/\/+/g, '/').replace(/\/$/, '');
+        if (!normalized || normalized === '/' || normalized.startsWith('/__anny_')) continue;
+        const segs = normalized.split('/').filter(Boolean);
+        // Drop impossible child paths nested inside a JSON/config file (e.g. /package.json/name)
+        const hasJsonAncestor = segs.slice(0, -1).some((s) => /\.(?:json|jsonc|webmanifest)$/i.test(s));
+        if (hasJsonAncestor) continue;
+        stagedFiles[normalized] = content;
+      }
 
-    if (typeof (vfs as any).saveToStorage === 'function') {
-      (vfs as any).saveToStorage();
-    }
+      const stagedKeys = Object.keys(stagedFiles);
+      const stagedSet = new Set(stagedKeys);
+      for (const p of stagedKeys) {
+        const segs = p.split('/').filter(Boolean);
+        let prefix = '';
+        for (let i = 0; i < segs.length - 1; i++) {
+          prefix += '/' + segs[i];
+          if (stagedSet.has(prefix)) {
+            if (/\.[a-z0-9]{1,10}$/i.test(segs[i]) && !segs[i].startsWith('.')) {
+              delete stagedFiles[p];
+            } else {
+              delete stagedFiles[prefix];
+            }
+          }
+        }
+      }
 
-    this.projectFilesById.set(cleanId, { ...resolvedFiles });
-    return resolvedFiles;
+      const resolvedFiles: Record<string, string> = {};
+      for (const [normalized, content] of Object.entries(stagedFiles)) {
+        vfs._unsafe_writeFile(normalized, content);
+        resolvedFiles[normalized] = content;
+      }
+
+      if (typeof (vfs as any).saveToStorage === 'function') {
+        (vfs as any).saveToStorage();
+      }
+
+      this.projectFilesById.set(cleanId, { ...resolvedFiles });
+      return resolvedFiles;
+    };
+
+    if (typeof (vfs as any).withWriteLock === 'function') {
+      return (vfs as any).withWriteLock(executeWrite);
+    }
+    return executeWrite();
   }
 
   public activateProject(params: {

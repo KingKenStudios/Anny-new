@@ -14,6 +14,8 @@ import {
   parseGeneratedProjectPayload,
   pruneConflictingFilePaths,
 } from '../core/realAppCodeSynthesizer';
+import { executionStreamManager } from '../core/executionStreamManager';
+import { WorkspaceManager } from '../core/workspaceManager';
 import { projectPreviewController } from './projectPreviewController';
 
 const mockHostSnapshot: RuntimeCapabilitySnapshot = {
@@ -187,4 +189,111 @@ test('projectPreviewController.activateProject safely writes projects even if co
   assert.ok(filePaths.includes('/package.json'));
   assert.equal(filePaths.some((p) => p.startsWith('/package.json/')), false);
 });
+
+test('activateProject succeeds when synchronous executionStreamManager subscribers call extractFilesFromVFS/reloadFromStorage mid-write', () => {
+  const projectId = `proj_reentrant_${Date.now()}`;
+  let subscriberCalls = 0;
+  const unsub = executionStreamManager.subscribe(() => {
+    subscriberCalls++;
+    // Reproduces AnnyWorkspace.tsx:1237 -> getVfsMap() -> extractFilesFromVFS() -> vfs.reloadFromStorage()
+    projectPreviewController.extractFilesFromVFS(projectId);
+    WorkspaceManager.getInstance().getWorkspaceVFS(projectId).reloadFromStorage();
+  });
+
+  try {
+    const state = projectPreviewController.activateProject({
+      projectId,
+      name: 'king-ken-nation',
+      files: {
+        '/package.json': JSON.stringify({
+          name: 'king-ken-nation',
+          version: '1.0.0',
+          scripts: { dev: 'vite', build: 'vite build' },
+          dependencies: { react: '^18.2.0', 'react-dom': '^18.2.0' },
+        }, null, 2),
+        '/index.html': '<!doctype html><html><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
+        '/src/styles.css': 'body { margin: 0; font-family: sans-serif; }',
+        '/src/main.tsx': 'import React from "react"; import { createRoot } from "react-dom/client"; import App from "./App"; createRoot(document.getElementById("root")!).render(<App />);',
+        '/src/App.tsx': 'export default function App() { return <main><h1>King Ken Nation</h1></main>; }',
+        '/server/index.ts': 'export const health = () => ({ ok: true });',
+      },
+    });
+
+    assert.ok(subscriberCalls > 0, 'Expected synchronous executionStreamManager subscriber to fire during VFS writes');
+    assert.notEqual(state.status, 'failed');
+    assert.equal(state.runtimeError, null);
+    assert.equal(state.fileCount, 6);
+    assert.ok(state.files['/package.json']);
+    assert.ok(state.files['/server/index.ts']);
+
+    const extracted = projectPreviewController.extractFilesFromVFS(projectId);
+    assert.equal(Object.keys(extracted).length, 6);
+    assert.equal(JSON.parse(extracted['/package.json']).name, 'king-ken-nation');
+  } finally {
+    unsub();
+  }
+});
+
+test('bundleVFSForIsolatedPreview builds real 6-file king-ken-nation project cleanly with styles, no server bundle leakage, and PREVIEW_LAYERS bridge', async () => {
+  const {
+    bundleVFSForIsolatedPreview,
+    createIsolatedPreviewVFS,
+    sanitizePreviewFrameMessage,
+    isStandaloneEmbeddedPreviewIframe,
+  } = await import('../components/StandalonePreviewRunner');
+
+  // Outside a ?preview=standalone route, must return false even if hosted in an outer iframe (e.g. AI Studio)
+  assert.equal(isStandaloneEmbeddedPreviewIframe(), false);
+
+  const kingKenFiles: Record<string, string> = {
+    '/package.json': JSON.stringify({
+      name: 'king-ken-nation',
+      version: '1.0.0',
+      scripts: { dev: 'vite', build: 'tsc && vite build' },
+      dependencies: { react: '^18.2.0', 'react-dom': '^18.2.0', 'lucide-react': '^0.344.0' },
+    }),
+    '/index.html': '<!DOCTYPE html><html lang="en"><head><title>King Ken Nation</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
+    '/src/main.tsx': "import React from 'react'; import ReactDOM from 'react-dom/client'; import App from './App'; import './styles.css'; ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);",
+    '/src/styles.css': ':root { --navy: #0F172A; --blue: #1D4ED8; } body { margin: 0; background: #F8FAFC; color: var(--navy); }',
+    '/src/App.tsx': "import React from 'react'; import { Cpu, Code } from 'lucide-react'; export default function App() { return (<div className=\"app\"><nav className=\"nav\"><h1>KING KEN NATION</h1></nav><section><Cpu size={24} /><Code size={24} /></section></div>); }",
+    '/server/index.ts': "import { createServer } from 'http'; const server = createServer((_req, res) => res.end('ok')); server.listen(3000);",
+  };
+
+  const vfs = createIsolatedPreviewVFS('proj_king_ken_regression', kingKenFiles);
+  const bundle = bundleVFSForIsolatedPreview(vfs, {
+    projectId: 'proj_king_ken_regression',
+    parentOrigin: 'https://example.test',
+    inlineReactVendorScript: '/* react vendor */',
+  });
+
+  assert.equal(bundle.entryFile, '/src/App.tsx');
+  assert.ok(bundle.transpiledModules['/src/App.tsx']);
+  assert.equal(bundle.transpiledModules['/server/index.ts'], undefined, 'Server files must not be bundled into browser sandbox');
+  assert.ok(bundle.cssMap['/src/styles.css']?.includes('--navy'));
+  assert.ok(bundle.srcDoc.includes('KING KEN NATION'));
+  assert.ok(bundle.srcDoc.includes('PREVIEW_LAYERS'));
+  assert.ok(bundle.srcDoc.includes('data-vfs-file'));
+
+  const sanitizedLayers = sanitizePreviewFrameMessage({
+    type: 'PREVIEW_LAYERS',
+    projectId: 'proj_king_ken_regression',
+    layers: [
+      {
+        id: 'layer-0',
+        name: 'KING KEN NATION',
+        tagName: 'h1',
+        targetFile: '/src/App.tsx',
+        targetLine: 1,
+        className: 'hero-title',
+        textContent: 'KING KEN NATION',
+      },
+    ],
+  });
+  assert.ok(sanitizedLayers);
+  assert.equal(sanitizedLayers?.type, 'PREVIEW_LAYERS');
+  assert.equal(Array.isArray(sanitizedLayers?.layers), true);
+  assert.equal((sanitizedLayers?.layers as any[])[0].tagName, 'H1');
+});
+
+
 

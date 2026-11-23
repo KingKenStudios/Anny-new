@@ -1,9 +1,6 @@
 // Simple Service Worker for Anny
-const CACHE_NAME = 'anny-core-v2';
+const CACHE_NAME = 'anny-core-v3';
 const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/model.glb',
   '/logo.png',
   '/manifest.json'
 ];
@@ -32,8 +29,19 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
   // Skip cross-origin requests
   if (!event.request.url.startsWith(self.location.origin)) return;
+  const reqUrl = new URL(event.request.url);
+  if (
+    reqUrl.pathname.startsWith('/api/') ||
+    reqUrl.pathname.startsWith('/@') ||
+    reqUrl.pathname.startsWith('/primary-anny/') ||
+    reqUrl.pathname.startsWith('/node_modules/') ||
+    /\.(?:ts|tsx|js|mjs|cjs|css|html)$/i.test(reqUrl.pathname)
+  ) {
+    return;
+  }
 
   event.respondWith(
     caches.match(event.request).then((response) => {
