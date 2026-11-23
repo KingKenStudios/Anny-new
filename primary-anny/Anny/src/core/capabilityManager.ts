@@ -6,6 +6,24 @@
 
 export type CapabilityStatus = 'online' | 'standby' | 'active' | 'disabled';
 
+
+export interface CapabilityProbeResult {
+  healthy: boolean;
+  connected: boolean;
+  detail: string;
+  latencyMs?: number;
+}
+
+export type CapabilityProbe = () => Promise<CapabilityProbeResult> | CapabilityProbeResult;
+
+export interface CapabilityProbeReport {
+  id: string;
+  outcome: 'verified' | 'failed' | 'timed_out' | 'no_probe';
+  detail: string;
+  latencyMs?: number;
+  checkedAt: string;
+}
+
 export interface SubsystemCapability {
   id: string;
   name: string;
@@ -187,10 +205,77 @@ export class CapabilityManager {
       this.registry.set(id, {
         ...existing,
         ...updates,
-        lastVerified: new Date().toLocaleTimeString()
+        lastVerified: new Date().toISOString()
       });
       this.notify();
     }
+  }
+
+
+  /**
+   * Run a caller-supplied live probe. Registration metadata is never treated
+   * as proof; only a successful probe can promote a capability to healthy.
+   */
+  public async verify(
+    id: string,
+    probe?: CapabilityProbe,
+    timeoutMs = 5000
+  ): Promise<CapabilityProbeReport> {
+    const checkedAt = new Date().toISOString();
+    const capability = this.registry.get(id);
+    if (!capability) {
+      return { id, outcome: 'failed', detail: 'Unknown capability', checkedAt };
+    }
+    if (!probe) {
+      return { id, outcome: 'no_probe', detail: 'No live probe is registered; status remains unverified', checkedAt };
+    }
+    const started = Date.now();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        Promise.resolve().then(probe),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error('Capability probe timed out')), Math.max(1, timeoutMs));
+        })
+      ]);
+      const latencyMs = result.latencyMs ?? Date.now() - started;
+      this.updateStatus(id, {
+        health: result.healthy ? 'healthy' : 'degraded',
+        status: result.connected ? 'active' : 'standby',
+        isConnected: result.connected,
+        limitations: result.healthy
+          ? capability.limitations.filter(item => !item.startsWith('Probe:'))
+          : [...capability.limitations.filter(item => !item.startsWith('Probe:')), `Probe: ${result.detail}`]
+      });
+      return { id, outcome: result.healthy && result.connected ? 'verified' : 'failed', detail: result.detail, latencyMs, checkedAt };
+    } catch (error) {
+      const timedOut = error instanceof Error && error.message.includes('timed out');
+      this.updateStatus(id, {
+        health: timedOut ? 'critical' : 'degraded',
+        status: 'standby',
+        isConnected: false,
+        limitations: [...capability.limitations.filter(item => !item.startsWith('Probe:')), `Probe: ${error instanceof Error ? error.message : String(error)}`]
+      });
+      return {
+        id,
+        outcome: timedOut ? 'timed_out' : 'failed',
+        detail: error instanceof Error ? error.message : String(error),
+        latencyMs: Date.now() - started,
+        checkedAt
+      };
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+
+  /** Verify only capabilities for which the caller supplies real probes. */
+  public async verifyAll(
+    probes: Partial<Record<string, CapabilityProbe>>,
+    timeoutMs = 5000
+  ): Promise<CapabilityProbeReport[]> {
+    return Promise.all(this.getAll().map(capability =>
+      this.verify(capability.id, probes[capability.id], timeoutMs)
+    ));
   }
 
   public getAll(): SubsystemCapability[] {
