@@ -190,7 +190,7 @@ export class UniversalPreviewEngine {
     return {
       ...this.activeRoute,
       url: this.activeRoute.targetUrlOrPath,
-      status: 'READY'
+      status: 'ROUTED_UNVERIFIED'
     };
   }
 
@@ -252,71 +252,32 @@ export class UniversalPreviewEngine {
     const isReact = route.previewType === 'vite_iframe' || route.previewType === 'emulator_preview';
     const isSim = route.previewType === 'industrial_simulator';
 
-    const category: 'REACT_DYNAMIC' | 'STATIC_CONTENT' | 'SPECIALIZED_SIMULATOR' = isReact 
-      ? 'REACT_DYNAMIC' 
-      : isSim 
-      ? 'SPECIALIZED_SIMULATOR' 
-      : 'STATIC_CONTENT';
+    const category: 'REACT_DYNAMIC' | 'STATIC_CONTENT' | 'SPECIALIZED_SIMULATOR' = isReact
+      ? 'REACT_DYNAMIC'
+      : isSim
+        ? 'SPECIALIZED_SIMULATOR'
+        : 'STATIC_CONTENT';
 
-    let isComponentRendered = false;
-    let domVerified = false;
-    let signalResponse = 'NO_SIGNAL';
-
-    if (typeof document !== 'undefined') {
-      domVerified = true;
-      // Inject test signal into DOM pipeline
-      const testSignalId = `__anny_preview_signal_${Date.now()}`;
-      const signalElement = document.createElement('meta');
-      signalElement.id = testSignalId;
-      signalElement.setAttribute('name', 'anny-preview-health-check');
-      signalElement.setAttribute('content', JSON.stringify({ signalId: testSignalId, previewType: route.previewType, timestamp: new Date().toISOString() }));
-      document.head.appendChild(signalElement);
-
-      // Verify DOM mount & React root
-      const reactRootElement = document.getElementById('root') || document.body;
-      const hasChildren = reactRootElement && reactRootElement.children.length > 0;
-      
-      if (hasChildren && category === 'REACT_DYNAMIC') {
-        isComponentRendered = true;
-        signalResponse = 'REACT_MOUNT_SUCCESS';
-      } else if (hasChildren) {
-        isComponentRendered = true;
-        signalResponse = 'STATIC_DOM_MOUNT';
-      } else {
-        isComponentRendered = false;
-        signalResponse = 'STATIC_DOM_FAILURE_EMPTY_ROOT';
-      }
-
-      // Cleanup test signal element
-      if (document.getElementById(testSignalId)) {
-        document.head.removeChild(signalElement);
-      }
-    }
-
+    // This engine can route an artifact, but currently has no viewer-specific
+    // evidence contract to prove that the target artifact—not the host ANNY
+    // page—actually rendered. Do not use the host DOM as false-positive proof.
     const latencyMs = Math.round(performance.now() - startTime);
-    const isHealthy = isComponentRendered || category === 'STATIC_CONTENT';
-
     const report: PreviewHealthReport = {
-      timestamp: new Date().toLocaleTimeString(),
+      timestamp: new Date().toISOString(),
       previewType: route.previewType,
       renderingCategory: category,
-      status: isHealthy ? 'EXCELLENT' : 'DEGRADED',
+      status: 'DEGRADED',
       targetLocation: route.targetUrlOrPath,
-      isComponentRendered,
-      domVerified,
+      isComponentRendered: false,
+      domVerified: false,
       latencyMs,
-      details: category === 'REACT_DYNAMIC' 
-        ? `[Signal: ${signalResponse}] React DOM live component tree rendered on ${route.targetUrlOrPath}`
-        : `[Signal: ${signalResponse}] Static/specialized preview content mounted for ${route.artifactName}`
+      details: 'Preview route selected, but the target viewer has not supplied independent render/load evidence. Host application DOM is not counted as proof of artifact rendering.'
     };
-
-    console.log(`[Preview Health] Status: ${report.status} | Signal: ${signalResponse} | Category: ${report.renderingCategory} | Viewer: ${route.viewerTitle} | Latency: ${report.latencyMs}ms`);
 
     systemBus.publish('PreviewRouted', 'UniversalPreviewEngine', {
       artifactId: route.artifactId,
       previewHealth: report
     });
-
     return report;
   }
 
