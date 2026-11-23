@@ -1,4 +1,4 @@
-import type { OllamaDiscoveryResult, OllamaModelInfo } from './ollamaService';
+import { isOllamaChatModel, type OllamaDiscoveryResult, type OllamaModelInfo } from './ollamaService';
 
 export function resolveOllamaEndpoint(discovery: OllamaDiscoveryResult): string {
   if (!discovery.reachable || !discovery.activeEndpoint) {
@@ -11,20 +11,23 @@ export function resolveOllamaModel(
   requestedModel: string | undefined,
   discoveredModels: OllamaModelInfo[]
 ): string {
-  if (!Array.isArray(discoveredModels) || discoveredModels.length === 0) {
-    throw new Error('OFFLINE_UNAVAILABLE: Ollama is reachable but no local models are installed.');
+  const chatModels = Array.isArray(discoveredModels)
+    ? discoveredModels.filter(model => isOllamaChatModel(model.name))
+    : [];
+  if (chatModels.length === 0) {
+    throw new Error('OFFLINE_UNAVAILABLE: Ollama is reachable but no local chat-capable models are installed.');
   }
 
   const rawRequested = String(requestedModel || '').trim();
   const requested = rawRequested.replace(/^ollama:/i, '');
   const autoSelect = !requested || ['none', 'ollama', 'ollama-local', 'local', 'auto'].includes(requested.toLowerCase());
-  if (autoSelect) return discoveredModels[0].name;
+  if (autoSelect) return chatModels[0].name;
 
-  const exact = discoveredModels.find(model => model.name === requested);
+  const exact = chatModels.find(model => model.name === requested);
   if (exact) return exact.name;
 
   if (!requested.includes(':')) {
-    const alias = discoveredModels.find(model => model.name.split(':')[0] === requested);
+    const alias = chatModels.find(model => model.name.split(':')[0] === requested);
     if (alias) return alias.name;
   }
 
@@ -32,7 +35,7 @@ export function resolveOllamaModel(
 }
 
 export function isInstalledOllamaModel(modelName: string, discoveredModels: string[]): boolean {
-  return Array.isArray(discoveredModels) && discoveredModels.includes(modelName);
+  return Array.isArray(discoveredModels) && discoveredModels.includes(modelName) && isOllamaChatModel(modelName);
 }
 
 export function isOllamaVisionModel(modelName: string): boolean {
