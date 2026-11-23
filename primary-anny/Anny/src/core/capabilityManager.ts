@@ -174,6 +174,8 @@ export class CapabilityManager {
       { id: 'service_cloud_ai', name: 'Configured Cloud AI Providers', category: 'runtime_provider', version: 'runtime', health: 'degraded', status: 'standby', isConnected: false, supportedCapabilities: ['Replaceable online model providers'], limitations: ['Awaiting provider registry audit'], lastVerified: unverified },
       { id: 'service_qdrant', name: 'Qdrant Vector Database', category: 'storage', version: 'runtime', health: 'degraded', status: 'standby', isConnected: false, supportedCapabilities: ['Vector retrieval'], limitations: ['Current platform health method reports simulated storage, not a live Qdrant connection'], lastVerified: unverified }
     ];
+      { id: 'service_minio', name: 'S3-Compatible Object Storage', category: 'storage', version: 'runtime', health: 'degraded', status: 'standby', isConnected: false, supportedCapabilities: ['Durable object and media storage'], limitations: ['Awaiting live bucket health check'], lastVerified: unverified },
+      { id: 'service_rabbitmq', name: 'RabbitMQ Worker Broker', category: 'runtime_provider', version: 'runtime', health: 'degraded', status: 'standby', isConnected: false, supportedCapabilities: ['Durable asynchronous job queues'], limitations: ['Awaiting live broker and queue check'], lastVerified: unverified },
     serviceCapabilities.forEach(capability => this.register(capability));
 
     // 3. Preview Providers
