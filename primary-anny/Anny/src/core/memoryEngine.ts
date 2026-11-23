@@ -459,13 +459,15 @@ export class MemoryEngine {
   }
 
   public async storeVector(key: string, embedding: number[], data: any): Promise<VectorDocument> {
+    const ownerUserId = requireTenantOwner(
+      data?.ownerUserId || data?.metadata?.ownerUserId,
+      'Vector ingestion'
+    );
     return qdrantPlatform.upsertDocument('knowledge_base', JSON.stringify(data), {
       title: key,
       metadata: {
         ...(data && typeof data === 'object' && data.metadata ? data.metadata : {}),
-        ...(data && typeof data === 'object' && data.ownerUserId
-          ? { ownerUserId: requireTenantOwner(data.ownerUserId, 'Vector ingestion') }
-          : {})
+        ownerUserId
       }
     }, embedding);
   }
