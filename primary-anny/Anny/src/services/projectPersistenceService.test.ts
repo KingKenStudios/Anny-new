@@ -169,6 +169,8 @@ test('PostgreSQL owner predicate blocks cross-process first-write races', async 
     const service = Object.create(ProjectPersistenceService.prototype) as any;
     service.storePath = path.join(directory, fileName);
     service.records = new Map();
+    service.deletedProjectIds = new Set();
+    service.previewSessions = new Map();
     service.pool = pool;
     service.pgSchemaReady = false;
     service.projectWriteLocks = new Map();
