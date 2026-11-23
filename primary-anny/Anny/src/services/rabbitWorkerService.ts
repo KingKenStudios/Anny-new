@@ -56,6 +56,30 @@ export class RabbitWorkerService {
     }
   }
 
+  /** Performs a read-only broker and queue check; never treats the in-memory fallback as RabbitMQ. */
+  public async checkHealth(): Promise<{
+    status: 'CONNECTED' | 'NOT_CONFIGURED' | 'CONNECTION_FAILED';
+    configured: boolean;
+    latencyMs: number;
+    error?: string;
+  }> {
+    const startedAt = Date.now();
+    if (!this.rabbitUrl) {
+      return { status: 'NOT_CONFIGURED', configured: false, latencyMs: Date.now() - startedAt };
+    }
+    if (!this.isConnected || !this.channel) {
+      return { status: 'CONNECTION_FAILED', configured: true, latencyMs: Date.now() - startedAt, error: 'RabbitMQ broker is not connected; in-memory fallback may be active' };
+    }
+    try {
+      await this.channel.checkQueue(RabbitWorkerService.QUEUE_EMBEDDINGS);
+      await this.channel.checkQueue(RabbitWorkerService.QUEUE_TRANSPILATION);
+      return { status: 'CONNECTED', configured: true, latencyMs: Date.now() - startedAt };
+    } catch {
+      this.isConnected = false;
+      return { status: 'CONNECTION_FAILED', configured: true, latencyMs: Date.now() - startedAt, error: 'RabbitMQ connection or required worker queue check failed' };
+    }
+  }
+
   /**
    * Publishes an AI document embedding generation job.
    */
