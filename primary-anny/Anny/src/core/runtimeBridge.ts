@@ -173,41 +173,35 @@ export class DockerRuntimeProvider implements IRuntimeProvider {
 /**
  * Remote Runtime Provider (Placeholder Interface for External Cloud Run Services)
  */
+/**
+ * Remote runtime placeholder. No remote endpoint or authenticated job API is
+ * configured in this adapter.
+ */
 export class RemoteRuntimeProvider implements IRuntimeProvider {
   public readonly id = 'provider_remote';
-  public readonly name = 'Remote Cloud Run Engine';
+  public readonly name = 'Remote Runtime (Not Implemented)';
   public readonly version = '1.0.0';
 
   public async isAvailable(): Promise<boolean> {
-    return true;
+    return false;
   }
 
   public async execute(options: ExecutionOptions): Promise<ExecutionResult> {
-    const logs = [
-      `[REMOTE ENGINE] Connected to Cloud Run cluster endpoint...`,
-      `[REMOTE ENGINE] Provisioned stateless container instance for project ${options.projectId}`
-    ];
-
-    capabilityManager.updateStatus(this.id, {
-      status: 'standby',
-      isConnected: true,
-      lastVerified: new Date().toLocaleTimeString()
-    });
-
     return {
-      success: true,
+      success: false,
       providerId: this.id,
       providerName: this.name,
-      logs,
-      timestamp: new Date().toLocaleTimeString()
+      logs: [`[REMOTE ENGINE] No authenticated remote runtime endpoint is configured for project ${options.projectId}.`],
+      errorMessage: 'REMOTE_RUNTIME_UNCONFIGURED: No remote execution endpoint or job API is implemented.',
+      timestamp: new Date().toISOString()
     };
   }
 
-  public async stop(): Promise<boolean> {
-    return true;
+  public async stop(_projectId: string): Promise<boolean> {
+    return false;
   }
 
-  public getLogs(): string[] {
+  public getLogs(_projectId: string): string[] {
     return [];
   }
 }
@@ -228,9 +222,9 @@ export class ViteIframePreviewProvider implements IPreviewProvider {
     return {
       providerId: this.id,
       providerName: this.name,
-      activeUrl: typeof window !== 'undefined' ? `${window.location.origin}?preview=standalone&project=${projectId}` : `http://localhost:${port}?preview=standalone&project=${projectId}`,
+      activeUrl: typeof window !== 'undefined' ? `${window.location.origin}?preview=standalone&project=${encodeURIComponent(projectId)}` : '',
       mode: 'vite_iframe',
-      isLive: true
+      isLive: false // Route exists; target artifact render/load has not been independently verified.
     };
   }
 }
@@ -266,7 +260,7 @@ export class NextJsPreviewProvider implements IPreviewProvider {
     return {
       providerId: this.id,
       providerName: this.name,
-      activeUrl: `http://localhost:${port}`,
+      activeUrl: '',
       mode: 'nextjs_preview',
       // No real Next.js dev server is spawned in this client-side VFS architecture —
       // do not claim this URL is live when nothing is listening on it.
