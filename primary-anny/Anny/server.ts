@@ -771,13 +771,16 @@ async function startServer() {
   app.post("/api/auth/logout", async (req: AuthenticatedRequest, res) => {
     const authHeader = String(req.headers.authorization || '');
     const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
-    if (bearer) await authSecurityPlatform.revokeSessionPersistent(bearer);
     const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : '';
-    if (refreshToken) await authSecurityPlatform.revokeRefreshTokenPersistent(refreshToken);
     const cookieHeader = String(req.headers.cookie || '');
     const userMatch = cookieHeader.match(new RegExp(`${USER_COOKIE_NAME}=([^;]+)`));
-    if (userMatch?.[1]) {
-      try { await authSecurityPlatform.revokeSessionPersistent(decodeURIComponent(userMatch[1])); } catch {}
+    let revocationFailed = false;
+    try {
+      if (bearer) await authSecurityPlatform.revokeSessionPersistent(bearer);
+      if (refreshToken) await authSecurityPlatform.revokeRefreshTokenPersistent(refreshToken);
+      if (userMatch?.[1]) await authSecurityPlatform.revokeSessionPersistent(decodeURIComponent(userMatch[1]));
+    } catch {
+      revocationFailed = true;
     }
     const isSecure = req.secure || req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https';
     res.clearCookie(USER_COOKIE_NAME, {
@@ -786,6 +789,9 @@ async function startServer() {
       secure: isSecure,
       path: '/'
     });
+    if (revocationFailed) {
+      return res.status(503).json({ success: false, error: 'SESSION_REVOCATION_UNAVAILABLE' });
+    }
     res.json({ success: true });
   });
 
@@ -886,13 +892,16 @@ async function startServer() {
   app.post("/api/admin/logout", async (req: AuthenticatedRequest, res) => {
     const authHeader = String(req.headers.authorization || '');
     const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
-    if (bearer) await authSecurityPlatform.revokeSessionPersistent(bearer);
     const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : '';
-    if (refreshToken) await authSecurityPlatform.revokeRefreshTokenPersistent(refreshToken);
     const cookieHeader = String(req.headers.cookie || '');
     const match = cookieHeader.match(new RegExp(`${ADMIN_COOKIE_NAME}=([^;]+)`));
-    if (match?.[1]) {
-      try { await authSecurityPlatform.revokeSessionPersistent(decodeURIComponent(match[1])); } catch {}
+    let revocationFailed = false;
+    try {
+      if (bearer) await authSecurityPlatform.revokeSessionPersistent(bearer);
+      if (refreshToken) await authSecurityPlatform.revokeRefreshTokenPersistent(refreshToken);
+      if (match?.[1]) await authSecurityPlatform.revokeSessionPersistent(decodeURIComponent(match[1]));
+    } catch {
+      revocationFailed = true;
     }
     const isSecure = req.secure || req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https';
     res.clearCookie(ADMIN_COOKIE_NAME, {
@@ -901,6 +910,9 @@ async function startServer() {
       secure: isSecure,
       path: '/'
     });
+    if (revocationFailed) {
+      return res.status(503).json({ success: false, error: 'SESSION_REVOCATION_UNAVAILABLE' });
+    }
     res.json({ success: true });
   });
 
