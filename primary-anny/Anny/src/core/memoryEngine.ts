@@ -356,16 +356,17 @@ export class MemoryEngine {
         ownerUserId: tenantOwnerId
       };
 
-      chunks.push(chunk);
-      this.keywordIndex.set(chunkId, chunk);
-      await qdrantPlatform.putKeywordChunk(chunk);
-
-      // Upsert into Qdrant vector database
+      // Persist the dense vector first. The stable chunk ID makes retries idempotent.
       await qdrantPlatform.upsertDocument('knowledge_base', chunkText, {
         title: documentTitle,
         category,
         metadata: { chunkId, chunkIndex: chunkIdx, ownerUserId: tenantOwnerId }
       });
+
+      // Only expose the BM25 chunk after vector ingestion succeeds.
+      chunks.push(chunk);
+      this.keywordIndex.set(chunkId, chunk);
+      await qdrantPlatform.putKeywordChunk(chunk);
 
       start += (chunkSizeWords - overlapWords);
       chunkIdx++;
