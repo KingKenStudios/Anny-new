@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { aiProviderPlatform } from '../services/aiProviderPlatform';
-import { qdrantPlatform } from '../services/qdrantPlatform';
+import { aiProviderPlatform } from './aiProviderPlatform';
+import { qdrantPlatform } from './qdrantPlatform';
 
 test('knowledge-base vector search applies owner isolation before result limiting', async () => {
   const originalEmbeddings = aiProviderPlatform.embeddings.bind(aiProviderPlatform);
