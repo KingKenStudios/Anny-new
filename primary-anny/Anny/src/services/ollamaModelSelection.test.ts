@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
+import { isInstalledOllamaModel, resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
 import type { OllamaDiscoveryResult } from './ollamaService';
 
 const discovery: OllamaDiscoveryResult = {
@@ -34,4 +34,11 @@ test('local model resolution fails clearly when no model is installed or request
   assert.throws(() => resolveOllamaModel(undefined, []), /no local models are installed/i);
   assert.throws(() => resolveOllamaModel('deepseek-r1', discovery.discoveredModels), /not installed locally/i);
   assert.throws(() => resolveOllamaModel('qwen2.5:72b', discovery.discoveredModels), /not installed locally/i);
+});
+
+
+test('model router only treats an exact discovered Ollama model as installed', () => {
+  const installed = discovery.discoveredModels.map(model => model.name);
+  assert.equal(isInstalledOllamaModel('llama3.2:latest', installed), true);
+  assert.equal(isInstalledOllamaModel('qwen2.5:72b', installed), false);
 });
