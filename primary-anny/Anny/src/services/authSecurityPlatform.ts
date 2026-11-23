@@ -266,13 +266,13 @@ export class AuthSecurityPlatform {
   /** Verify a signed access token against the durable revocation/session registry. */
   public async verifyTokenPersistent(token: string): Promise<UserSession | null> {
     if (!token || this.revokedTokens.has(token)) return null;
-    const local = this.verifyToken(token);
-    if (local) return local;
-
     const payload = this.verifyAccessPayload(token);
     if (!payload) return null;
     const record = await postgresPlatform.findAuthSessionByTokenHash(this.hashSessionCredential(token));
-    if (!record || record.user_id !== payload.userId ||
+    if (!record) {
+      return postgresPlatform.isDurableDatabaseAvailable() ? null : this.verifyToken(token);
+    }
+    if (record.user_id !== payload.userId ||
         record.username !== payload.username || record.role !== payload.role ||
         Number(record.access_expires_at) !== payload.expiresAt ||
         record.revoked_at) return null;
@@ -291,12 +291,13 @@ export class AuthSecurityPlatform {
   /** Verify a refresh token against PostgreSQL, including cross-process revocation state. */
   public async verifyRefreshTokenPersistent(refreshToken: string): Promise<{ userId: string; expiresAt: number } | null> {
     if (!refreshToken || this.revokedTokens.has(refreshToken)) return null;
-    const local = this.verifyRefreshToken(refreshToken);
-    if (local) return local;
     const payload = this.verifyRefreshPayload(refreshToken);
     if (!payload) return null;
     const record = await postgresPlatform.findAuthSessionByRefreshHash(this.hashSessionCredential(refreshToken));
-    if (!record || record.user_id !== payload.userId || record.revoked_at ||
+    if (!record) {
+      return postgresPlatform.isDurableDatabaseAvailable() ? null : this.verifyRefreshToken(refreshToken);
+    }
+    if (record.user_id !== payload.userId || record.revoked_at ||
         Number(record.refresh_expires_at) !== payload.expiresAt) return null;
     return { userId: String(record.user_id), expiresAt: Number(record.refresh_expires_at) };
   }
