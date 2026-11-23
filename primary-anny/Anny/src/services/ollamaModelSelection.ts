@@ -29,3 +29,7 @@ export function resolveOllamaModel(
 
   throw new Error(`OFFLINE_UNAVAILABLE: Requested Ollama model "${requested}" is not installed locally.`);
 }
+
+export function isInstalledOllamaModel(modelName: string, discoveredModels: string[]): boolean {
+  return Array.isArray(discoveredModels) && discoveredModels.includes(modelName);
+}
