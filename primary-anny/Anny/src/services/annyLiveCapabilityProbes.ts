@@ -6,6 +6,8 @@
 import { capabilityManager } from '../core/capabilityManager';
 import { databaseMonitor } from './databaseMonitor';
 import { providerRegistryService } from './providerRegistryService';
+import { minioStorageService } from './minioStorage';
+import { rabbitWorkerService } from './rabbitWorkerService';
 import type { OllamaDiscoveryResult } from './ollamaService';
 
 function statusResult(status: string, latencyMs: number, detail: string) {
@@ -58,6 +60,26 @@ export async function runAnnyLiveCapabilityProbes(
     detail: configuredAndHealthy.length
       ? `${configuredAndHealthy.length} cloud provider(s) passed the provider registry audit`
       : 'No cloud AI provider currently has a successful health audit; credentials/configuration alone are not proof'
+  }));
+
+  const minio = await minioStorageService.checkHealth();
+  await capabilityManager.verify('service_minio', () => ({
+    healthy: minio.status === 'CONNECTED',
+    connected: minio.status === 'CONNECTED',
+    latencyMs: minio.latencyMs,
+    detail: minio.status === 'CONNECTED'
+      ? `Object storage bucket "${minio.bucket}" passed a live HeadBucket check`
+      : minio.error || `Object storage status: ${minio.status}`
+  }));
+
+  const rabbit = await rabbitWorkerService.checkHealth();
+  await capabilityManager.verify('service_rabbitmq', () => ({
+    healthy: rabbit.status === 'CONNECTED',
+    connected: rabbit.status === 'CONNECTED',
+    latencyMs: rabbit.latencyMs,
+    detail: rabbit.status === 'CONNECTED'
+      ? 'RabbitMQ broker and required worker queues passed live checks'
+      : rabbit.error || `RabbitMQ status: ${rabbit.status}`
   }));
 
   // QdrantPlatform currently reports SIMULATED even when a URL is configured.
