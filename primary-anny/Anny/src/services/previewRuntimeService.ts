@@ -796,7 +796,9 @@ export class PreviewRuntimeService {
 
     const persistedSession = await projectPersistenceService.getPreviewSessionByProjectId(cleanProjId);
     const previewId = persistedSession?.previewId || `prev_${crypto.randomBytes(12).toString('hex')}`;
-    const now = new Date().toISOString();
+    const currentTime = Date.now();
+    const previousUpdateTime = persistedSession ? Date.parse(persistedSession.updatedAt) : 0;
+    const now = new Date(Math.max(currentTime, Number.isFinite(previousUpdateTime) ? previousUpdateTime + 1 : currentTime)).toISOString();
     const startedAt = persistedSession?.startedAt || now;
     const capabilityToken = this.deriveCapabilityToken({
       previewId,
