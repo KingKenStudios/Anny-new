@@ -196,7 +196,6 @@ export class PreviewRuntimeService {
       session.previewId,
       session.projectId,
       session.ownerUserId,
-      String(session.version),
       session.updatedAt
     ].join('\\u0000');
     return crypto.createHmac('sha256', secret).update(material).digest('hex');
@@ -912,7 +911,19 @@ export class PreviewRuntimeService {
     session.status = 'RUNNING';
     session.entryFile = bundled.entryFile;
     session.version = project.version;
-    session.updatedAt = new Date().toISOString();
+    await projectPersistenceService.upsertPreviewSession({
+      previewId: session.previewId,
+      projectId: session.projectId,
+      ownerUserId: session.ownerUserId,
+      name: session.name,
+      version: session.version,
+      status: session.status,
+      runtimeMode: session.runtimeMode,
+      entryFile: session.entryFile,
+      lastError: session.lastError,
+      startedAt: session.startedAt,
+      updatedAt: session.updatedAt
+    });
     return { html: bundled.html, session };
   }
 }
