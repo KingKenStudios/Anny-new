@@ -7,7 +7,8 @@
  * 4. Long-Term Knowledge & Hybrid RAG Retrieval (Qdrant Dense Vector + BM25 Keyword Search + Reciprocal Rank Fusion)
  */
 
-import { qdrantPlatform } from '../services/qdrantPlatform';
+import { qdrantPlatform, type VectorDocument } from '../services/qdrantPlatform';
+import { isOwnedByTenant, requireTenantOwner } from './memoryTenantScope';
 import { db, auth } from '../lib/firebase';
 import { doc, setDoc, getDoc, collection, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
 
@@ -330,6 +331,7 @@ export class MemoryEngine {
     // 1. Text Extraction & Cleaning
     const cleanText = rawText.replace(/\r\n/g, '\n').trim();
     if (!cleanText) return { chunksIngested: 0, totalTokens: 0 };
+    const tenantOwnerId = requireTenantOwner(ownerUserId, 'Knowledge ingestion');
 
     // 2. Chunking (Fixed size with 50-token overlap)
     const words = cleanText.split(/\s+/);
@@ -339,11 +341,11 @@ export class MemoryEngine {
 
     let start = 0;
     let chunkIdx = 0;
-    const ownerPrefix = ownerUserId ? `${ownerUserId.replace(/[^a-z0-9]/gi, '_')}_` : '';
+    const ownerPrefix = `${encodeURIComponent(tenantOwnerId)}_`;
     while (start < words.length) {
       const end = Math.min(start + chunkSizeWords, words.length);
       const chunkText = words.slice(start, end).join(' ');
-      const chunkId = `doc_${ownerPrefix}${documentTitle.toLowerCase().replace(/[^a-z0-9]/g, '_')}_chunk_${chunkIdx}`;
+      const chunkId = `doc_${ownerPrefix}${encodeURIComponent(documentTitle.trim().toLowerCase())}_chunk_${chunkIdx}`;
 
       const chunk: DocumentChunk = {
         chunkId,
@@ -351,7 +353,7 @@ export class MemoryEngine {
         text: chunkText,
         chunkIndex: chunkIdx,
         tokens: Math.ceil(chunkText.length / 4),
-        ownerUserId
+        ownerUserId: tenantOwnerId
       };
 
       chunks.push(chunk);
@@ -361,7 +363,7 @@ export class MemoryEngine {
       await qdrantPlatform.upsertDocument('knowledge_base', chunkText, {
         title: documentTitle,
         category,
-        metadata: { chunkId, chunkIndex: chunkIdx, ownerUserId }
+        metadata: { chunkId, chunkIndex: chunkIdx, ownerUserId: tenantOwnerId }
       });
 
       start += (chunkSizeWords - overlapWords);
@@ -379,6 +381,7 @@ export class MemoryEngine {
    */
   public async retrieveRAGContext(query: string, limit: number = 3, ownerUserId?: string): Promise<RAGSearchResult[]> {
     if (!query || !query.trim()) return [];
+    const tenantOwnerId = requireTenantOwner(ownerUserId, 'Knowledge retrieval');
 
     // 1. Dense Vector Search via Qdrant
     const vectorResults = await qdrantPlatform.search(
@@ -387,7 +390,7 @@ export class MemoryEngine {
       limit * 2,
       undefined,
       undefined,
-      ownerUserId
+      tenantOwnerId
     );
 
     // 2. BM25 Keyword Search across internal index
@@ -395,7 +398,7 @@ export class MemoryEngine {
     const bm25Scores: Array<{ chunk: DocumentChunk; score: number }> = [];
 
     this.keywordIndex.forEach((chunk) => {
-      if (ownerUserId && chunk.ownerUserId !== ownerUserId) {
+      if (!isOwnedByTenant(chunk, tenantOwnerId)) {
         return;
       }
       const chunkLower = chunk.text.toLowerCase();
@@ -455,8 +458,16 @@ export class MemoryEngine {
     return finalRAG;
   }
 
-  public storeVector(key: string, embedding: number[], data: any): void {
-    qdrantPlatform.upsertDocument('knowledge_base', JSON.stringify(data), { title: key }, embedding);
+  public async storeVector(key: string, embedding: number[], data: any): Promise<VectorDocument> {
+    return qdrantPlatform.upsertDocument('knowledge_base', JSON.stringify(data), {
+      title: key,
+      metadata: {
+        ...(data && typeof data === 'object' && data.metadata ? data.metadata : {}),
+        ...(data && typeof data === 'object' && data.ownerUserId
+          ? { ownerUserId: requireTenantOwner(data.ownerUserId, 'Vector ingestion') }
+          : {})
+      }
+    }, embedding);
   }
 
   public getSummaryStats() {
