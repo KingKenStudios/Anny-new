@@ -339,6 +339,13 @@ export class AuthSecurityPlatform {
         this.activeSessions.delete(replacement.token);
         return null;
       }
+      const previousLocalSession = Array.from(this.activeSessions.values()).find(
+        session => session.refreshToken === refreshToken
+      );
+      if (previousLocalSession) {
+        this.revokedTokens.add(previousLocalSession.token);
+        this.activeSessions.delete(previousLocalSession.token);
+      }
       this.revokedTokens.add(refreshToken);
       return replacement;
     } catch (error) {
