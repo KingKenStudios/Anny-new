@@ -650,7 +650,7 @@ async function startServer() {
   app.post("/api/v1/anny/integrations/keda/command", async (req, res) => {
     const authHeader = String(req.headers.authorization || '');
     const presentedToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    let session = null;
+    let session: Awaited<ReturnType<typeof authSecurityPlatform.verifyTokenPersistent>> = null;
     try {
       session = presentedToken ? await authSecurityPlatform.verifyTokenPersistent(presentedToken) : null;
     } catch {
@@ -809,7 +809,7 @@ async function startServer() {
   // Server-Side Administrator Session Verification (No client bypasses)
   // ---------------------------------------------------------------------
   app.get("/api/admin/session", async (req: AuthenticatedRequest, res) => {
-    let identity;
+    let identity: Awaited<ReturnType<typeof resolveVerifiedIdentity>>;
     try {
       identity = req.authUser || (await resolveVerifiedIdentity(req, { allowApiKey: false }));
     } catch {
