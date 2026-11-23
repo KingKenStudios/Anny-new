@@ -1235,6 +1235,7 @@ async function startServer() {
           await projectPersistenceService.upsertProject({
             projectId: effectiveRequestProjectId,
             ownerUserId: verifiedUserId,
+            isAdmin,
             sessionId: typeof sessionId === 'string' ? sessionId : undefined,
             name: String(req.body.projectName || effectiveRequestProjectId).slice(0, 140),
             buildStatus: 'FAILED',
@@ -1283,6 +1284,7 @@ async function startServer() {
         persistedProjectRecord = await projectPersistenceService.upsertProject({
           projectId: effectiveProjectId,
           ownerUserId: verifiedUserId,
+          isAdmin,
           sessionId: typeof sessionId === 'string' ? sessionId : undefined,
           name: projectName,
           description: projectDesc,
@@ -1498,6 +1500,7 @@ async function startServer() {
       const saved = await projectPersistenceService.upsertProject({
         projectId: cleanId,
         ownerUserId: existing?.ownerUserId || uid,
+        isAdmin,
         sessionId: typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined,
         name: typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name.trim() : existing?.name || cleanId,
         description: typeof req.body?.description === 'string' ? req.body.description : existing?.description,
