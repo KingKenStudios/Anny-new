@@ -1340,7 +1340,7 @@ async function startServer() {
 
       const normalizedResponse = formatNaturalConversation(kernelOutput.response || pipelineLog?.coding?.summary || 'Request completed.');
       const mediaSummary = websiteMediaResult && (websiteMediaResult.generated.length || websiteMediaResult.warnings.length)
-        ? `\\n\\nWebsite media: ${websiteMediaResult.generated.length} asset(s) generated${websiteMediaResult.warnings.length ? `; ${websiteMediaResult.warnings.join(' ')}` : '.'}`
+        ? `\n\nWebsite media: ${websiteMediaResult.generated.length} asset(s) generated${websiteMediaResult.warnings.length ? `; ${websiteMediaResult.warnings.join(' ')}` : '.'}`
         : '';
       const responseWithMediaSummary = normalizedResponse + mediaSummary;
       const groundingSources = Array.isArray((kernelOutput as any)?.groundingSources)
