@@ -1,7 +1,10 @@
 /**
- * ANNY — QDRANT VECTOR DATABASE PLATFORM (PHASE 6)
- * High-performance vector database integration for semantic search, document embeddings,
- * long-term conversation memory, hybrid retrieval, and knowledge indexing.
+ * ANNY — QDRANT VECTOR DATABASE PLATFORM
+ *
+ * Uses a real Qdrant REST API whenever QDRANT_URL is configured. The in-process
+ * adapter is retained only as an explicitly volatile offline/development mode.
+ * A configured but unreachable Qdrant instance is an error; writes never silently
+ * fall back to memory and pretend to be durable.
  */
 
 import { aiProviderPlatform } from './aiProviderPlatform';
@@ -27,100 +30,226 @@ export interface SearchResult {
   payload: VectorDocument['payload'];
 }
 
+type QdrantConfig = { qdrantUrl: string; qdrantApiKey?: string };
+type QdrantPlatformOptions = {
+  fetcher?: typeof fetch;
+  getConfig?: () => QdrantConfig;
+  embed?: (text: string) => Promise<number[]>;
+};
+
+type QdrantHealth = {
+  status: 'CONNECTED' | 'NOT_CONFIGURED' | 'CONNECTION_FAILED' | 'VOLATILE_OFFLINE';
+  latencyMs: number;
+  totalVectors: number;
+  detail: string;
+};
+
 export class QdrantPlatform {
   private static instance: QdrantPlatform;
   private collections: Map<string, VectorDocument[]> = new Map();
+  private readonly fetcher: typeof fetch;
+  private readonly getConfig: () => QdrantConfig;
+  private readonly embed: (text: string) => Promise<number[]>;
 
-  private constructor() {
+  constructor(options: QdrantPlatformOptions = {}) {
+    this.fetcher = options.fetcher || fetch.bind(globalThis);
+    this.getConfig = options.getConfig || (() => envConfigService.getConfig());
+    this.embed = options.embed || (async text => {
+      const result = await aiProviderPlatform.embeddings(text);
+      return result.embedding;
+    });
     this.createCollection('knowledge_base');
     this.createCollection('conversation_memory');
     this.createCollection('codebase_embeddings');
   }
 
   public static getInstance(): QdrantPlatform {
-    if (!QdrantPlatform.instance) {
-      QdrantPlatform.instance = new QdrantPlatform();
-    }
+    if (!QdrantPlatform.instance) QdrantPlatform.instance = new QdrantPlatform();
     return QdrantPlatform.instance;
   }
 
-  public createCollection(collectionName: string): boolean {
-    if (!this.collections.has(collectionName)) {
-      this.collections.set(collectionName, []);
+  private configuredUrl(): string | null {
+    const raw = this.getConfig().qdrantUrl?.trim();
+    if (!raw) return null;
+    let parsed: URL;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      throw new Error('QDRANT_CONFIGURATION_INVALID: QDRANT_URL must be an absolute HTTP(S) URL.');
     }
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.hash) {
+      throw new Error('QDRANT_CONFIGURATION_INVALID: QDRANT_URL must use HTTP(S) and must not contain credentials or a fragment.');
+    }
+    return parsed.toString().replace(/\/$/, '');
+  }
+
+  private async request(path: string, init: RequestInit = {}): Promise<any> {
+    const baseUrl = this.configuredUrl();
+    if (!baseUrl) throw new Error('QDRANT_NOT_CONFIGURED: Set QDRANT_URL to enable persistent vector storage.');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      const headers = new Headers(init.headers || {});
+      headers.set('content-type', 'application/json');
+      const apiKey = this.getConfig().qdrantApiKey;
+      if (apiKey) headers.set('api-key', apiKey);
+      const response = await this.fetcher(`${baseUrl}${path}`, {
+        ...init,
+        headers,
+        signal: controller.signal
+      });
+      const text = await response.text();
+      let body: any = {};
+      if (text) {
+        try { body = JSON.parse(text); } catch { body = {}; }
+      }
+      if (!response.ok) {
+        const message = response.status === 404 ? 'Qdrant collection or resource was not found.' : `Qdrant returned HTTP ${response.status}.`;
+        const error: any = new Error(`QDRANT_HTTP_ERROR: ${message}`);
+        error.status = response.status;
+        throw error;
+      }
+      if (body?.status === 'error') {
+        throw new Error('QDRANT_OPERATION_FAILED: Qdrant rejected the request.');
+      }
+      return body;
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('QDRANT_TIMEOUT: Qdrant did not respond within 5 seconds.');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private validateCollectionName(name: string): string {
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(name)) {
+      throw new Error('QDRANT_COLLECTION_INVALID: Collection names may contain only letters, numbers, underscores and hyphens.');
+    }
+    return encodeURIComponent(name);
+  }
+
+  private validateVector(vector: number[], label: string): void {
+    if (!Array.isArray(vector) || vector.length === 0 || !vector.every(Number.isFinite)) {
+      throw new Error(`INVALID_EMBEDDING_VECTOR: ${label} must be a non-empty vector containing only finite numbers.`);
+    }
+  }
+
+  private async ensureRemoteCollection(collectionName: string, dimension: number): Promise<void> {
+    const name = this.validateCollectionName(collectionName);
+    try {
+      await this.request(`/collections/${name}`);
+      return;
+    } catch (error: any) {
+      if (error?.status !== 404) throw error;
+    }
+
+    try {
+      await this.request(`/collections/${name}`, {
+        method: 'PUT',
+        body: JSON.stringify({ vectors: { size: dimension, distance: 'Cosine' } })
+      });
+    } catch (error: any) {
+      // Another application instance may have created the collection concurrently.
+      if (error?.status !== 409) throw error;
+    }
+  }
+
+  public createCollection(collectionName: string): boolean {
+    this.validateCollectionName(collectionName);
+    if (!this.collections.has(collectionName)) this.collections.set(collectionName, []);
     return true;
   }
 
-  public async checkHealth(): Promise<{ status: 'SIMULATED' | 'NOT_CONFIGURED'; latencyMs: number; totalVectors: number }> {
-    const startTime = Date.now();
-    const config = envConfigService.getConfig();
+  public async checkHealth(): Promise<QdrantHealth> {
+    const started = Date.now();
     let total = 0;
-    this.collections.forEach(vecs => { total += vecs.length; });
-
-    return {
-      status: config.qdrantUrl ? 'SIMULATED' : 'NOT_CONFIGURED',
-      latencyMs: Date.now() - startTime,
-      totalVectors: total
-    };
-  }
-
-  // Cosine Similarity Computation
-  private cosineSimilarity(vecA: number[], vecB: number[]): number {
-    if (vecA.length === 0 || vecA.length !== vecB.length) return 0;
-    let dot = 0;
-    let normA = 0;
-    let normB = 0;
-
-    for (let i = 0; i < vecA.length; i++) {
-      dot += vecA[i] * vecB[i];
-      normA += vecA[i] * vecA[i];
-      normB += vecB[i] * vecB[i];
+    if (!this.getConfig().qdrantUrl?.trim()) {
+      this.collections.forEach(items => { total += items.length; });
+      return {
+        status: 'VOLATILE_OFFLINE',
+        latencyMs: Date.now() - started,
+        totalVectors: total,
+        detail: 'Qdrant is not configured; vectors exist only in volatile process memory and will be lost on restart.'
+      };
     }
 
-    if (normA === 0 || normB === 0) return 0;
-    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+    try {
+      const response = await this.request('/collections');
+      const collections = Array.isArray(response?.result?.collections) ? response.result.collections : [];
+      for (const collection of collections) {
+        try {
+          const info = await this.request(`/collections/${this.validateCollectionName(collection.name)}`);
+          total += Number(info?.result?.points_count || 0);
+        } catch {
+          // The collection list already proved the service is reachable; omit an
+          // unavailable per-collection count rather than inventing a value.
+        }
+      }
+      return {
+        status: 'CONNECTED',
+        latencyMs: Date.now() - started,
+        totalVectors: total,
+        detail: `Connected to Qdrant; ${collections.length} collection(s) discovered.`
+      };
+    } catch (error) {
+      return {
+        status: 'CONNECTION_FAILED',
+        latencyMs: Date.now() - started,
+        totalVectors: 0,
+        detail: error instanceof Error ? error.message : 'Qdrant health request failed.'
+      };
+    }
   }
 
-  // Index Document with Automatic Vector Generation
   public async upsertDocument(
     collectionName: string,
     content: string,
     payload: Omit<VectorDocument['payload'], 'content' | 'createdAt'>,
     customVector?: number[]
   ): Promise<VectorDocument> {
-    this.createCollection(collectionName);
-
+    this.validateCollectionName(collectionName);
     let vector = customVector;
     if (!vector) {
       try {
-        const embRes = await aiProviderPlatform.embeddings(content);
-        vector = embRes.embedding;
-      } catch (e) {
-        throw new Error(
-          `EMBEDDING_PROVIDER_UNAVAILABLE: Cannot index document without a genuine embedding. ${e instanceof Error ? e.message : String(e)}`
-        );
+        vector = await this.embed(content);
+      } catch (error) {
+        throw new Error(`EMBEDDING_PROVIDER_UNAVAILABLE: Cannot index document without a genuine embedding. ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-
-    if (!Array.isArray(vector) || vector.length === 0 || !vector.every(Number.isFinite)) {
-      throw new Error('INVALID_EMBEDDING_VECTOR: Expected a non-empty vector containing only finite numbers.');
-    }
+    this.validateVector(vector, 'Document embedding');
 
     const doc: VectorDocument = {
-      id: `vec_${Math.random().toString(36).substring(2, 10)}`,
+      id: globalThis.crypto?.randomUUID
+        ? globalThis.crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, char => {
+            const random = Math.floor(Math.random() * 16);
+            return (char === 'x' ? random : (random & 0x3) | 0x8).toString(16);
+          }),
       vector,
-      payload: {
-        content,
-        createdAt: new Date().toISOString(),
-        ...payload
-      }
+      payload: { content, createdAt: new Date().toISOString(), ...payload }
     };
 
-    this.collections.get(collectionName)!.push(doc);
+    if (this.getConfig().qdrantUrl?.trim()) {
+      await this.ensureRemoteCollection(collectionName, vector.length);
+      await this.request(`/collections/${this.validateCollectionName(collectionName)}/points?wait=true`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          points: [{
+            id: doc.id,
+            vector: doc.vector,
+            payload: doc.payload
+          }]
+        })
+      });
+    } else {
+      this.createCollection(collectionName);
+      this.collections.get(collectionName)!.push(doc);
+    }
     return doc;
   }
 
-  // Semantic Search
   public async search(
     collectionName: string,
     queryText: string,
@@ -132,51 +261,86 @@ export class QdrantPlatform {
     if (collectionName === 'conversation_memory' && !filterSessionId) {
       throw new Error('SESSION_SCOPE_REQUIRED: Conversation memory search must specify the owning session ID.');
     }
-
-    const docs = this.collections.get(collectionName) || [];
-    if (docs.length === 0) return [];
-
+    this.validateCollectionName(collectionName);
+    const safeLimit = Math.max(1, Math.min(100, Math.floor(limit) || 5));
     let queryVector: number[];
     try {
-      const queryEmbedding = await aiProviderPlatform.embeddings(queryText);
-      queryVector = queryEmbedding.embedding;
-    } catch (e) {
-      throw new Error(
-        `EMBEDDING_PROVIDER_UNAVAILABLE: Cannot perform semantic search without a genuine query embedding. ${e instanceof Error ? e.message : String(e)}`
-      );
+      queryVector = await this.embed(queryText);
+    } catch (error) {
+      throw new Error(`EMBEDDING_PROVIDER_UNAVAILABLE: Cannot perform semantic search without a genuine query embedding. ${error instanceof Error ? error.message : String(error)}`);
+    }
+    this.validateVector(queryVector, 'Query embedding');
+
+    if (this.getConfig().qdrantUrl?.trim()) {
+      const must: any[] = [];
+      if (filterCategory) must.push({ key: 'category', match: { value: filterCategory } });
+      if (filterSessionId) must.push({ key: 'sessionId', match: { value: filterSessionId } });
+      if (filterOwnerUserId) must.push({ key: 'metadata.ownerUserId', match: { value: filterOwnerUserId } });
+      let response: any;
+      try {
+        response = await this.request(`/collections/${this.validateCollectionName(collectionName)}/points/search`, {
+          method: 'POST',
+          body: JSON.stringify({
+            vector: queryVector,
+            limit: safeLimit,
+            with_payload: true,
+            with_vector: false,
+            ...(must.length ? { filter: { must } } : {})
+          })
+        });
+      } catch (error: any) {
+        if (error?.status === 404) return [];
+        throw error;
+      }
+      const points = Array.isArray(response?.result) ? response.result : [];
+      return points.map((point: any) => ({
+        id: String(point.id),
+        score: Number(Number(point.score || 0).toFixed(4)),
+        content: String(point.payload?.content || ''),
+        payload: {
+          content: String(point.payload?.content || ''),
+          title: point.payload?.title,
+          category: point.payload?.category,
+          sessionId: point.payload?.sessionId,
+          createdAt: String(point.payload?.createdAt || ''),
+          metadata: point.payload?.metadata
+        }
+      }));
     }
 
-    if (!Array.isArray(queryVector) || queryVector.length === 0 || !queryVector.every(Number.isFinite)) {
-      throw new Error('INVALID_EMBEDDING_VECTOR: Query embedding must be a non-empty vector containing only finite numbers.');
-    }
-
-    const results: SearchResult[] = docs
+    const docs = this.collections.get(collectionName) || [];
+    return docs
       .filter(doc => !filterCategory || doc.payload.category === filterCategory)
       .filter(doc => !filterSessionId || doc.payload.sessionId === filterSessionId)
       .filter(doc => !filterOwnerUserId || doc.payload.metadata?.ownerUserId === filterOwnerUserId)
-      .map(doc => {
-        const score = this.cosineSimilarity(queryVector, doc.vector);
-        return {
-          id: doc.id,
-          score: Number(score.toFixed(4)),
-          content: doc.payload.content,
-          payload: doc.payload
-        };
-      })
+      .map(doc => ({
+        id: doc.id,
+        score: Number(this.cosineSimilarity(queryVector, doc.vector).toFixed(4)),
+        content: doc.payload.content,
+        payload: doc.payload
+      }))
       .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
-
-    return results;
+      .slice(0, safeLimit);
   }
 
-  // Retrieve Long Term Memory
+  private cosineSimilarity(vecA: number[], vecB: number[]): number {
+    if (vecA.length === 0 || vecA.length !== vecB.length) return 0;
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < vecA.length; i++) {
+      dot += vecA[i] * vecB[i];
+      normA += vecA[i] * vecA[i];
+      normB += vecB[i] * vecB[i];
+    }
+    if (normA === 0 || normB === 0) return 0;
+    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  }
+
   public async retrieveMemoryContext(sessionId: string, currentQuery: string): Promise<string> {
     const memoryResults = await this.search('conversation_memory', currentQuery, 3, undefined, sessionId);
     if (memoryResults.length === 0) return '';
-
-    return memoryResults
-      .map(r => `[Rel. Memory Score ${r.score}]: ${r.content}`)
-      .join('\n');
+    return memoryResults.map(result => `[Rel. Memory Score ${result.score}]: ${result.content}`).join('\n');
   }
 }
 
