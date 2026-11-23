@@ -124,5 +124,34 @@ test('ANNY Preview Handoff & Project Restoration Regression Tests (A - I)', asyn
     assert.ok(files2['/src/App.tsx']?.includes('Two'));
     assert.notEqual(files1['/src/App.tsx'], files2['/src/App.tsx']);
   });
+
+  await t.test('H: supports empty project snapshots when all files are deleted', () => {
+    const projEmpty = 'proj_empty_snapshot';
+    const mgr = WorkspaceManager.getInstance();
+    mgr.switchWorkspace(projEmpty, 'Empty Project');
+    const vfs = mgr.getWorkspaceVFS(projEmpty);
+
+    vfs._unsafe_writeFile('/src/Temp.tsx', 'temp');
+    assert.equal(Object.keys(vfs.getAllFilesMap()).length, 1);
+
+    vfs._unsafe_remove('/src/Temp.tsx');
+    const map = vfs.getAllFilesMap();
+    const cleanFiles = Object.fromEntries(Object.entries(map).filter(([k]) => !k.startsWith('/__anny_')));
+    assert.equal(Object.keys(cleanFiles).length, 0);
+  });
+
+  await t.test('I: verifies no global VFS leakage when extracting project VFS', () => {
+    const projA = 'proj_leak_a';
+    const projB = 'proj_leak_b';
+    const mgr = WorkspaceManager.getInstance();
+
+    mgr.switchWorkspace(projA, 'Leak A');
+    mgr.getWorkspaceVFS(projA)._unsafe_writeFile('/src/A.tsx', 'A');
+
+    mgr.switchWorkspace(projB, 'Leak B');
+    // projB has no files initially
+    const filesB = projectPreviewController.extractFilesFromVFS(projB);
+    assert.equal(filesB['/src/A.tsx'], undefined);
+  });
 });
 
