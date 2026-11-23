@@ -202,7 +202,7 @@ async function startServer() {
   const rabbitInitialization = rabbitWorkerService.initialize().catch((err) => { console.warn('RabbitWorker init warning:', err); return false; });
   // Non-blocking startup Ollama & provider discovery (never blocks or crashes boot)
   void providerRegistryService.auditAndRefreshHealth()
-    .then(({ ollamaDiscovery }) => {
+    .then(async ({ ollamaDiscovery }) => {
       console.log(`[Startup Discovery] Ollama reachable=${ollamaDiscovery.reachable}, models=${ollamaDiscovery.discoveredModels.length}, inferenceTestPassed=${ollamaDiscovery.inferenceTestPassed}`);
       await rabbitInitialization;
       void runAnnyLiveCapabilityProbes(ollamaDiscovery).catch((err) => {
