@@ -59,7 +59,7 @@ export interface DocumentChunk {
   text: string;
   chunkIndex: number;
   tokens: number;
-  ownerUserId?: string;
+  ownerUserId: string;
 }
 
 export interface RAGSearchResult {
@@ -358,6 +358,7 @@ export class MemoryEngine {
 
       chunks.push(chunk);
       this.keywordIndex.set(chunkId, chunk);
+      await qdrantPlatform.putKeywordChunk(chunk);
 
       // Upsert into Qdrant vector database
       await qdrantPlatform.upsertDocument('knowledge_base', chunkText, {
@@ -396,11 +397,16 @@ export class MemoryEngine {
     // 2. BM25 Keyword Search across internal index
     const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
     const bm25Scores: Array<{ chunk: DocumentChunk; score: number }> = [];
+    const persistedKeywordChunks = await qdrantPlatform.getKeywordChunks(tenantOwnerId);
+    const tenantKeywordChunks = new Map<string, DocumentChunk>();
 
-    this.keywordIndex.forEach((chunk) => {
-      if (!isOwnedByTenant(chunk, tenantOwnerId)) {
-        return;
-      }
+    this.keywordIndex.forEach(chunk => {
+      if (isOwnedByTenant(chunk, tenantOwnerId)) tenantKeywordChunks.set(chunk.chunkId, chunk);
+    });
+    persistedKeywordChunks.forEach(chunk => tenantKeywordChunks.set(chunk.chunkId, chunk));
+
+    tenantKeywordChunks.forEach((chunk) => {
+      if (!isOwnedByTenant(chunk, tenantOwnerId)) return;
       const chunkLower = chunk.text.toLowerCase();
       let matches = 0;
       queryTerms.forEach(term => {
