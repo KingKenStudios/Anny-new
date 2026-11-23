@@ -155,8 +155,7 @@ export class UniversalPreviewEngine {
     }
 
     if (!artifact) {
-      // Default fallback
-      artifact = universalArtifactEngine.getArtifactById('art_main_app')!;
+      throw new Error('PREVIEW_ARTIFACT_NOT_FOUND: No registered artifact matches the requested ID, path, or name. The active preview route was not changed.');
     }
 
     const previewType = artifact.previewType;
