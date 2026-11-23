@@ -126,3 +126,10 @@ Use the separate verified workspace compilation/preview pipeline where it is act
 ## Preview render verification
 
 A preview route being selected is not proof that the generated artifact rendered. The current preview health routine does not have independent evidence from each viewer (iframe load/target DOM, image decode, PDF page render, or simulator output). It therefore reports `ROUTED_UNVERIFIED` / `DEGRADED` instead of counting the host ANNY page DOM as successful artifact rendering.
+
+
+## Runtime Bridge status
+
+The Runtime Bridge's Node, browser/Sandpack, Docker, and remote execution providers do not currently implement actual project process execution. The Node/browser/remote placeholders now report unavailable and fail rather than returning invented PIDs, ports, logs, or successful job status. Docker remains unavailable until a real daemon integration exists.
+
+The separate isolated VFS preview runner is a browser preview path; preview routing is not proof that an artifact rendered. The bridge's preview configs therefore remain `isLive: false` until viewer-specific evidence is supplied.
