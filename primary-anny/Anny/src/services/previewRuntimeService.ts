@@ -202,12 +202,19 @@ export class PreviewRuntimeService {
     try { fs.chmodSync(dataDirectory, 0o700); } catch {}
     const secretPath = path.join(dataDirectory, 'preview-capability.key');
 
-    if (fs.existsSync(secretPath)) {
-      const existingSecret = fs.readFileSync(secretPath, 'utf8').trim();
-      if (!isStrongSecuritySecret(existingSecret)) {
+    const readLocalSecret = (): string => {
+      const stat = fs.lstatSync(secretPath);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
         throw new Error('PREVIEW_CAPABILITY_SECRET_INVALID');
       }
+      const value = fs.readFileSync(secretPath, 'utf8').trim();
+      if (!isStrongSecuritySecret(value)) throw new Error('PREVIEW_CAPABILITY_SECRET_INVALID');
       try { fs.chmodSync(secretPath, 0o600); } catch {}
+      return value;
+    };
+
+    if (fs.existsSync(secretPath)) {
+      const existingSecret = readLocalSecret();
       this.localCapabilitySecret = existingSecret;
       return existingSecret;
     }
@@ -217,8 +224,7 @@ export class PreviewRuntimeService {
       fs.writeFileSync(secretPath, generatedSecret, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
     } catch (error: any) {
       if (error?.code !== 'EEXIST') throw new Error('PREVIEW_CAPABILITY_SECRET_PERSIST_FAILED');
-      const concurrentSecret = fs.readFileSync(secretPath, 'utf8').trim();
-      if (!isStrongSecuritySecret(concurrentSecret)) throw new Error('PREVIEW_CAPABILITY_SECRET_INVALID');
+      const concurrentSecret = readLocalSecret();
       this.localCapabilitySecret = concurrentSecret;
       return concurrentSecret;
     }
