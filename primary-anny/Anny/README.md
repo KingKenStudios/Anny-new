@@ -105,7 +105,7 @@ ANNY discovers the active Ollama endpoint from `OLLAMA_BASE_URL` and local loopb
 
 - If no model is explicitly selected, ANNY chooses the first installed local model.
 - Explicit model names must match an installed model; an unavailable tag is not silently replaced by a different model.
-- Local chat supports text, image payloads, JSON response format, and Ollama function-tool declarations.
+- Local chat supports text and JSON response format; image input is sent only to model names identified as vision-capable. Function-tool declarations are passed to Ollama, but actual tool calling depends on the selected model's support.
 - CPU-based local inference has a longer default request timeout to accommodate first-load model initialization.
 - Explicitly selecting Ollama or enabling offline-only mode never silently falls back to a cloud provider.
 - A local inference failure invalidates the cached discovery so the next request can re-probe the endpoint.
