@@ -437,6 +437,7 @@ export class EnterpriseAutonomousBuilderPlatform {
         liveUrl: runtimeVerified ? (previewConfig.activeUrl || '') : ''
       };
 
+      if (!activeTransactionId) throw new Error('EABP_TRANSACTION_MISSING: Project generation transaction was not initialized.');
       await vfsTransactionManager.commit(activeTransactionId);
       activeTransactionId = undefined;
       onProgress('Completed', 'Project source synthesis and lightweight structure validation completed. Tests, real runtime, and deployment remain unverified.');
