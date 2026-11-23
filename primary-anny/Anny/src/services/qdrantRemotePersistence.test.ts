@@ -92,7 +92,7 @@ test('configured Qdrant persists vectors remotely and applies tenant filters ser
     )
   ));
   assert.ok(requestLog.every(item => item.apiKey === 'test-only-key'));
-  assert.equal(JSON.stringify(requestLog).includes('test-only-key'), true);
+  assert.ok(requestLog.every(item => !item.url.includes('test-only-key')));
 });
 
 test('Qdrant health distinguishes volatile offline storage from a live remote service', async () => {
