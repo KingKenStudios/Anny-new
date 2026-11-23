@@ -20,6 +20,7 @@ export interface OllamaDiscoveryResult {
   activeEndpoint?: string;
   discoveredModels: OllamaModelInfo[];
   chatModels?: string[];
+  embeddingModels?: string[];
   inferenceTestPassed: boolean;
   latencyMs: number;
   error?: string;
@@ -28,6 +29,11 @@ export interface OllamaDiscoveryResult {
 export function isOllamaChatModel(modelName: string): boolean {
   const name = String(modelName || '').toLowerCase();
   return Boolean(name) && !/(embed|embedding|rerank|reranker|whisper|asr|clip|tts|text-to-speech|speech)/.test(name);
+}
+
+export function isOllamaEmbeddingModel(modelName: string): boolean {
+  const name = String(modelName || '').toLowerCase();
+  return Boolean(name) && /(embed|embedding|bge-m3|e5-|gte-|arctic-embed|all-minilm|jina-embeddings)/.test(name);
 }
 
 export class OllamaDiscoveryService {
@@ -81,6 +87,9 @@ export class OllamaDiscoveryService {
             }));
 
           const chatModels = discoveredModels.filter(model => isOllamaChatModel(model.name));
+          const embeddingModels = discoveredModels
+            .filter(model => isOllamaEmbeddingModel(model.name))
+            .map(model => model.name);
           let inferencePassed = false;
           // Test a chat-capable model, never an embedding/reranking-only model.
           if (chatModels.length > 0) {
@@ -105,6 +114,7 @@ export class OllamaDiscoveryService {
             activeEndpoint: endpoint,
             discoveredModels,
             chatModels: chatModels.map(model => model.name),
+            embeddingModels,
             inferenceTestPassed: inferencePassed,
             latencyMs,
             ...(!inferencePassed
@@ -127,6 +137,7 @@ export class OllamaDiscoveryService {
       reachable: false,
       discoveredModels: [],
       chatModels: [],
+      embeddingModels: [],
       inferenceTestPassed: false,
       latencyMs: 0,
       error: 'Ollama endpoint unreachable at candidate URLs. Set OLLAMA_BASE_URL to the remote/LAN Ollama IP if running outside the local host.'
