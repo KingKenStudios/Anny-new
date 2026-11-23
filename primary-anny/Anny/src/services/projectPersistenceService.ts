@@ -553,54 +553,64 @@ export class ProjectPersistenceService {
     return Array.from(this.previewSessions.values()).find(session => session.projectId === cleanId) || null;
   }
 
+  private mapProjectRow(row: any): PersistedProjectRecord {
+    const files = sanitizeProjectFilesMap(row.files);
+    const createdIso = row.created_at instanceof Date
+      ? row.created_at.toISOString()
+      : String(row.created_at || new Date().toISOString());
+    const updatedIso = row.updated_at instanceof Date
+      ? row.updated_at.toISOString()
+      : String(row.updated_at || createdIso);
+    return {
+      id: row.project_id,
+      projectId: row.project_id,
+      project_id: row.project_id,
+      ownerUserId: row.owner_user_id,
+      userId: row.owner_user_id,
+      sessionId: row.session_id || undefined,
+      name: row.name,
+      description: row.description || '',
+      projectType: row.project_type || 'website',
+      category: row.category || 'Website',
+      model: row.model || 'Anny Core',
+      status: row.status || 'Active',
+      version: Number(row.version || 1),
+      buildStatus: (row.build_status || 'IDLE') as ProjectBuildStatus,
+      previewStatus: (row.preview_status || 'STOPPED') as ProjectPreviewStatus,
+      files,
+      files_count: Object.keys(files).length,
+      manifest: row.manifest || null,
+      buildLogs: Array.isArray(row.build_logs) ? row.build_logs : [],
+      lastError: row.last_error || null,
+      createdAt: createdIso,
+      updatedAt: updatedIso,
+      created_at: createdIso,
+      updated_at: updatedIso,
+    };
+  }
+
   public async getProjectById(projectId: string): Promise<PersistedProjectRecord | null> {
     if (!isValidProjectId(projectId)) return null;
     const cleanId = projectId.trim();
-    const cached = this.records.get(cleanId);
-    if (cached) return cached;
 
     if (await this.ensurePgSchema()) {
       try {
         const res = await this.pool.query('SELECT * FROM anny_projects WHERE project_id = $1 LIMIT 1', [cleanId]);
         if (res.rows.length > 0) {
-          const row = res.rows[0];
-          const files = sanitizeProjectFilesMap(row.files);
-          const createdIso = row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at || new Date().toISOString());
-          const updatedIso = row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at || createdIso);
-          const rec: PersistedProjectRecord = {
-            id: row.project_id,
-            projectId: row.project_id,
-            project_id: row.project_id,
-            ownerUserId: row.owner_user_id,
-            userId: row.owner_user_id,
-            sessionId: row.session_id || undefined,
-            name: row.name,
-            description: row.description || '',
-            projectType: row.project_type || 'website',
-            category: row.category || 'Website',
-            model: row.model || 'Anny Core',
-            status: row.status || 'Active',
-            version: Number(row.version || 1),
-            buildStatus: (row.build_status || 'IDLE') as ProjectBuildStatus,
-            previewStatus: (row.preview_status || 'STOPPED') as ProjectPreviewStatus,
-            files,
-            files_count: Object.keys(files).length,
-            manifest: row.manifest || null,
-            buildLogs: Array.isArray(row.build_logs) ? row.build_logs : [],
-            lastError: row.last_error || null,
-            createdAt: createdIso,
-            updatedAt: updatedIso,
-            created_at: createdIso,
-            updated_at: updatedIso,
-          };
-          this.records.set(cleanId, rec);
-          return rec;
+          const record = this.mapProjectRow(res.rows[0]);
+          this.records.set(cleanId, record);
+          return record;
         }
+        // A successful database miss is authoritative; do not resurrect a stale
+        // disk/cache copy that another process has deleted.
+        this.records.delete(cleanId);
+        return null;
       } catch (err: any) {
         console.warn('[ProjectPersistence] Postgres getProjectById warning:', err?.message || err);
       }
     }
-    return null;
+
+    return this.records.get(cleanId) || null;
   }
 
   public async listProjects(requesterUid: string, isAdmin: boolean): Promise<PersistedProjectRecord[]> {
@@ -609,37 +619,11 @@ export class ProjectPersistenceService {
         const res = isAdmin
           ? await this.pool.query('SELECT * FROM anny_projects ORDER BY updated_at DESC LIMIT 200')
           : await this.pool.query('SELECT * FROM anny_projects WHERE owner_user_id = $1 ORDER BY updated_at DESC LIMIT 200', [requesterUid]);
-        for (const row of res.rows) {
-          const files = sanitizeProjectFilesMap(row.files);
-          const createdIso = row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at || new Date().toISOString());
-          const updatedIso = row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at || createdIso);
-          this.records.set(row.project_id, {
-            id: row.project_id,
-            projectId: row.project_id,
-            project_id: row.project_id,
-            ownerUserId: row.owner_user_id,
-            userId: row.owner_user_id,
-            sessionId: row.session_id || undefined,
-            name: row.name,
-            description: row.description || '',
-            projectType: row.project_type || 'website',
-            category: row.category || 'Website',
-            model: row.model || 'Anny Core',
-            status: row.status || 'Active',
-            version: Number(row.version || 1),
-            buildStatus: (row.build_status || 'IDLE') as ProjectBuildStatus,
-            previewStatus: (row.preview_status || 'STOPPED') as ProjectPreviewStatus,
-            files,
-            files_count: Object.keys(files).length,
-            manifest: row.manifest || null,
-            buildLogs: Array.isArray(row.build_logs) ? row.build_logs : [],
-            lastError: row.last_error || null,
-            createdAt: createdIso,
-            updatedAt: updatedIso,
-            created_at: createdIso,
-            updated_at: updatedIso,
-          });
-        }
+        const databaseProjects = res.rows.map((row: any) => this.mapProjectRow(row));
+        for (const project of databaseProjects) this.records.set(project.projectId, project);
+        // A successful database query is authoritative; never merge stale cache
+        // entries into a fresh tenant-scoped list.
+        return databaseProjects;
       } catch (err: any) {
         console.warn('[ProjectPersistence] Postgres listProjects warning:', err?.message || err);
       }
