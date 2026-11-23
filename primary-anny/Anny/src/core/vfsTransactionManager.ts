@@ -117,24 +117,39 @@ class VFSTransactionManager {
     if (!tx || tx.status !== 'ACTIVE') {
       throw new Error(`PHANTOM_WRITE_ERROR: Unauthorized project mutation attempt on ${path}. No active transaction.`);
     }
-    const pid = tx.projectId;
-    WorkspaceManager.getInstance().getWorkspaceVFS(pid)._unsafe_writeFile(path, content);
+    const currentWorkspace = WorkspaceManager.getInstance().getCurrentWorkspace();
+    if (!currentWorkspace || currentWorkspace.id !== tx.projectId || currentWorkspace.organizationId !== tx.organizationId) {
+      throw new Error('PROJECT_CONTEXT_MISMATCH: Active workspace does not match the authorized VFS transaction scope.');
+    }
+    WorkspaceManager.getInstance().getWorkspaceVFS(tx.projectId)._unsafe_writeFile(path, content);
   }
 
   /**
    * Initialization Mutation: PROJECT VFS WRITE
    * Used exclusively for initializing new workspaces outside of active builds.
    */
-  public initializeProjectFile(path: string, content: string, projectId: string = 'default'): void {
-    WorkspaceManager.getInstance().getWorkspaceVFS(projectId)._unsafe_writeFile(path, content);
+  public initializeProjectFile(path: string, content: string, projectId?: string): void {
+    const manager = WorkspaceManager.getInstance();
+    const activeWorkspace = manager.getCurrentWorkspace();
+    const targetProjectId = projectId || activeWorkspace?.id;
+    if (!activeWorkspace || !targetProjectId || activeWorkspace.id !== targetProjectId) {
+      throw new Error('PROJECT_CONTEXT_REQUIRED: Initialization writes may only target the active workspace.');
+    }
+    manager.getWorkspaceVFS(targetProjectId)._unsafe_writeFile(path, content);
   }
 
   /**
    * Initialization Mutation: PROJECT VFS DELETE
    * Used exclusively for initializing/cleaning up new workspaces outside of active builds.
    */
-  public initializeProjectFileDelete(path: string, projectId: string = 'default'): void {
-    WorkspaceManager.getInstance().getWorkspaceVFS(projectId)._unsafe_remove(path);
+  public initializeProjectFileDelete(path: string, projectId?: string): void {
+    const manager = WorkspaceManager.getInstance();
+    const activeWorkspace = manager.getCurrentWorkspace();
+    const targetProjectId = projectId || activeWorkspace?.id;
+    if (!activeWorkspace || !targetProjectId || activeWorkspace.id !== targetProjectId) {
+      throw new Error('PROJECT_CONTEXT_REQUIRED: Initialization deletes may only target the active workspace.');
+    }
+    manager.getWorkspaceVFS(targetProjectId)._unsafe_remove(path);
   }
 
   /**
@@ -145,6 +160,10 @@ class VFSTransactionManager {
     const tx = transactionId ? this.activeTransactions.get(transactionId) : undefined;
     if (!tx || tx.status !== 'ACTIVE') {
       throw new Error(`PHANTOM_WRITE_ERROR: Unauthorized project mutation attempt on ${path}. No active transaction.`);
+    }
+    const currentWorkspace = WorkspaceManager.getInstance().getCurrentWorkspace();
+    if (!currentWorkspace || currentWorkspace.id !== tx.projectId || currentWorkspace.organizationId !== tx.organizationId) {
+      throw new Error('PROJECT_CONTEXT_MISMATCH: Active workspace does not match the authorized VFS transaction scope.');
     }
     WorkspaceManager.getInstance().getWorkspaceVFS(tx.projectId)._unsafe_remove(path);
   }
