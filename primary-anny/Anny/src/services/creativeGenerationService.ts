@@ -313,9 +313,9 @@ class CreativeGenerationService {
         requiresPaidKey: true,
         supportedFormats: ['image/png', 'image/jpeg', 'image/webp'],
         models: ['gemini-3.1-flash-lite-image', 'gemini-nano-banana-2.1'],
-        status: hasGemini ? 'AVAILABLE' : 'UNCONFIGURED',
+        status: hasGemini ? 'DEGRADED' : 'UNCONFIGURED',
         detail: hasGemini
-          ? 'Configured on server for photorealistic scenes, portraits, product photography, mockups, and image editing.'
+          ? 'API key is configured, but raster image generation has not passed a live end-to-end generation check in this session.'
           : 'Configure GEMINI_API_KEY on the server to enable Gemini raster image generation and editing.',
       },
       {
@@ -328,9 +328,9 @@ class CreativeGenerationService {
         requiresPaidKey: true,
         supportedFormats: ['image/png'],
         models: ['gpt-image-1', 'dall-e-3'],
-        status: hasOpenAi ? 'AVAILABLE' : 'UNCONFIGURED',
+        status: hasOpenAi ? 'DEGRADED' : 'UNCONFIGURED',
         detail: hasOpenAi
-          ? 'Configured on server as secondary raster image provider.'
+          ? 'API key is configured, but image generation has not passed a live end-to-end generation check in this session.'
           : 'Optional: set OPENAI_API_KEY on the server to enable OpenAI image generation.',
       },
       {
@@ -343,9 +343,9 @@ class CreativeGenerationService {
         requiresPaidKey: false,
         supportedFormats: ['image/png'],
         models: ['local-sd-checkpoint'],
-        status: localSdUrl ? 'AVAILABLE' : 'UNCONFIGURED',
+        status: localSdUrl ? 'DEGRADED' : 'UNCONFIGURED',
         detail: localSdUrl
-          ? `Connected to local diffusion endpoint (${localSdUrl}).`
+          ? 'A local diffusion endpoint URL is configured, but the worker has not passed a live health and generation check.'
           : 'Optional: set SD_WEBUI_URL for free local offline raster image generation.',
       },
       {
@@ -358,10 +358,10 @@ class CreativeGenerationService {
         requiresPaidKey: true,
         supportedFormats: ['video/mp4'],
         models: ['gemini-omni-1.2-flash'],
-        status: hasGemini || this.customVideoAdapter ? 'AVAILABLE' : 'UNCONFIGURED',
+        status: hasGemini || this.customVideoAdapter ? 'DEGRADED' : 'UNCONFIGURED',
         detail:
           hasGemini || this.customVideoAdapter
-            ? 'Configured for text-to-video, image-to-video, storyboard multi-reference, video editing, and extension.'
+            ? 'A video provider adapter or API key is configured; real video rendering has not been verified end-to-end.'
             : 'Configure GEMINI_API_KEY on the server to render real MP4 video clips; storyboard planning remains available offline.',
       },
       {
@@ -374,9 +374,9 @@ class CreativeGenerationService {
         requiresPaidKey: true,
         supportedFormats: ['audio/mpeg', 'audio/wav'],
         models: ['lyria-3-clip-preview', 'lyria-3-pro-preview'],
-        status: hasGemini ? 'AVAILABLE' : 'UNCONFIGURED',
+        status: hasGemini ? 'DEGRADED' : 'UNCONFIGURED',
         detail: hasGemini
-          ? 'Configured for cloud music generation in King Ken Studios Music Studio.'
+          ? 'API key is configured, but Lyria music generation has not passed a live end-to-end render check.'
           : 'Configure GEMINI_API_KEY on the server to synthesize cloud Lyria tracks or AI Voice TTS.',
       },
       {
@@ -402,9 +402,9 @@ class CreativeGenerationService {
         requiresPaidKey: false,
         supportedFormats: ['audio/wav'],
         models: ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'],
-        status: hasGemini ? 'AVAILABLE' : 'UNCONFIGURED',
+        status: hasGemini ? 'DEGRADED' : 'UNCONFIGURED',
         detail: hasGemini
-          ? 'Configured on server for natural spoken voiceovers and text-to-speech.'
+          ? 'API key is configured, but neural speech synthesis has not passed a live end-to-end audio check.'
           : 'Configure GEMINI_API_KEY on the server to enable neural speech synthesis (TTS).',
       },
       {
@@ -417,9 +417,9 @@ class CreativeGenerationService {
         requiresPaidKey: false,
         supportedFormats: ['image/png', 'image/jpeg', 'image/webp'],
         models: ['gemini-4-hydrogen'],
-        status: hasGemini ? 'AVAILABLE' : 'UNCONFIGURED',
+        status: hasGemini ? 'DEGRADED' : 'UNCONFIGURED',
         detail: hasGemini
-          ? 'Verifies generated raster images match requested category (e.g., ensures logos are not human portraits).'
+          ? 'Vision evaluator API key is configured, but semantic image review has not passed a live end-to-end evaluation.'
           : 'Semantic visual verification requires GEMINI_API_KEY; binary/SVG header validation still runs locally.',
       },
     ];
