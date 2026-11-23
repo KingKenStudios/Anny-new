@@ -199,6 +199,7 @@ export class PreviewRuntimeService {
       ? path.resolve(process.env.ANNY_DATA_DIR)
       : path.join(process.cwd(), '.anny-data');
     fs.mkdirSync(dataDirectory, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(dataDirectory, 0o700); } catch {}
     const secretPath = path.join(dataDirectory, 'preview-capability.key');
 
     if (fs.existsSync(secretPath)) {
