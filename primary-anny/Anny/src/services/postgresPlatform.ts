@@ -201,6 +201,10 @@ export class PostgresPlatform {
     }
   }
 
+  public isDurableDatabaseAvailable(): boolean {
+    return Boolean(this.pool);
+  }
+
   private authSessionSchemaPromise: Promise<void> | null = null;
 
   private async ensureAuthSessionSchema(): Promise<void> {
