@@ -271,8 +271,6 @@ export class AIProviderPlatform {
               return axios.get('https://api.together.xyz/v1/models', { headers: { Authorization: `Bearer ${config.togetherApiKey}` }, timeout: 3000 });
             case 'fireworks':
               return axios.get('https://api.fireworks.ai/inference/v1/models', { headers: { Authorization: `Bearer ${config.fireworksApiKey}` }, timeout: 3000 });
-            case 'ollama':
-              return axios.get(`${config.ollamaBaseUrl}/api/tags`, { timeout: 2000 });
           }
         };
         await check();
@@ -280,7 +278,7 @@ export class AIProviderPlatform {
       } catch (err: any) {
         this.healthMap.set(p, {
           provider: p,
-          status: p === 'ollama' ? 'OFFLINE' : 'DEGRADED',
+          status: 'DEGRADED',
           latencyMs: Date.now() - startTime,
           lastChecked: new Date().toISOString(),
           error: err.response?.status ? `HTTP ${err.response.status}` : (err.code || err.message)
