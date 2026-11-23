@@ -435,6 +435,9 @@ export class ProjectPersistenceService {
     }
     const owner = String(input.ownerUserId || '').trim();
     if (!owner) throw new Error('MISSING_PREVIEW_OWNER');
+    if (owner.length > 128 || /[\\u0000-\\u001f\\u007f]/.test(owner)) {
+      throw new Error('INVALID_PREVIEW_OWNER');
+    }
     if (!Number.isInteger(input.version) || input.version < 1) throw new Error('INVALID_PREVIEW_VERSION');
     if (!['STARTING', 'RUNNING', 'STOPPED', 'ERROR'].includes(input.status)) {
       throw new Error('INVALID_PREVIEW_STATUS');
