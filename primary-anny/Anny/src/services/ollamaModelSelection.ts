@@ -72,3 +72,31 @@ export function assertOllamaMediaSupported(
     throw new Error(`OFFLINE_UNAVAILABLE: Local model "${modelName}" is not identified as a vision-capable Ollama model.`);
   }
 }
+
+
+export function isOllamaEmbeddingModel(modelName: string): boolean {
+  return /(embed|embedding)/i.test(String(modelName || ''));
+}
+
+export function resolveOllamaEmbeddingModel(
+  requestedModel: string | undefined,
+  discoveredModels: Array<OllamaModelInfo | string>
+): string {
+  const modelNames = Array.isArray(discoveredModels)
+    ? discoveredModels.map(model => typeof model === 'string' ? model : model.name)
+    : [];
+  const embeddingModels = modelNames.filter(isOllamaEmbeddingModel);
+  if (embeddingModels.length === 0) {
+    throw new Error('OFFLINE_EMBEDDINGS_UNAVAILABLE: Install a local Ollama embedding model (for example nomic-embed-text) or set OLLAMA_EMBEDDING_MODEL to an installed embedding model.');
+  }
+
+  const requested = String(requestedModel || '').trim().replace(/^ollama:/i, '');
+  if (!requested) return embeddingModels[0];
+  const exact = embeddingModels.find(name => name === requested);
+  if (exact) return exact;
+  if (!requested.includes(':')) {
+    const alias = embeddingModels.find(name => name.split(':')[0] === requested);
+    if (alias) return alias;
+  }
+  throw new Error(`OFFLINE_EMBEDDINGS_UNAVAILABLE: Configured Ollama embedding model "${requested}" is not installed or is not identified as an embedding model.`);
+}
