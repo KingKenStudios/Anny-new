@@ -1169,6 +1169,7 @@ async function startServer() {
         const materialized = await materializeWebsiteMediaAssets(synthesizedFiles, {
           ownerUserId: verifiedUserId,
           ownerOrgId: req.authUser?.companyId || 'personal',
+          offlineOnly: providerRegistryService.getExecutionPolicy().mode === 'OFFLINE_ONLY',
           onProgress: (message) => updateLivePipelineProgress(reqExecId, verifiedUserId, {
             stage: 'generating', message, progressPct: 84, status: 'running',
           }),
