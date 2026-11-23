@@ -1154,10 +1154,18 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const getVfsMap = (): Record<string, string> => {
     try {
+      const bestProjId = resolveBestProjectId(currentChatId, projectMetaState.projectId);
+      const controllerFiles = projectPreviewController.extractFilesFromVFS(bestProjId);
+      if (Object.keys(controllerFiles).length > 0) {
+        return controllerFiles;
+      }
       const files = WorkspaceManager.getInstance().getVFS().getAllFiles();
       const map: Record<string, string> = {};
       files.forEach((f) => {
-        map[f.path] = f.content;
+        const norm = f.path.startsWith('/') ? f.path : `/${f.path}`;
+        if (!norm.startsWith('/__anny_')) {
+          map[norm] = f.content;
+        }
       });
       return map;
     } catch {
