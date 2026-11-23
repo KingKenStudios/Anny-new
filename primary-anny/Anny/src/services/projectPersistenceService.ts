@@ -40,6 +40,20 @@ export interface PersistedProjectRecord {
   updated_at: string;
 }
 
+export interface PersistedPreviewSession {
+  previewId: string;
+  projectId: string;
+  ownerUserId: string;
+  name: string;
+  version: number;
+  status: ProjectPreviewStatus;
+  runtimeMode: 'ISOLATED_OPQ_ORIGIN_SANDBOX';
+  entryFile: string;
+  lastError?: string | null;
+  startedAt: string;
+  updatedAt: string;
+}
+
 export interface UpsertProjectInput {
   projectId: string;
   ownerUserId: string;
@@ -101,6 +115,7 @@ export class ProjectPersistenceService {
   private static instance: ProjectPersistenceService;
   private storePath: string;
   private records: Map<string, PersistedProjectRecord> = new Map();
+  private previewSessions: Map<string, PersistedPreviewSession> = new Map();
   private pool: any = null;
   private pgSchemaReady = false;
   private projectWriteLocks: Map<string, Promise<void>> = new Map();
@@ -174,6 +189,22 @@ export class ProjectPersistenceService {
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
         CREATE INDEX IF NOT EXISTS idx_anny_projects_owner ON anny_projects(owner_user_id, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS anny_preview_sessions (
+          preview_id VARCHAR(80) PRIMARY KEY,
+          project_id VARCHAR(128) NOT NULL UNIQUE,
+          owner_user_id VARCHAR(160) NOT NULL,
+          name VARCHAR(160) NOT NULL,
+          version INTEGER NOT NULL,
+          status VARCHAR(32) NOT NULL,
+          runtime_mode VARCHAR(64) NOT NULL,
+          entry_file VARCHAR(260) NOT NULL,
+          last_error TEXT,
+          started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+          updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_anny_preview_sessions_owner
+          ON anny_preview_sessions(owner_user_id, updated_at DESC);
       `);
       this.pgSchemaReady = true;
       return true;
@@ -208,6 +239,21 @@ export class ProjectPersistenceService {
           });
         }
       }
+      const previewList: PersistedPreviewSession[] = Array.isArray(parsed?.previewSessions)
+        ? parsed.previewSessions
+        : [];
+      for (const session of previewList) {
+        if (
+          session &&
+          /^prev_[a-f0-9]{16,64}$/.test(session.previewId) &&
+          isValidProjectId(session.projectId) &&
+          typeof session.ownerUserId === 'string' &&
+          session.ownerUserId.length > 0 &&
+          ['STARTING', 'RUNNING', 'STOPPED', 'ERROR'].includes(session.status)
+        ) {
+          this.previewSessions.set(session.previewId, session);
+        }
+      }
     } catch (err: any) {
       console.warn('[ProjectPersistence] Failed to load projects store:', err?.message || err);
     }
@@ -223,6 +269,7 @@ export class ProjectPersistenceService {
           schemaVersion: 1,
           updatedAt: new Date().toISOString(),
           projects: Array.from(this.records.values()),
+          previewSessions: Array.from(this.previewSessions.values()),
         },
         null,
         2
@@ -359,6 +406,125 @@ export class ProjectPersistenceService {
     } finally {
       releaseProjectLock();
     }
+  }
+
+  private mapPreviewSessionRow(row: any): PersistedPreviewSession {
+    const toIso = (value: any) => value instanceof Date ? value.toISOString() : String(value || new Date().toISOString());
+    return {
+      previewId: String(row.preview_id),
+      projectId: String(row.project_id),
+      ownerUserId: String(row.owner_user_id),
+      name: String(row.name || row.project_id),
+      version: Number(row.version || 1),
+      status: String(row.status || 'STOPPED') as ProjectPreviewStatus,
+      runtimeMode: 'ISOLATED_OPQ_ORIGIN_SANDBOX',
+      entryFile: String(row.entry_file || '/src/App.tsx'),
+      lastError: row.last_error || null,
+      startedAt: toIso(row.started_at),
+      updatedAt: toIso(row.updated_at)
+    };
+  }
+
+  public async upsertPreviewSession(input: PersistedPreviewSession): Promise<PersistedPreviewSession> {
+    if (!/^prev_[a-f0-9]{16,64}$/.test(input.previewId) || !isValidProjectId(input.projectId)) {
+      throw new Error('INVALID_PREVIEW_SESSION');
+    }
+    const owner = String(input.ownerUserId || '').trim();
+    if (!owner) throw new Error('MISSING_PREVIEW_OWNER');
+    if (!Number.isInteger(input.version) || input.version < 1) throw new Error('INVALID_PREVIEW_VERSION');
+    if (!['STARTING', 'RUNNING', 'STOPPED', 'ERROR'].includes(input.status)) {
+      throw new Error('INVALID_PREVIEW_STATUS');
+    }
+
+    const project = await this.getProjectById(input.projectId);
+    if (!project) throw new Error('PROJECT_NOT_FOUND');
+    if (project.ownerUserId !== owner) throw new Error('FORBIDDEN_PROJECT_OWNERSHIP');
+
+    const record: PersistedPreviewSession = {
+      ...input,
+      ownerUserId: owner,
+      name: String(input.name || project.name).slice(0, 160),
+      entryFile: String(input.entryFile || '/src/App.tsx').slice(0, 260),
+      lastError: input.lastError ? String(input.lastError).slice(0, 1000) : null,
+      startedAt: input.startedAt || new Date().toISOString(),
+      updatedAt: input.updatedAt || new Date().toISOString()
+    };
+
+    if (this.pool) {
+      if (!(await this.ensurePgSchema())) {
+        throw new Error('PREVIEW_SESSION_STORE_UNAVAILABLE');
+      }
+      try {
+        const result = await this.pool.query(
+          `INSERT INTO anny_preview_sessions
+            (preview_id, project_id, owner_user_id, name, version, status, runtime_mode, entry_file, last_error, started_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+           ON CONFLICT (project_id) DO UPDATE SET
+             preview_id=EXCLUDED.preview_id, name=EXCLUDED.name, version=EXCLUDED.version,
+             status=EXCLUDED.status, runtime_mode=EXCLUDED.runtime_mode, entry_file=EXCLUDED.entry_file,
+             last_error=EXCLUDED.last_error, updated_at=EXCLUDED.updated_at
+           WHERE anny_preview_sessions.owner_user_id = EXCLUDED.owner_user_id
+           RETURNING preview_id`,
+          [record.previewId, record.projectId, record.ownerUserId, record.name, record.version,
+            record.status, record.runtimeMode, record.entryFile, record.lastError,
+            record.startedAt, record.updatedAt]
+        );
+        if (Number(result.rowCount || 0) === 0) throw new Error('FORBIDDEN_PREVIEW_OWNERSHIP');
+      } catch (error: any) {
+        if (String(error?.message || '').includes('FORBIDDEN_PREVIEW_OWNERSHIP')) throw error;
+        throw new Error('PREVIEW_SESSION_STORE_UNAVAILABLE');
+      }
+    }
+
+    for (const [id, existing] of this.previewSessions.entries()) {
+      if (existing.projectId === record.projectId && id !== record.previewId) {
+        this.previewSessions.delete(id);
+      }
+    }
+    this.previewSessions.set(record.previewId, record);
+    this.saveToDisk();
+    return record;
+  }
+
+  public async getPreviewSessionById(previewId: string): Promise<PersistedPreviewSession | null> {
+    if (!/^prev_[a-f0-9]{16,64}$/.test(previewId)) return null;
+    if (this.pool) {
+      if (!(await this.ensurePgSchema())) throw new Error('PREVIEW_SESSION_STORE_UNAVAILABLE');
+      try {
+        const result = await this.pool.query(
+          'SELECT * FROM anny_preview_sessions WHERE preview_id = $1 LIMIT 1',
+          [previewId]
+        );
+        if (result.rows.length === 0) return null;
+        const record = this.mapPreviewSessionRow(result.rows[0]);
+        this.previewSessions.set(record.previewId, record);
+        return record;
+      } catch {
+        throw new Error('PREVIEW_SESSION_STORE_UNAVAILABLE');
+      }
+    }
+    return this.previewSessions.get(previewId) || null;
+  }
+
+  public async getPreviewSessionByProjectId(projectId: string): Promise<PersistedPreviewSession | null> {
+    if (!isValidProjectId(projectId)) return null;
+    const cleanId = projectId.trim();
+    if (this.pool) {
+      if (!(await this.ensurePgSchema())) throw new Error('PREVIEW_SESSION_STORE_UNAVAILABLE');
+      try {
+        const result = await this.pool.query(
+          'SELECT * FROM anny_preview_sessions WHERE project_id = $1 LIMIT 1',
+          [cleanId]
+        );
+        if (result.rows.length === 0) return null;
+        const record = this.mapPreviewSessionRow(result.rows[0]);
+        this.previewSessions.set(record.previewId, record);
+        return record;
+      } catch {
+        throw new Error('PREVIEW_SESSION_STORE_UNAVAILABLE');
+      }
+    }
+    return Array.from(this.previewSessions.values()).find(session => session.projectId === cleanId) || null;
   }
 
   public async getProjectById(projectId: string): Promise<PersistedProjectRecord | null> {
