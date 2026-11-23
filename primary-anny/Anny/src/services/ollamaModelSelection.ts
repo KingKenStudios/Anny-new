@@ -22,9 +22,10 @@ export function resolveOllamaModel(
   const exact = discoveredModels.find(model => model.name === requested);
   if (exact) return exact.name;
 
-  const baseName = requested.split(':')[0];
-  const alias = discoveredModels.find(model => model.name.split(':')[0] === baseName);
-  if (alias) return alias.name;
+  if (!requested.includes(':')) {
+    const alias = discoveredModels.find(model => model.name.split(':')[0] === requested);
+    if (alias) return alias.name;
+  }
 
   throw new Error(`OFFLINE_UNAVAILABLE: Requested Ollama model "${requested}" is not installed locally.`);
 }
