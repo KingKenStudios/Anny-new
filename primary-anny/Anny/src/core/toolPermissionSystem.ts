@@ -55,11 +55,15 @@ export class ToolPermissionSystem {
   private static instance: ToolPermissionSystem;
   private registry: Map<string, ToolDefinition> = new Map();
   private auditLogs: ToolExecutionAuditLog[] = [];
+  private readonly maxAuditLogs = 1000;
+
+  constructor() {
+    this.bootstrapDefaultTools();
+  }
 
   public static getInstance(): ToolPermissionSystem {
     if (!ToolPermissionSystem.instance) {
       ToolPermissionSystem.instance = new ToolPermissionSystem();
-      ToolPermissionSystem.instance.bootstrapDefaultTools();
     }
     return ToolPermissionSystem.instance;
   }
@@ -178,7 +182,64 @@ export class ToolPermissionSystem {
   }
 
   public registerTool(tool: ToolDefinition): void {
-    this.registry.set(tool.toolId, tool);
+    if (!tool || typeof tool !== 'object' || !/^[a-zA-Z0-9_.:-]{1,128}$/.test(tool.toolId || '')) {
+      throw new Error('TOOL_DEFINITION_INVALID: Tool IDs must be 1-128 safe identifier characters.');
+    }
+    if (this.registry.has(tool.toolId)) {
+      throw new Error('TOOL_ALREADY_REGISTERED: Existing tools cannot be silently replaced.');
+    }
+    if (!tool.name?.trim() || !tool.description?.trim() ||
+        !['file_system', 'code_execution', 'database', 'network_api', 'actuator_robotics', 'financial_control', 'system_admin'].includes(tool.category) ||
+        !['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(tool.riskLevel) ||
+        !['auto_execute', 'require_user_confirm', 'loto_authorized_only'].includes(tool.executionPolicy) ||
+        !Array.isArray(tool.requiredPermissions) || tool.requiredPermissions.some(permission => typeof permission !== 'string' || !permission.trim() || permission.length > 128) ||
+        !tool.inputSchema || typeof tool.inputSchema !== 'object' || Array.isArray(tool.inputSchema) ||
+        !tool.outputSchema || typeof tool.outputSchema !== 'object' || Array.isArray(tool.outputSchema)) {
+      throw new Error('TOOL_DEFINITION_INVALID: Tool definition failed required metadata validation.');
+    }
+    for (const [fieldName, field] of Object.entries(tool.inputSchema)) {
+      if (!/^[a-zA-Z][a-zA-Z0-9_]{0,127}$/.test(fieldName) ||
+          !field || !['string', 'number', 'boolean', 'array', 'object'].includes(field.type) ||
+          typeof field.description !== 'string' || (typeof field.required !== 'undefined' && typeof field.required !== 'boolean')) {
+        throw new Error('TOOL_SCHEMA_INVALID: Input fields must use supported types and descriptions.');
+      }
+    }
+    this.registry.set(tool.toolId, structuredClone(tool));
+  }
+
+  private summarizeInput(input: unknown): string {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return '[invalid input]';
+    return Object.entries(input as Record<string, unknown>).slice(0, 20).map(([key, value]) => {
+      const sensitive = /password|secret|token|api.?key|credential|authorization|private|account|recipient/i.test(key);
+      const type = Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value;
+      const description = sensitive ? '[REDACTED]' : type === 'string' ? 'string(length omitted)' : type;
+      return key + ':' + description;
+    }).join(', ').slice(0, 300);
+  }
+
+  private addAudit(log: ToolExecutionAuditLog): void {
+    this.auditLogs.push(log);
+    if (this.auditLogs.length > this.maxAuditLogs) {
+      this.auditLogs.splice(0, this.auditLogs.length - this.maxAuditLogs);
+    }
+  }
+
+  private validateInput(tool: ToolDefinition, input: unknown): string | null {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return 'Tool input must be an object.';
+    const params = input as Record<string, unknown>;
+    for (const [name, field] of Object.entries(tool.inputSchema)) {
+      const value = params[name];
+      if (field.required && (value === undefined || value === null)) return 'Required input "' + name + '" is missing.';
+      if (value === undefined || value === null) continue;
+      const valid = field.type === 'array' ? Array.isArray(value)
+        : field.type === 'object' ? typeof value === 'object' && !Array.isArray(value)
+        : field.type === 'number' ? typeof value === 'number' && Number.isFinite(value)
+        : typeof value === field.type;
+      if (!valid) return 'Input "' + name + '" must be type ' + field.type + '.';
+    }
+    const unknown = Object.keys(params).filter(key => !Object.prototype.hasOwnProperty.call(tool.inputSchema, key));
+    if (unknown.length) return 'Unknown input field(s): ' + unknown.join(', ') + '.';
+    return null;
   }
 
   public getTool(toolId: string): ToolDefinition | undefined {
@@ -197,113 +258,51 @@ export class ToolPermissionSystem {
     requesterId: string,
     requesterRole: string,
     inputParams: Record<string, any>,
-    options: { isLotoAuthorized?: boolean; userConfirmed?: boolean } = {}
+    options: { isLotoAuthorized?: boolean; userConfirmed?: boolean; grantedPermissions?: string[] } = {}
   ): VerificationResult {
     const tool = this.registry.get(toolId);
-    const auditId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const auditId = globalThis.crypto?.randomUUID ? `audit_${globalThis.crypto.randomUUID()}` : `audit_${Date.now()}_${this.auditLogs.length}`;
+    const inputSummary = this.summarizeInput(inputParams);
 
-    if (!tool) {
+    const deny = (riskLevel: RiskLevel, reason: string, status: 'DENIED' | 'REQUIRES_CONFIRMATION' = 'DENIED'): VerificationResult => {
       const auditLog: ToolExecutionAuditLog = {
-        id: auditId,
-        timestamp: new Date().toISOString(),
-        toolId,
-        requesterId,
-        requesterRole,
-        riskLevel: 'HIGH',
-        authorized: false,
-        lotoAuthorized: Boolean(options.isLotoAuthorized),
-        policyReason: `Tool ID '${toolId}' is not registered in the Tool Permission System.`,
-        inputSummary: JSON.stringify(inputParams).substring(0, 100),
-        status: 'DENIED'
+        id: auditId, timestamp: new Date().toISOString(), toolId, requesterId, requesterRole, riskLevel,
+        authorized: false, lotoAuthorized: Boolean(options.isLotoAuthorized), policyReason: reason, inputSummary, status
       };
-      this.auditLogs.push(auditLog);
-      return {
-        allowed: false,
-        status: 'DENIED',
-        riskLevel: 'HIGH',
-        policyReason: auditLog.policyReason,
-        auditLog
-      };
+      this.addAudit(auditLog);
+      return { allowed: false, status, riskLevel, policyReason: reason, auditLog };
+    };
+
+    if (!tool) return deny('HIGH', `Tool ID '${toolId}' is not registered.`);
+    const granted = new Set(Array.isArray(options.grantedPermissions) ? options.grantedPermissions : []);
+    const missing = tool.requiredPermissions.filter(permission => !granted.has(permission));
+    if (missing.length) return deny(tool.riskLevel, `Missing required permission(s): ${missing.join(', ')}.`);
+    const inputError = this.validateInput(tool, inputParams);
+    if (inputError) return deny(tool.riskLevel, `Invalid input: ${inputError}`);
+
+    if (tool.riskLevel === 'CRITICAL' && tool.category === 'actuator_robotics' &&
+        (!options.isLotoAuthorized || !granted.has('scada:loto_override'))) {
+      return deny('CRITICAL', 'CRITICAL physical actuator control requires trusted LOTO authorization and scada:loto_override permission.');
+    }
+    if (tool.executionPolicy === 'loto_authorized_only' && !options.isLotoAuthorized) {
+      return deny(tool.riskLevel, 'This tool requires trusted LOTO authorization.');
+    }
+    if ((tool.riskLevel === 'CRITICAL' || tool.executionPolicy === 'require_user_confirm') && !options.userConfirmed) {
+      return deny(tool.riskLevel, `Tool '${tool.name}' requires explicit user confirmation before execution.`, 'REQUIRES_CONFIRMATION');
     }
 
-    // Policy Checks
-    if (tool.riskLevel === 'CRITICAL') {
-      if (tool.category === 'actuator_robotics' && !options.isLotoAuthorized) {
-        const auditLog: ToolExecutionAuditLog = {
-          id: auditId,
-          timestamp: new Date().toISOString(),
-          toolId,
-          requesterId,
-          requesterRole,
-          riskLevel: tool.riskLevel,
-          authorized: false,
-          lotoAuthorized: false,
-          policyReason: 'CRITICAL physical actuator control requires Digital Lockout/Tagout (LOTO) key authorization.',
-          inputSummary: JSON.stringify(inputParams).substring(0, 100),
-          status: 'DENIED'
-        };
-        this.auditLogs.push(auditLog);
-        return {
-          allowed: false,
-          status: 'DENIED',
-          riskLevel: tool.riskLevel,
-          policyReason: auditLog.policyReason,
-          auditLog
-        };
-      }
-    }
-
-    if (tool.executionPolicy === 'require_user_confirm' && !options.userConfirmed) {
-      const auditLog: ToolExecutionAuditLog = {
-        id: auditId,
-        timestamp: new Date().toISOString(),
-        toolId,
-        requesterId,
-        requesterRole,
-        riskLevel: tool.riskLevel,
-        authorized: false,
-        lotoAuthorized: Boolean(options.isLotoAuthorized),
-        policyReason: `Tool '${tool.name}' has risk level ${tool.riskLevel} and requires explicit user confirmation before execution.`,
-        inputSummary: JSON.stringify(inputParams).substring(0, 100),
-        status: 'REQUIRES_CONFIRMATION'
-      };
-      this.auditLogs.push(auditLog);
-      return {
-        allowed: false,
-        status: 'REQUIRES_CONFIRMATION',
-        riskLevel: tool.riskLevel,
-        policyReason: auditLog.policyReason,
-        auditLog
-      };
-    }
-
-    // Granted
     const auditLog: ToolExecutionAuditLog = {
-      id: auditId,
-      timestamp: new Date().toISOString(),
-      toolId,
-      requesterId,
-      requesterRole,
-      riskLevel: tool.riskLevel,
-      authorized: true,
-      lotoAuthorized: Boolean(options.isLotoAuthorized),
-      policyReason: `Tool execution authorized under ${tool.riskLevel} risk policy.`,
-      inputSummary: JSON.stringify(inputParams).substring(0, 100),
-      status: 'GRANTED'
+      id: auditId, timestamp: new Date().toISOString(), toolId, requesterId, requesterRole, riskLevel: tool.riskLevel,
+      authorized: true, lotoAuthorized: Boolean(options.isLotoAuthorized),
+      policyReason: `Tool execution authorized under ${tool.riskLevel} risk policy with all required permissions and input validation.`,
+      inputSummary, status: 'GRANTED'
     };
-    this.auditLogs.push(auditLog);
-
-    return {
-      allowed: true,
-      status: 'GRANTED',
-      riskLevel: tool.riskLevel,
-      policyReason: auditLog.policyReason,
-      auditLog
-    };
+    this.addAudit(auditLog);
+    return { allowed: true, status: 'GRANTED', riskLevel: tool.riskLevel, policyReason: auditLog.policyReason, auditLog };
   }
-
   public getAuditLogs(limit: number = 50): ToolExecutionAuditLog[] {
-    return this.auditLogs.slice(-limit);
+    const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.min(this.maxAuditLogs, Math.floor(limit))) : 50;
+    return safeLimit === 0 ? [] : this.auditLogs.slice(-safeLimit);
   }
 }
 
