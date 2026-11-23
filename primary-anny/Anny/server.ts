@@ -1679,9 +1679,9 @@ async function startServer() {
     }
   });
 
-  app.get("/api/preview/sessions/:previewId/status", requireAuth(), (req: AuthenticatedRequest, res) => {
+  app.get("/api/preview/sessions/:previewId/status", requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
-      const session = previewRuntimeService.getPreviewSessionStatus(
+      const session = await previewRuntimeService.getPreviewSessionStatus(
         String(req.params.previewId || ''),
         req.authUser!.uid,
         req.authUser!.isAdmin
@@ -1699,7 +1699,7 @@ async function startServer() {
 
   app.post("/api/preview/sessions/:previewId/refresh", requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
-      const existing = previewRuntimeService.getPreviewSessionStatus(
+      const existing = await previewRuntimeService.getPreviewSessionStatus(
         String(req.params.previewId || ''),
         req.authUser!.uid,
         req.authUser!.isAdmin
