@@ -121,3 +121,8 @@ The current Universal Execution Adapter Engine contains adapter metadata and pla
 - Adapter selection does not launch a process when a real build adapter is unavailable.
 
 Use the separate verified workspace compilation/preview pipeline where it is actually available; do not treat these placeholder adapter results as a real deployment or runtime test.
+
+
+## Preview render verification
+
+A preview route being selected is not proof that the generated artifact rendered. The current preview health routine does not have independent evidence from each viewer (iframe load/target DOM, image decode, PDF page render, or simulator output). It therefore reports `ROUTED_UNVERIFIED` / `DEGRADED` instead of counting the host ANNY page DOM as successful artifact rendering.
