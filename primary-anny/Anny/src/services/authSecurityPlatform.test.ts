@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { authSecurityPlatform } from './authSecurityPlatform.ts';
 import { isStrongSecuritySecret } from './envConfigService.ts';
+import { postgresPlatform } from './postgresPlatform.ts';
 
 process.env.JWT_SECRET = crypto.randomBytes(32).toString('hex');
 process.env.JWT_REFRESH_SECRET = crypto.randomBytes(32).toString('hex');
@@ -106,4 +107,31 @@ describe('session token verification, revocation, and rotation', () => {
     assert.equal(isStrongSecuritySecret('short'), false);
     assert.equal(isStrongSecuritySecret(crypto.randomBytes(32).toString('hex')), true);
   });
+});
+
+
+test('persistent session APIs preserve secure local-development fallback without PostgreSQL', {
+  skip: postgresPlatform.isDurableDatabaseAvailable()
+}, async () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'test';
+  try {
+    const initial = await authSecurityPlatform.createPersistentToken(
+      'user-persistent-local',
+      'local@example.test',
+      'OPERATOR'
+    );
+    assert.equal((await authSecurityPlatform.verifyTokenPersistent(initial.token))?.userId, 'user-persistent-local');
+
+    const rotated = await authSecurityPlatform.refreshSessionPersistent(initial.refreshToken);
+    assert.ok(rotated);
+    assert.equal(await authSecurityPlatform.verifyTokenPersistent(initial.token), null);
+    assert.equal((await authSecurityPlatform.verifyTokenPersistent(rotated!.token))?.userId, 'user-persistent-local');
+
+    assert.equal(await authSecurityPlatform.revokeSessionPersistent(rotated!.token), true);
+    assert.equal(await authSecurityPlatform.verifyTokenPersistent(rotated!.token), null);
+  } finally {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+  }
 });

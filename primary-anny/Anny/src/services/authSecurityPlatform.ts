@@ -179,6 +179,201 @@ export class AuthSecurityPlatform {
     return session;
   }
 
+  private hashSessionCredential(value: string): string {
+    return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+  }
+
+  private verifyAccessPayload(token: string): any | null {
+    if (!token || typeof token !== 'string') return null;
+    try {
+      const config = envConfigService.refreshFromProcess();
+      if (!isStrongSecuritySecret(config.jwtSecret) || !isStrongSecuritySecret(config.sessionSecret)) return null;
+      const decoded = Buffer.from(token, 'base64').toString('utf8');
+      const dotIdx = decoded.lastIndexOf('.');
+      if (dotIdx <= 0) return null;
+      const payloadStr = decoded.slice(0, dotIdx);
+      const signature = decoded.slice(dotIdx + 1);
+      if (!payloadStr || !signature || signature.length !== 64) return null;
+      const accessHmacKey = this.deriveDomainHmacKey(config.jwtSecret, config.sessionSecret, 'access');
+      const expected = crypto.createHmac('sha256', accessHmacKey).update(payloadStr).digest('hex');
+      const actualBuffer = Buffer.from(signature, 'utf8');
+      const expectedBuffer = Buffer.from(expected, 'utf8');
+      if (actualBuffer.length !== expectedBuffer.length ||
+          !crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return null;
+      const payload = JSON.parse(payloadStr);
+      if (!payload || typeof payload.userId !== 'string' || !payload.userId ||
+          typeof payload.username !== 'string' || typeof payload.expiresAt !== 'number' ||
+          Date.now() > payload.expiresAt ||
+          !['SOVEREIGN_ADMIN', 'ENTERPRISE_ARCHITECT', 'OPERATOR', 'GUEST'].includes(payload.role)) return null;
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  private verifyRefreshPayload(refreshToken: string): any | null {
+    if (!refreshToken || typeof refreshToken !== 'string') return null;
+    try {
+      const config = envConfigService.refreshFromProcess();
+      if (!isStrongSecuritySecret(config.jwtRefreshSecret) || !isStrongSecuritySecret(config.sessionSecret)) return null;
+      const decoded = Buffer.from(refreshToken, 'base64').toString('utf8');
+      const dotIdx = decoded.lastIndexOf('.');
+      if (dotIdx <= 0) return null;
+      const payloadStr = decoded.slice(0, dotIdx);
+      const signature = decoded.slice(dotIdx + 1);
+      if (!payloadStr || !signature || signature.length !== 64) return null;
+      const refreshHmacKey = this.deriveDomainHmacKey(config.jwtRefreshSecret, config.sessionSecret, 'refresh');
+      const expected = crypto.createHmac('sha256', refreshHmacKey).update(payloadStr).digest('hex');
+      const actualBuffer = Buffer.from(signature, 'utf8');
+      const expectedBuffer = Buffer.from(expected, 'utf8');
+      if (actualBuffer.length !== expectedBuffer.length ||
+          !crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return null;
+      const payload = JSON.parse(payloadStr);
+      if (!payload || typeof payload.userId !== 'string' || !payload.userId ||
+          typeof payload.expiresAt !== 'number' || Date.now() > payload.expiresAt) return null;
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  private async persistSession(session: UserSession): Promise<boolean> {
+    const refreshPayload = this.verifyRefreshPayload(session.refreshToken);
+    if (!refreshPayload) throw new Error('AUTH_REFRESH_TOKEN_INVALID: Newly issued refresh token could not be verified.');
+    return postgresPlatform.storeAuthSession({
+      tokenHash: this.hashSessionCredential(session.token),
+      refreshTokenHash: this.hashSessionCredential(session.refreshToken),
+      userId: session.userId,
+      username: session.username,
+      role: session.role,
+      accessExpiresAt: session.expiresAt,
+      refreshExpiresAt: refreshPayload.expiresAt
+    });
+  }
+
+  /** Issue a session and persist only credential hashes when durable PostgreSQL is available. */
+  public async createPersistentToken(userId: string, username: string, role: UserRole): Promise<UserSession> {
+    const session = this.createToken(userId, username, role);
+    try {
+      await this.persistSession(session);
+      return session;
+    } catch (error) {
+      this.activeSessions.delete(session.token);
+      throw error;
+    }
+  }
+
+  /** Verify a signed access token against the durable revocation/session registry. */
+  public async verifyTokenPersistent(token: string): Promise<UserSession | null> {
+    if (!token || this.revokedTokens.has(token)) return null;
+    const payload = this.verifyAccessPayload(token);
+    if (!payload) return null;
+    const record = await postgresPlatform.findAuthSessionByTokenHash(this.hashSessionCredential(token));
+    if (!record) {
+      return postgresPlatform.isDurableDatabaseAvailable() ? null : this.verifyToken(token);
+    }
+    if (record.user_id !== payload.userId ||
+        record.username !== payload.username || record.role !== payload.role ||
+        Number(record.access_expires_at) !== payload.expiresAt ||
+        record.revoked_at) return null;
+
+    return {
+      userId: String(record.user_id),
+      username: String(record.username),
+      role: record.role as UserRole,
+      token,
+      // Raw refresh credentials are never stored; the caller only needs identity here.
+      refreshToken: '',
+      expiresAt: Number(record.access_expires_at)
+    };
+  }
+
+  /** Verify a refresh token against PostgreSQL, including cross-process revocation state. */
+  public async verifyRefreshTokenPersistent(refreshToken: string): Promise<{ userId: string; expiresAt: number } | null> {
+    if (!refreshToken || this.revokedTokens.has(refreshToken)) return null;
+    const payload = this.verifyRefreshPayload(refreshToken);
+    if (!payload) return null;
+    const record = await postgresPlatform.findAuthSessionByRefreshHash(this.hashSessionCredential(refreshToken));
+    if (!record) {
+      return postgresPlatform.isDurableDatabaseAvailable() ? null : this.verifyRefreshToken(refreshToken);
+    }
+    if (record.user_id !== payload.userId || record.revoked_at ||
+        Number(record.refresh_expires_at) !== payload.expiresAt) return null;
+    return { userId: String(record.user_id), expiresAt: Number(record.refresh_expires_at) };
+  }
+
+  /** Rotate refresh credentials atomically so a replay cannot create two valid sessions. */
+  public async refreshSessionPersistent(refreshToken: string): Promise<UserSession | null> {
+    const verified = await this.verifyRefreshTokenPersistent(refreshToken);
+    if (!verified) return null;
+    const oldHash = this.hashSessionCredential(refreshToken);
+    const existingRecord = await postgresPlatform.findAuthSessionByRefreshHash(oldHash);
+
+    // Development without PostgreSQL retains the explicit in-process session behavior.
+    if (!existingRecord) {
+      return postgresPlatform.isDurableDatabaseAvailable() ? null : this.refreshSession(refreshToken);
+    }
+
+    const replacement = this.createToken(
+      String(existingRecord.user_id),
+      String(existingRecord.username),
+      existingRecord.role as UserRole
+    );
+    const refreshPayload = this.verifyRefreshPayload(replacement.refreshToken);
+    if (!refreshPayload) {
+      this.activeSessions.delete(replacement.token);
+      return null;
+    }
+
+    try {
+      const rotated = await postgresPlatform.rotateAuthSession(oldHash, {
+        tokenHash: this.hashSessionCredential(replacement.token),
+        refreshTokenHash: this.hashSessionCredential(replacement.refreshToken),
+        userId: replacement.userId,
+        username: replacement.username,
+        role: replacement.role,
+        accessExpiresAt: replacement.expiresAt,
+        refreshExpiresAt: refreshPayload.expiresAt
+      });
+      if (!rotated) {
+        this.activeSessions.delete(replacement.token);
+        return null;
+      }
+      const previousLocalSession = Array.from(this.activeSessions.values()).find(
+        session => session.refreshToken === refreshToken
+      );
+      if (previousLocalSession) {
+        this.revokedTokens.add(previousLocalSession.token);
+        this.activeSessions.delete(previousLocalSession.token);
+      }
+      this.revokedTokens.add(refreshToken);
+      return replacement;
+    } catch (error) {
+      this.activeSessions.delete(replacement.token);
+      throw error;
+    }
+  }
+
+  public async revokeSessionPersistent(token: string): Promise<boolean> {
+    if (!token) return false;
+    const localRevoked = this.revokeSession(token);
+    const durableRevoked = await postgresPlatform.revokeAuthSessionByTokenHash(this.hashSessionCredential(token));
+    return localRevoked || durableRevoked;
+  }
+
+  public async revokeRefreshTokenPersistent(refreshToken: string): Promise<boolean> {
+    if (!refreshToken) return false;
+    const localRevoked = this.revokeRefreshToken(refreshToken);
+    const durableRevoked = await postgresPlatform.revokeAuthSessionByRefreshHash(this.hashSessionCredential(refreshToken));
+    return localRevoked || durableRevoked;
+  }
+
+  public async revokeUserSessionsPersistent(userId: string): Promise<number> {
+    const localCount = this.revokeUserSessions(userId);
+    const durableCount = await postgresPlatform.revokeAuthSessionsForUser(userId);
+    return Math.max(localCount, durableCount);
+  }
+
   public verifyToken(token: string): UserSession | null {
     if (!token || typeof token !== 'string' || this.revokedTokens.has(token)) return null;
 

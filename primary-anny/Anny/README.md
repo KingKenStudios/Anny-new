@@ -61,3 +61,15 @@ The ANNY container in the same Compose project is configured to use `http://qdra
 A real embedding provider is still required for semantic indexing and search. Storage availability alone does not create embeddings. ANNY reports remote Qdrant as connected only after a live request succeeds, and a configured-but-unreachable Qdrant endpoint does not silently fall back to volatile storage.
 
 **Operational note:** browser IndexedDB is device-local storage, not a backup system. Export or back up important source documents separately.
+
+
+## Durable server authentication sessions
+
+Server-issued guest and administrator sessions use PostgreSQL-backed revocation state when `DATABASE_URL` is configured. ANNY stores SHA-256 hashes of access and refresh credentials, never the raw bearer tokens. Refresh rotation consumes the previous refresh hash and inserts its replacement in one database transaction, preventing a refresh-token replay from creating multiple active sessions.
+
+- In production, durable session storage is required. If PostgreSQL is not configured or the session registry is unavailable, ANNY refuses to issue or accept server-signed sessions rather than silently treating process memory as durable.
+- In local development and tests without PostgreSQL, the existing in-process session mode remains available. It is not restart-safe or shared between server instances.
+- Firebase ID-token verification remains a separate identity path and is still validated against Google's signing certificates and the configured Firebase project.
+- Logout and administrator logout report a temporary service error if durable revocation cannot be confirmed.
+
+The `auth_sessions` table and indexes are created additively with `CREATE TABLE IF NOT EXISTS`; this feature does not alter or delete existing user, project, or memory records.

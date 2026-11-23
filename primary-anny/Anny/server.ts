@@ -611,7 +611,13 @@ async function startServer() {
       timestamp: new Date().toISOString(),
       capabilities: [
         { id: "ui_workspace", label: "ANNY Workspace & Local Tools", status: "available_offline" },
-        { id: "auth_sessions", label: "Server-Signed Session Auth & RBAC", status: "available_offline" },
+        {
+          id: "auth_sessions",
+          label: "Server-Signed Session Auth & RBAC",
+          status: dbHealth.status === "CONNECTED"
+            ? "available_online"
+            : (process.env.NODE_ENV === "production" ? "unavailable" : "available_volatile_development")
+        },
         { id: "document_policy", label: "Upload & RAG Sanitization Engine", status: "available_offline" },
         {
           id: "local_llm_ollama",
@@ -650,7 +656,12 @@ async function startServer() {
   app.post("/api/v1/anny/integrations/keda/command", async (req, res) => {
     const authHeader = String(req.headers.authorization || '');
     const presentedToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    const session = presentedToken ? authSecurityPlatform.verifyToken(presentedToken) : null;
+    let session: Awaited<ReturnType<typeof authSecurityPlatform.verifyTokenPersistent>> = null;
+    try {
+      session = presentedToken ? await authSecurityPlatform.verifyTokenPersistent(presentedToken) : null;
+    } catch {
+      return res.status(503).json({ ok: false, error: 'AUTH_SESSION_STORE_UNAVAILABLE' });
+    }
     if (!session || !authSecurityPlatform.hasPermission(session.role, 'CODE_GEN')) {
       return res.status(401).json({ ok: false, error: 'ANNY_AUTHENTICATION_REQUIRED' });
     }
@@ -705,7 +716,7 @@ async function startServer() {
       }
 
       const guestUid = `guest_${crypto.randomBytes(12).toString('hex')}`;
-      const session = authSecurityPlatform.createToken(guestUid, 'Guest Operator', 'OPERATOR');
+      const session = await authSecurityPlatform.createPersistentToken(guestUid, 'Guest Operator', 'OPERATOR');
       const isSecure = req.secure || req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https';
 
       res.cookie(USER_COOKIE_NAME, session.token, {
@@ -735,12 +746,17 @@ async function startServer() {
     }
   });
 
-  app.post("/api/auth/refresh", (req: AuthenticatedRequest, res) => {
+  app.post("/api/auth/refresh", async (req: AuthenticatedRequest, res) => {
     const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : '';
     if (!refreshToken) {
       return res.status(400).json({ success: false, error: 'REFRESH_TOKEN_REQUIRED' });
     }
-    const rotated = authSecurityPlatform.refreshSession(refreshToken);
+    let rotated;
+    try {
+      rotated = await authSecurityPlatform.refreshSessionPersistent(refreshToken);
+    } catch {
+      return res.status(503).json({ success: false, error: 'AUTH_SESSION_STORE_UNAVAILABLE' });
+    }
     if (!rotated) {
       return res.status(401).json({ success: false, error: 'INVALID_OR_REVOKED_REFRESH_TOKEN' });
     }
@@ -768,16 +784,19 @@ async function startServer() {
     });
   });
 
-  app.post("/api/auth/logout", (req: AuthenticatedRequest, res) => {
+  app.post("/api/auth/logout", async (req: AuthenticatedRequest, res) => {
     const authHeader = String(req.headers.authorization || '');
     const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
-    if (bearer) authSecurityPlatform.revokeSession(bearer);
     const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : '';
-    if (refreshToken) authSecurityPlatform.revokeRefreshToken(refreshToken);
     const cookieHeader = String(req.headers.cookie || '');
     const userMatch = cookieHeader.match(new RegExp(`${USER_COOKIE_NAME}=([^;]+)`));
-    if (userMatch?.[1]) {
-      try { authSecurityPlatform.revokeSession(decodeURIComponent(userMatch[1])); } catch {}
+    let revocationFailed = false;
+    try {
+      if (bearer) await authSecurityPlatform.revokeSessionPersistent(bearer);
+      if (refreshToken) await authSecurityPlatform.revokeRefreshTokenPersistent(refreshToken);
+      if (userMatch?.[1]) await authSecurityPlatform.revokeSessionPersistent(decodeURIComponent(userMatch[1]));
+    } catch {
+      revocationFailed = true;
     }
     const isSecure = req.secure || req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https';
     res.clearCookie(USER_COOKIE_NAME, {
@@ -786,6 +805,9 @@ async function startServer() {
       secure: isSecure,
       path: '/'
     });
+    if (revocationFailed) {
+      return res.status(503).json({ success: false, error: 'SESSION_REVOCATION_UNAVAILABLE' });
+    }
     res.json({ success: true });
   });
 
@@ -793,7 +815,12 @@ async function startServer() {
   // Server-Side Administrator Session Verification (No client bypasses)
   // ---------------------------------------------------------------------
   app.get("/api/admin/session", async (req: AuthenticatedRequest, res) => {
-    const identity = req.authUser || (await resolveVerifiedIdentity(req, { allowApiKey: false }));
+    let identity: Awaited<ReturnType<typeof resolveVerifiedIdentity>>;
+    try {
+      identity = req.authUser || (await resolveVerifiedIdentity(req, { allowApiKey: false }));
+    } catch {
+      return res.status(503).json({ authenticated: false, isAdmin: false, error: 'AUTH_SESSION_STORE_UNAVAILABLE' });
+    }
     if (!identity) {
       return res.json({ authenticated: false, isAdmin: false });
     }
@@ -851,7 +878,7 @@ async function startServer() {
         });
       }
 
-      const session = authSecurityPlatform.createToken(subjectUid, subjectName, 'SOVEREIGN_ADMIN');
+      const session = await authSecurityPlatform.createPersistentToken(subjectUid, subjectName, 'SOVEREIGN_ADMIN');
       const isSecure = req.secure || req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https';
       res.cookie(ADMIN_COOKIE_NAME, session.token, {
         httpOnly: true,
@@ -883,16 +910,19 @@ async function startServer() {
     }
   });
 
-  app.post("/api/admin/logout", (req: AuthenticatedRequest, res) => {
+  app.post("/api/admin/logout", async (req: AuthenticatedRequest, res) => {
     const authHeader = String(req.headers.authorization || '');
     const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
-    if (bearer) authSecurityPlatform.revokeSession(bearer);
     const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : '';
-    if (refreshToken) authSecurityPlatform.revokeRefreshToken(refreshToken);
     const cookieHeader = String(req.headers.cookie || '');
     const match = cookieHeader.match(new RegExp(`${ADMIN_COOKIE_NAME}=([^;]+)`));
-    if (match?.[1]) {
-      try { authSecurityPlatform.revokeSession(decodeURIComponent(match[1])); } catch {}
+    let revocationFailed = false;
+    try {
+      if (bearer) await authSecurityPlatform.revokeSessionPersistent(bearer);
+      if (refreshToken) await authSecurityPlatform.revokeRefreshTokenPersistent(refreshToken);
+      if (match?.[1]) await authSecurityPlatform.revokeSessionPersistent(decodeURIComponent(match[1]));
+    } catch {
+      revocationFailed = true;
     }
     const isSecure = req.secure || req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https';
     res.clearCookie(ADMIN_COOKIE_NAME, {
@@ -901,6 +931,9 @@ async function startServer() {
       secure: isSecure,
       path: '/'
     });
+    if (revocationFailed) {
+      return res.status(503).json({ success: false, error: 'SESSION_REVOCATION_UNAVAILABLE' });
+    }
     res.json({ success: true });
   });
 

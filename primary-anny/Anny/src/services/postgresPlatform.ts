@@ -201,6 +201,178 @@ export class PostgresPlatform {
     }
   }
 
+  public isDurableDatabaseAvailable(): boolean {
+    return Boolean(this.pool);
+  }
+
+  private authSessionSchemaPromise: Promise<void> | null = null;
+
+  private async ensureAuthSessionSchema(): Promise<void> {
+    if (!this.pool) return;
+    if (!this.authSessionSchemaPromise) {
+      this.authSessionSchemaPromise = this.pool.query(`
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+          token_hash CHAR(64) PRIMARY KEY,
+          refresh_token_hash CHAR(64) NOT NULL UNIQUE,
+          user_id VARCHAR(160) NOT NULL,
+          username VARCHAR(320) NOT NULL,
+          role VARCHAR(40) NOT NULL,
+          access_expires_at BIGINT NOT NULL,
+          refresh_expires_at BIGINT NOT NULL,
+          revoked_at TIMESTAMP WITH TIME ZONE,
+          created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_active
+          ON auth_sessions(user_id, access_expires_at) WHERE revoked_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_refresh_active
+          ON auth_sessions(refresh_token_hash) WHERE revoked_at IS NULL;
+      `).then(() => undefined).catch((error: any) => {
+        this.authSessionSchemaPromise = null;
+        throw new Error(`POSTGRES_AUTH_SESSION_SCHEMA_FAILED: ${error?.message || 'Unable to initialize auth session storage.'}`);
+      });
+    }
+    await this.authSessionSchemaPromise;
+  }
+
+  private async withAuthSessionPersistence<T>(
+    operation: (pool: any) => Promise<T>,
+    fallback: T
+  ): Promise<T> {
+    if (!this.pool) {
+      if (requiresDurablePersistence()) {
+        throw new Error('POSTGRES_NOT_CONFIGURED: Durable authentication session storage is required.');
+      }
+      return fallback;
+    }
+    await this.ensureAuthSessionSchema();
+    return operation(this.pool);
+  }
+
+  /** Persist only one-way hashes of bearer credentials; raw tokens never enter PostgreSQL. */
+  public async storeAuthSession(record: {
+    tokenHash: string;
+    refreshTokenHash: string;
+    userId: string;
+    username: string;
+    role: string;
+    accessExpiresAt: number;
+    refreshExpiresAt: number;
+  }): Promise<boolean> {
+    return this.withAuthSessionPersistence(async pool => {
+      await pool.query(
+        `INSERT INTO auth_sessions
+          (token_hash, refresh_token_hash, user_id, username, role, access_expires_at, refresh_expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [record.tokenHash, record.refreshTokenHash, record.userId, record.username, record.role,
+          record.accessExpiresAt, record.refreshExpiresAt]
+      );
+      return true;
+    }, false);
+  }
+
+  public async findAuthSessionByTokenHash(tokenHash: string): Promise<any | null> {
+    return this.withAuthSessionPersistence(async pool => {
+      const result = await pool.query(
+        `SELECT token_hash, refresh_token_hash, user_id, username, role,
+                access_expires_at, refresh_expires_at, revoked_at
+           FROM auth_sessions
+          WHERE token_hash = $1 AND revoked_at IS NULL AND access_expires_at > $2
+          LIMIT 1`,
+        [tokenHash, Date.now()]
+      );
+      return result.rows[0] || null;
+    }, null);
+  }
+
+  public async findAuthSessionByRefreshHash(refreshTokenHash: string): Promise<any | null> {
+    return this.withAuthSessionPersistence(async pool => {
+      const result = await pool.query(
+        `SELECT token_hash, refresh_token_hash, user_id, username, role,
+                access_expires_at, refresh_expires_at, revoked_at
+           FROM auth_sessions
+          WHERE refresh_token_hash = $1 AND revoked_at IS NULL AND refresh_expires_at > $2
+          LIMIT 1`,
+        [refreshTokenHash, Date.now()]
+      );
+      return result.rows[0] || null;
+    }, null);
+  }
+
+  public async revokeAuthSessionByTokenHash(tokenHash: string): Promise<boolean> {
+    return this.withAuthSessionPersistence(async pool => {
+      const result = await pool.query(
+        'UPDATE auth_sessions SET revoked_at = NOW(), updated_at = NOW() WHERE token_hash = $1 AND revoked_at IS NULL',
+        [tokenHash]
+      );
+      return Number(result.rowCount || 0) > 0;
+    }, false);
+  }
+
+  public async revokeAuthSessionByRefreshHash(refreshTokenHash: string): Promise<boolean> {
+    return this.withAuthSessionPersistence(async pool => {
+      const result = await pool.query(
+        'UPDATE auth_sessions SET revoked_at = NOW(), updated_at = NOW() WHERE refresh_token_hash = $1 AND revoked_at IS NULL',
+        [refreshTokenHash]
+      );
+      return Number(result.rowCount || 0) > 0;
+    }, false);
+  }
+
+  public async revokeAuthSessionsForUser(userId: string): Promise<number> {
+    return this.withAuthSessionPersistence(async pool => {
+      const result = await pool.query(
+        'UPDATE auth_sessions SET revoked_at = NOW(), updated_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL',
+        [userId]
+      );
+      return Number(result.rowCount || 0);
+    }, 0);
+  }
+
+  /** Atomically consumes an old refresh credential and inserts its replacement. */
+  public async rotateAuthSession(
+    oldRefreshTokenHash: string,
+    replacement: {
+      tokenHash: string;
+      refreshTokenHash: string;
+      userId: string;
+      username: string;
+      role: string;
+      accessExpiresAt: number;
+      refreshExpiresAt: number;
+    }
+  ): Promise<boolean> {
+    return this.withAuthSessionPersistence(async pool => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const revoked = await client.query(
+          `UPDATE auth_sessions SET revoked_at = NOW(), updated_at = NOW()
+            WHERE refresh_token_hash = $1 AND revoked_at IS NULL AND refresh_expires_at > $2`,
+          [oldRefreshTokenHash, Date.now()]
+        );
+        if (Number(revoked.rowCount || 0) !== 1) {
+          await client.query('ROLLBACK');
+          return false;
+        }
+        await client.query(
+          `INSERT INTO auth_sessions
+            (token_hash, refresh_token_hash, user_id, username, role, access_expires_at, refresh_expires_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [replacement.tokenHash, replacement.refreshTokenHash, replacement.userId,
+            replacement.username, replacement.role, replacement.accessExpiresAt, replacement.refreshExpiresAt]
+        );
+        await client.query('COMMIT');
+        return true;
+      } catch (error) {
+        try { await client.query('ROLLBACK'); } catch {}
+        throw error;
+      } finally {
+        client.release();
+      }
+    }, false);
+  }
+
   // Generic Repository Queries with Postgres Pool or In-Memory fallback
   public async insert<T extends DatabaseRecord>(tableName: string, record: Omit<T, 'id' | 'createdAt' | 'updatedAt'>): Promise<T> {
     const now = new Date().toISOString();

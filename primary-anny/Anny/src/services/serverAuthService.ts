@@ -205,7 +205,7 @@ export async function resolveVerifiedIdentity(
   // 1. Admin HttpOnly Cookie takes precedence if valid (grants verified SOVEREIGN_ADMIN session)
   const adminCookieToken = cookies[ADMIN_COOKIE_NAME];
   if (adminCookieToken) {
-    const adminSession = authSecurityPlatform.verifyToken(adminCookieToken);
+    const adminSession = await authSecurityPlatform.verifyTokenPersistent(adminCookieToken);
     if (adminSession && adminSession.role === 'SOVEREIGN_ADMIN') {
       return {
         uid: adminSession.userId,
@@ -221,7 +221,7 @@ export async function resolveVerifiedIdentity(
 
   // 2. Explicit Bearer token: check ANNY HMAC session token first
   if (bearerToken) {
-    const bearerSession = authSecurityPlatform.verifyToken(bearerToken);
+    const bearerSession = await authSecurityPlatform.verifyTokenPersistent(bearerToken);
     if (bearerSession) {
       return {
         uid: bearerSession.userId,
@@ -248,7 +248,7 @@ export async function resolveVerifiedIdentity(
   // 4. Fallback to user session cookie when no valid Bearer token was resolved
   const cookieToken = cookies[USER_COOKIE_NAME];
   if (cookieToken) {
-    const cookieSession = authSecurityPlatform.verifyToken(cookieToken);
+    const cookieSession = await authSecurityPlatform.verifyTokenPersistent(cookieToken);
     if (cookieSession) {
       return {
         uid: cookieSession.userId,
@@ -311,8 +311,17 @@ export async function attachVerifiedIdentity(
 export function requireAuth(options: { allowApiKey?: boolean; requiredScope?: string } = {}) {
   return async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     let identity = req.authUser;
-    if (!identity || (options.allowApiKey && !identity)) {
-      identity = (await resolveVerifiedIdentity(req, { allowApiKey: options.allowApiKey })) || undefined;
+    try {
+      if (!identity || (options.allowApiKey && !identity)) {
+        identity = (await resolveVerifiedIdentity(req, { allowApiKey: options.allowApiKey })) || undefined;
+      }
+    } catch {
+      res.status(503).json({
+        success: false,
+        error: 'AUTH_SESSION_STORE_UNAVAILABLE',
+        message: 'The authentication session registry is temporarily unavailable.'
+      });
+      return;
     }
 
     if (!identity) {
@@ -362,7 +371,17 @@ export async function requireAdmin(
   res: Response,
   next: NextFunction
 ): Promise<void> {
-  const identity = req.authUser || (await resolveVerifiedIdentity(req, { allowApiKey: false }));
+  let identity: VerifiedIdentity | undefined = req.authUser;
+  try {
+    identity = identity || (await resolveVerifiedIdentity(req, { allowApiKey: false })) || undefined;
+  } catch {
+    res.status(503).json({
+      success: false,
+      error: 'AUTH_SESSION_STORE_UNAVAILABLE',
+      message: 'The authentication session registry is temporarily unavailable.'
+    });
+    return;
+  }
   if (!identity) {
     res.status(401).json({
       success: false,
