@@ -67,7 +67,7 @@ export class IntegrationRegistry {
       health: 'healthy',
       status: 'active',
       dependencies: ['VFS'],
-      capabilities: ['AST Syntax Check', 'Workspace Isolation'],
+      capabilities: ['Lightweight bracket-structure validation (not a full AST/compiler)', 'Workspace isolation'],
       emittedEvents: ['WorkspaceOpened', 'BuildStarted'],
       lastRegistered: now
     });
@@ -76,10 +76,10 @@ export class IntegrationRegistry {
       id: 'subsystem_eabp',
       name: 'Enterprise Autonomous Builder Platform',
       version: '1.0.0',
-      health: 'healthy',
-      status: 'active',
+      health: 'degraded',
+      status: 'standby',
       dependencies: ['VFS', 'Workspace', 'IntentRouter'],
-      capabilities: ['19-stage Pipeline', 'Requirements Engine', 'Self-Healing Repair'],
+      capabilities: ['Pipeline orchestration', 'Requirements extraction (verification varies)', 'Repair planning; actual edits require authorized transactions'],
       emittedEvents: ['ProjectGenerated', 'BuildCompleted', 'RepairStarted'],
       lastRegistered: now
     });
@@ -88,11 +88,11 @@ export class IntegrationRegistry {
       id: 'subsystem_runtime_bridge',
       name: 'Runtime Bridge & Capability Manager',
       version: '1.0.0',
-      health: 'healthy',
-      status: 'active',
-      dependencies: ['LocalNodeRuntimeProvider'],
-      capabilities: ['Multi-runtime Router', 'Preview Config Selection', 'Environment Isolation'],
-      emittedEvents: ['RuntimeStarted', 'PreviewReady'],
+      health: 'degraded',
+      status: 'standby',
+      dependencies: [],
+      capabilities: ['Runtime adapter selection metadata', 'Preview configuration selection', 'No verified process-spawning runtime adapter is connected'],
+      emittedEvents: ['RuntimeAdapterUnavailable', 'RuntimeStateChanged'],
       lastRegistered: now
     });
 
@@ -122,12 +122,12 @@ export class IntegrationRegistry {
 
     this.register({
       id: 'subsystem_security',
-      name: 'Security Sentinel & Liveness',
+      name: 'Security Sentinel Heuristics',
       version: '1.0.0',
-      health: 'healthy',
-      status: 'active',
+      health: 'degraded',
+      status: 'standby',
       dependencies: [],
-      capabilities: ['Input Sanitization', 'Audit Trail', 'Biometric Verification'],
+      capabilities: ['Heuristic prompt-pattern checks', 'Basic credential redaction', 'Not a complete prompt-injection defense, sandbox, or biometric verification system'],
       emittedEvents: ['SecurityAlert'],
       lastRegistered: now
     });
