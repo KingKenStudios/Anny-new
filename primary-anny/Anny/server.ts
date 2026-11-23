@@ -93,6 +93,7 @@ import {
 } from './src/core/AnnyUniversalLanguageFabric.ts';
 import { ANNY_MASTER_IDENTITY as ANNY_IDENTITY } from './src/core/annyIdentity.ts';
 import { annyCapabilityTruthRegistry } from './src/core/annyCapabilityTruthRegistry.ts';
+import { runAnnyLiveCapabilityProbes } from './src/services/annyLiveCapabilityProbes.ts';
 
 import FormData from "form-data";
 import { Readable } from "stream";
@@ -203,6 +204,9 @@ async function startServer() {
   void providerRegistryService.auditAndRefreshHealth()
     .then(({ ollamaDiscovery }) => {
       console.log(`[Startup Discovery] Ollama reachable=${ollamaDiscovery.reachable}, models=${ollamaDiscovery.discoveredModels.length}, inferenceTestPassed=${ollamaDiscovery.inferenceTestPassed}`);
+      void runAnnyLiveCapabilityProbes(ollamaDiscovery).catch((err) => {
+        console.warn('[Capability Probes] Live service verification warning:', err?.message || err);
+      });
     })
     .catch((err) => {
       console.warn('[Startup Discovery] Provider audit warning:', err?.message || err);

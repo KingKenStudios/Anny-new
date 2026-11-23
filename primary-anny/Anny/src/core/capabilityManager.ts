@@ -166,6 +166,16 @@ export class CapabilityManager {
       lastVerified: unverified
     });
 
+    // Live service integrations are registered as unverified until a real probe runs.
+    const serviceCapabilities: SubsystemCapability[] = [
+      { id: 'service_postgres', name: 'PostgreSQL Database', category: 'storage', version: 'runtime', health: 'degraded', status: 'standby', isConnected: false, supportedCapabilities: ['Durable relational persistence'], limitations: ['Awaiting live connection probe'], lastVerified: unverified },
+      { id: 'service_redis', name: 'Redis Service', category: 'storage', version: 'runtime', health: 'degraded', status: 'standby', isConnected: false, supportedCapabilities: ['External cache and coordination'], limitations: ['Awaiting live connection probe'], lastVerified: unverified },
+      { id: 'service_ollama', name: 'Local Ollama AI', category: 'runtime_provider', version: 'runtime', health: 'degraded', status: 'standby', isConnected: false, supportedCapabilities: ['Local model inference'], limitations: ['Awaiting live discovery and inference probe'], lastVerified: unverified },
+      { id: 'service_cloud_ai', name: 'Configured Cloud AI Providers', category: 'runtime_provider', version: 'runtime', health: 'degraded', status: 'standby', isConnected: false, supportedCapabilities: ['Replaceable online model providers'], limitations: ['Awaiting provider registry audit'], lastVerified: unverified },
+      { id: 'service_qdrant', name: 'Qdrant Vector Database', category: 'storage', version: 'runtime', health: 'degraded', status: 'standby', isConnected: false, supportedCapabilities: ['Vector retrieval'], limitations: ['Current platform health method reports simulated storage, not a live Qdrant connection'], lastVerified: unverified }
+    ];
+    serviceCapabilities.forEach(capability => this.register(capability));
+
     // 3. Preview Providers
     this.register({
       id: 'preview_vite_iframe',
