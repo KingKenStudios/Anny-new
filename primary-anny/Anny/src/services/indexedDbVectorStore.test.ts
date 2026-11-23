@@ -25,7 +25,11 @@ test('offline browser storage persists vectors across platform instances', async
 
   await firstInstance.upsertDocument('knowledge_base', 'Offline persistent knowledge', {
     title: 'Offline note',
-    metadata: { ownerUserId: 'user-a' }
+    metadata: { ownerUserId: 'user-a', chunkId: 'stable-chunk-1' }
+  });
+  await firstInstance.upsertDocument('knowledge_base', 'Updated offline persistent knowledge', {
+    title: 'Offline note',
+    metadata: { ownerUserId: 'user-a', chunkId: 'stable-chunk-1' }
   });
 
   // A fresh platform instance has no in-process vector cache. It must retrieve
@@ -42,7 +46,7 @@ test('offline browser storage persists vectors across platform instances', async
   const health = await secondInstance.checkHealth();
 
   assert.equal(results.length, 1);
-  assert.equal(results[0].content, 'Offline persistent knowledge');
+  assert.equal(results[0].content, 'Updated offline persistent knowledge');
   assert.equal(health.status, 'LOCAL_PERSISTENT');
   assert.equal(health.totalVectors, 1);
 });
