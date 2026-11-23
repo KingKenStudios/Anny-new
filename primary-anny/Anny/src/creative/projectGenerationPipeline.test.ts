@@ -311,3 +311,33 @@ test('VFS persistence and isolated preview bundler support generated React proje
   assert.ok(bundle.srcDoc.includes('Content-Security-Policy'));
   assert.ok(bundle.srcDoc.includes('VoltGrid Electrical Engineering'));
 });
+
+test('professional visual design quality standards are included in the generation contract', async () => {
+  const validFiles = makeValidWebsiteFiles();
+  let systemPrompt = '';
+  const executor: SynthesisChatExecutor = async (messages) => {
+    systemPrompt = String(messages.find((message) => message.role === 'system')?.content || '');
+    return {
+      content: JSON.stringify({
+        manifest: { projectName: 'VoltGrid', summary: 'Professional website' },
+        files: validFiles,
+      }),
+      model: 'test-model',
+      provider: 'test-provider',
+    };
+  };
+
+  const result = await synthesizeAppFiles(
+    'Create a professional industrial automation company website',
+    {},
+    { chatExecutor: executor, maxRepairAttempts: 0 }
+  );
+
+  assert.equal(result.verification.passed, true);
+  assert.match(systemPrompt, /PROFESSIONAL VISUAL QUALITY BAR/);
+  assert.match(systemPrompt, /coherent art direction/);
+  assert.match(systemPrompt, /real visual storytelling/);
+  assert.match(systemPrompt, /Mobile is a designed experience/);
+  assert.match(systemPrompt, /no dead controls/);
+  assert.match(systemPrompt, /never invent certifications, client logos, testimonials, awards, statistics/);
+});
