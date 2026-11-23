@@ -311,8 +311,17 @@ export async function attachVerifiedIdentity(
 export function requireAuth(options: { allowApiKey?: boolean; requiredScope?: string } = {}) {
   return async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     let identity = req.authUser;
-    if (!identity || (options.allowApiKey && !identity)) {
-      identity = (await resolveVerifiedIdentity(req, { allowApiKey: options.allowApiKey })) || undefined;
+    try {
+      if (!identity || (options.allowApiKey && !identity)) {
+        identity = (await resolveVerifiedIdentity(req, { allowApiKey: options.allowApiKey })) || undefined;
+      }
+    } catch {
+      res.status(503).json({
+        success: false,
+        error: 'AUTH_SESSION_STORE_UNAVAILABLE',
+        message: 'The authentication session registry is temporarily unavailable.'
+      });
+      return;
     }
 
     if (!identity) {
@@ -362,7 +371,17 @@ export async function requireAdmin(
   res: Response,
   next: NextFunction
 ): Promise<void> {
-  const identity = req.authUser || (await resolveVerifiedIdentity(req, { allowApiKey: false }));
+  let identity: VerifiedIdentity | undefined = req.authUser;
+  try {
+    identity = identity || (await resolveVerifiedIdentity(req, { allowApiKey: false })) || undefined;
+  } catch {
+    res.status(503).json({
+      success: false,
+      error: 'AUTH_SESSION_STORE_UNAVAILABLE',
+      message: 'The authentication session registry is temporarily unavailable.'
+    });
+    return;
+  }
   if (!identity) {
     res.status(401).json({
       success: false,
