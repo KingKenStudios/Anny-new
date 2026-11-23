@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isInstalledOllamaModel, isOllamaVisionModel, resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
+import { assertOllamaMediaSupported, isInstalledOllamaModel, isOllamaVisionModel, resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
 import type { OllamaDiscoveryResult } from './ollamaService';
 
 const discovery: OllamaDiscoveryResult = {
@@ -50,4 +50,28 @@ test('vision support is inferred only for known vision model families', () => {
   assert.equal(isOllamaVisionModel('qwen2.5-vl:7b'), true);
   assert.equal(isOllamaVisionModel('moondream:latest'), true);
   assert.equal(isOllamaVisionModel('qwen2.5-coder:7b'), false);
+});
+
+
+test('offline media validation allows text and vision images but rejects unsupported media', () => {
+  assert.doesNotThrow(() => assertOllamaMediaSupported([
+    { content: 'plain text' },
+    { content: [{ text: 'describe this' } as any] }
+  ], 'llama3.2:latest'));
+
+  assert.doesNotThrow(() => assertOllamaMediaSupported([
+    { content: [{ inlineData: { mimeType: 'image/png', data: 'aGVsbG8=' } }] }
+  ], 'llava:7b'));
+
+  assert.throws(() => assertOllamaMediaSupported([
+    { content: [{ inlineData: { mimeType: 'image/png', data: 'aGVsbG8=' } }] }
+  ], 'llama3.2:latest'), /not identified as a vision-capable/i);
+
+  assert.throws(() => assertOllamaMediaSupported([
+    { content: [{ inlineData: { mimeType: 'audio/wav', data: 'aGVsbG8=' } }] }
+  ], 'llava:7b'), /text and image input only/i);
+
+  assert.throws(() => assertOllamaMediaSupported([
+    { content: [{ fileData: { mimeType: 'application/pdf', fileUri: 'file://private.pdf' } }] }
+  ], 'llava:7b'), /remote file references/i);
 });
