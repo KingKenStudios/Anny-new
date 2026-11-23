@@ -36,6 +36,26 @@ export interface ReadinessReport {
   };
 }
 
+export function qdrantReadinessFromHealth(health: {
+  status: string;
+  latencyMs: number;
+  totalVectors: number;
+  detail: string;
+}): ComponentReadinessStatus {
+  const status: ComponentReadinessStatus['status'] = health.status === 'CONNECTED'
+    ? 'PASS'
+    : ['CONNECTION_FAILED', 'LOCAL_PERSISTENCE_FAILED'].includes(health.status)
+      ? 'FAIL'
+      : 'DEGRADED';
+  return {
+    componentName: 'Vector Storage & Semantic Memory',
+    category: 'Phase 6 - Vector Memory',
+    status,
+    latencyMs: health.latencyMs,
+    details: health.detail + ' Stored vector count: ' + health.totalVectors + '.'
+  };
+}
+
 export class EnterpriseSystemGateway {
   private static instance: EnterpriseSystemGateway;
 
@@ -104,13 +124,7 @@ export class EnterpriseSystemGateway {
 
     // 6. Qdrant Vector Database
     const qdrantHealth = await qdrantPlatform.checkHealth();
-    components.push({
-      componentName: 'Qdrant Vector Database & Embeddings Search',
-      category: 'Phase 6 - Qdrant',
-      status: 'DEGRADED',
-      latencyMs: qdrantHealth.latencyMs,
-      details: `Mode: ${qdrantHealth.status}. Current vector storage is in-process; ${qdrantHealth.totalVectors} local vectors are not evidence of a live Qdrant connection.`
-    });
+    components.push(qdrantReadinessFromHealth(qdrantHealth));
 
     // 7. RabbitMQ Task Queue
     const rabbitHealth = await rabbitMQPlatform.checkHealth();
@@ -141,19 +155,22 @@ export class EnterpriseSystemGateway {
     });
 
     // 10. Authentication & Authorization
+    const securitySecrets = envConfigService.validateSecuritySecrets();
     components.push({
       componentName: 'Authentication & RBAC Token Platform',
       category: 'Phase 10 - Auth',
-      status: 'PASS',
-      details: 'JWT, refresh tokens, and RBAC permission checks active.'
+      status: securitySecrets.isValid ? 'PASS' : 'FAIL',
+      details: securitySecrets.isValid
+        ? 'Required signing, session, and encryption secrets passed strength validation.'
+        : 'Required security secret(s) missing or weak: ' + securitySecrets.invalidOrMissing.join(', ')
     });
 
     // 11. Security Sentinel
     components.push({
-      componentName: 'Security Sentinel & AES-256 Vault',
+      componentName: 'Security Sentinel & Secret Handling',
       category: 'Phase 11 - Security',
-      status: 'PASS',
-      details: 'AES-256 encryption, XSS guards, SQL injection guards active.'
+      status: 'DEGRADED',
+      details: 'Basic prompt-pattern checks and secret redaction are present. They are heuristic controls, not a complete prompt-injection defense, sandbox, or security certification.'
     });
 
     // 12. Monitoring
