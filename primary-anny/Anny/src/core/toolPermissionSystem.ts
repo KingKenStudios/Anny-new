@@ -200,7 +200,7 @@ export class ToolPermissionSystem {
     for (const [fieldName, field] of Object.entries(tool.inputSchema)) {
       if (!/^[a-zA-Z][a-zA-Z0-9_]{0,127}$/.test(fieldName) ||
           !field || !['string', 'number', 'boolean', 'array', 'object'].includes(field.type) ||
-          typeof field.description !== 'string' || typeof field.required !== 'undefined' && typeof field.required !== 'boolean) {
+          typeof field.description !== 'string' || (typeof field.required !== 'undefined' && typeof field.required !== 'boolean')) {
         throw new Error('TOOL_SCHEMA_INVALID: Input fields must use supported types and descriptions.');
       }
     }
