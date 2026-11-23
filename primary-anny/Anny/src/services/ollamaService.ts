@@ -27,6 +27,7 @@ export interface OllamaDiscoveryResult {
 export class OllamaDiscoveryService {
   private static instance: OllamaDiscoveryService;
   private lastDiscovery: OllamaDiscoveryResult | null = null;
+  private lastDiscoveryAt = 0;
 
   public static getInstance(): OllamaDiscoveryService {
     if (!OllamaDiscoveryService.instance) {
@@ -35,7 +36,8 @@ export class OllamaDiscoveryService {
     return OllamaDiscoveryService.instance;
   }
 
-  public getLastDiscovery(): OllamaDiscoveryResult | null {
+  public getLastDiscovery(maxAgeMs = 30_000): OllamaDiscoveryResult | null {
+    if (!this.lastDiscovery || Date.now() - this.lastDiscoveryAt > maxAgeMs) return null;
     return this.lastDiscovery;
   }
 
@@ -50,7 +52,7 @@ export class OllamaDiscoveryService {
       config.ollamaBaseUrl,
       'http://127.0.0.1:11434',
       'http://localhost:11434'
-    ])).filter(Boolean);
+    ])).filter(Boolean).map(endpoint => endpoint.replace(/\\/+$/, ''));
 
     for (const endpoint of candidateEndpoints) {
       const startTime = Date.now();
@@ -75,7 +77,7 @@ export class OllamaDiscoveryService {
                 model: testModel,
                 messages: [{ role: 'user', content: 'Return the number 42.' }],
                 stream: false
-              }, { timeout: 4000 });
+              }, { timeout: 30_000 });
               if (chatRes.data?.message?.content) {
                 inferencePassed = true;
               }
@@ -90,8 +92,14 @@ export class OllamaDiscoveryService {
             activeEndpoint: endpoint,
             discoveredModels,
             inferenceTestPassed: inferencePassed,
-            latencyMs
+            latencyMs,
+            ...(!inferencePassed
+              ? { error: discoveredModels.length > 0
+                  ? 'Ollama endpoint is reachable, but the installed model did not complete the inference probe.'
+                  : 'Ollama is reachable, but no local models are installed.' }
+              : {})
           };
+          this.lastDiscoveryAt = Date.now();
           return this.lastDiscovery;
         }
       } catch (err: any) {
@@ -104,8 +112,9 @@ export class OllamaDiscoveryService {
       discoveredModels: [],
       inferenceTestPassed: false,
       latencyMs: 0,
-      error: 'Ollama endpoint unreachable at candidate URLs. Set OLLAMA_BASE_URL to remote/LAN Ollama IP if running outside Cloud container.'
+      error: 'Ollama endpoint unreachable at candidate URLs. Set OLLAMA_BASE_URL to the remote/LAN Ollama IP if running outside the local host.'
     };
+    this.lastDiscoveryAt = Date.now();
     return this.lastDiscovery;
   }
 }
