@@ -61,7 +61,7 @@ class BaseExecutionAdapter implements ExecutionAdapter {
   protected logs: string[] = [];
   protected isRunning: boolean = false;
   protected currentPort: number = 3000;
-  protected pid: number = Math.floor(Math.random() * 9000) + 1000;
+  protected pid: number = 0;
 
   constructor(
     id: AdapterRuntimeType,
@@ -84,25 +84,25 @@ class BaseExecutionAdapter implements ExecutionAdapter {
 
   async build(projectPath: string): Promise<{ success: boolean; logs: string[]; buildTimeMs: number }> {
     const start = Date.now();
-    this.logs.push(`[${this.name}] Compiling project target at ${projectPath}...`);
-    this.logs.push(`[${this.name}] Build completed successfully zero errors.`);
+    this.logs.push(`[${this.name}] Build simulation requested for ${projectPath}; no compiler or external runtime is attached.`);
+    this.logs.push(`[${this.name}] Build was NOT executed. A real runtime adapter must be installed to claim build success.`);
     return {
-      success: true,
+      success: false,
       logs: [...this.logs],
-      buildTimeMs: Date.now() - start + 120
+      buildTimeMs: Date.now() - start
     };
   }
 
   async run(projectPath: string, port: number = 3000): Promise<{ pid: number; port: number; status: string }> {
     this.currentPort = port;
     this.isRunning = true;
-    this.logs.push(`[${this.name}] Process started (PID: ${this.pid}) listening on Ingress Port ${this.currentPort}.`);
-    return { pid: this.pid, port: this.currentPort, status: 'RUNNING' };
+    this.logs.push(`[${this.name}] Simulated runtime state only; no operating-system process was spawned.`);
+    return { pid: 0, port: this.currentPort, status: 'SIMULATED' };
   }
 
   async stop(): Promise<boolean> {
     this.isRunning = false;
-    this.logs.push(`[${this.name}] Process PID ${this.pid} terminated gracefully.`);
+    this.logs.push(`[${this.name}] Simulated runtime state stopped; no operating-system process was terminated.`);
     return true;
   }
 
@@ -114,8 +114,8 @@ class BaseExecutionAdapter implements ExecutionAdapter {
 
   async healthCheck(): Promise<AdapterHealthStatus> {
     return {
-      status: this.isRunning ? 'HEALTHY' : 'AWAITING_DEPENDENCY',
-      message: `${this.name} status: ${this.isRunning ? 'Active (simulated in-browser state, not a real spawned process)' : 'Standby'}`,
+      status: this.isRunning ? 'DEGRADED' : 'AWAITING_DEPENDENCY',
+      message: `${this.name} status: ${this.isRunning ? 'SIMULATED state only; no real process is spawned or health-probed' : 'Standby; real runtime adapter unavailable'}`,
       latencyMs: null,
       cpuUsagePct: null,
       memoryMb: null
@@ -127,10 +127,7 @@ class BaseExecutionAdapter implements ExecutionAdapter {
   }
 
   getPreviewURL(): string {
-    if (typeof window !== 'undefined') {
-      return window.location.origin;
-    }
-    return `http://localhost:${this.currentPort}`;
+    return '';
   }
 
   detectRequirements(projectFiles: string[]): boolean {
@@ -196,9 +193,8 @@ export class UniversalExecutionAdapterEngine {
       this.adapters.set(adapter.id, adapter);
     });
 
-    // Default active adapter
+    // Select a default adapter without starting a simulated process.
     this.activeAdapter = this.adapters.get('NODE_VITE')!;
-    this.activeAdapter.run('workspace', 3000);
   }
 
   private registerWithOS(): void {
@@ -206,13 +202,13 @@ export class UniversalExecutionAdapterEngine {
       id: 'subsystem_execution_adapter_engine',
       name: 'Universal Execution Adapter Engine (UEAE v1.0)',
       version: '1.0.0',
-      health: 'healthy',
-      status: 'active',
+      health: 'degraded',
+      status: 'standby',
       dependencies: ['CapabilityManager', 'SystemBus', 'IntegrationRegistry', 'EnvironmentDetector'],
       capabilities: [
-        'Plugin-based 17-Runtime Execution Adapters',
-        'Node, Express, Python, Go, Rust, Java, Flutter, Docker, ROS2 & PLC Gateways',
-        'Port 3000 Ingress Routing & Health Telemetry'
+        'Runtime adapter selection metadata (17 targets)',
+        'Simulated adapter state and placeholder lifecycle APIs',
+        'Real process spawning, compilation, networking, and hardware gateways are not implemented in these adapters'
       ],
       emittedEvents: ['RuntimeStateChanged'],
       lastRegistered: new Date().toLocaleTimeString()
@@ -223,24 +219,34 @@ export class UniversalExecutionAdapterEngine {
       name: 'Plugin Execution Adapter Orchestrator',
       category: 'runtime_provider',
       version: '1.0.0',
-      health: 'healthy',
-      status: 'active',
-      isConnected: true,
+      health: 'degraded',
+      status: 'standby',
+      isConnected: false,
       supportedCapabilities: [
-        'Node.js + Vite (Port 3000)',
-        'Python FastAPI / Flask ASGI/WSGI',
-        'Go & Rust High-Throughput Compiled Servers',
-        'Docker & K8s Cloud Run Ingress Gateway',
-        'ROS2 Humble Robotics & PLC SCADA Modbus Gateways'
+        'Runtime adapter selection and metadata',
+        'Placeholder build/run/stop lifecycle state'
       ],
-      limitations: [],
+      limitations: [
+        'No adapter currently spawns a real runtime process or performs a real build',
+        'Docker, Kubernetes, ROS 2, PLC, SCADA and native hardware adapters are placeholders',
+        'Preview URLs, process IDs, CPU, memory, and runtime health are not provided as verified telemetry'
+      ],
       lastVerified: new Date().toLocaleTimeString(),
-      metrics: { cpuPct: 0.8, memoryMb: 64.0, latencyMs: 2 }
+      metrics: {}
     });
 
     systemBus.publish('SubsystemRegistered', 'UniversalExecutionAdapterEngine', {
       subsystemId: 'subsystem_execution_adapter_engine',
       timestamp: new Date().toLocaleTimeString()
+    });
+  }
+
+  private logsForSelection(target: ExecutionAdapter, buildLogs: string[]): void {
+    systemBus.publish('RuntimeStateChanged', 'UniversalExecutionAdapterEngine', {
+      adapterId: target.id,
+      status: 'SIMULATED_UNAVAILABLE',
+      reason: 'Real runtime build unavailable; simulation did not start a process.',
+      logs: buildLogs.slice(-20)
     });
   }
 
@@ -265,10 +271,14 @@ export class UniversalExecutionAdapterEngine {
     }
 
     await target.initialize();
-    await target.build(projectPath);
-    await target.run(projectPath, 3000);
-
+    const build = await target.build(projectPath);
     this.activeAdapter = target;
+    if (!build.success) {
+      this.logsForSelection(target, build.logs);
+      this.notify();
+      return target;
+    }
+    await target.run(projectPath, 3000);
 
     systemBus.publish('RuntimeStateChanged', 'UniversalExecutionAdapterEngine', {
       adapterId: target.id,
