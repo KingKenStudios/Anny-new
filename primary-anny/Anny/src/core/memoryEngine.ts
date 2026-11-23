@@ -9,6 +9,7 @@
 
 import { qdrantPlatform, type VectorDocument } from '../services/qdrantPlatform';
 import { isOwnedByTenant, requireTenantOwner } from './memoryTenantScope';
+import { canDegradeToKeywordSearch, resolveRagChunkId } from './ragRetrievalUtils';
 import { db, auth } from '../lib/firebase';
 import { doc, setDoc, getDoc, collection, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
 
@@ -59,7 +60,7 @@ export interface DocumentChunk {
   text: string;
   chunkIndex: number;
   tokens: number;
-  ownerUserId?: string;
+  ownerUserId: string;
 }
 
 export interface RAGSearchResult {
@@ -356,15 +357,17 @@ export class MemoryEngine {
         ownerUserId: tenantOwnerId
       };
 
-      chunks.push(chunk);
-      this.keywordIndex.set(chunkId, chunk);
-
-      // Upsert into Qdrant vector database
+      // Persist the dense vector first. The stable chunk ID makes retries idempotent.
       await qdrantPlatform.upsertDocument('knowledge_base', chunkText, {
         title: documentTitle,
         category,
         metadata: { chunkId, chunkIndex: chunkIdx, ownerUserId: tenantOwnerId }
       });
+
+      // Only expose the BM25 chunk after vector ingestion succeeds.
+      chunks.push(chunk);
+      this.keywordIndex.set(chunkId, chunk);
+      await qdrantPlatform.putKeywordChunk(chunk);
 
       start += (chunkSizeWords - overlapWords);
       chunkIdx++;
@@ -383,24 +386,37 @@ export class MemoryEngine {
     if (!query || !query.trim()) return [];
     const tenantOwnerId = requireTenantOwner(ownerUserId, 'Knowledge retrieval');
 
-    // 1. Dense Vector Search via Qdrant
-    const vectorResults = await qdrantPlatform.search(
-      'knowledge_base',
-      query,
-      limit * 2,
-      undefined,
-      undefined,
-      tenantOwnerId
-    );
+    // 1. Dense vector retrieval is preferred, but keyword retrieval remains
+    // usable offline when an embedding provider or remote Qdrant is unavailable.
+    let vectorResults: Awaited<ReturnType<typeof qdrantPlatform.search>> = [];
+    let denseSearchError: unknown;
+    try {
+      vectorResults = await qdrantPlatform.search(
+        'knowledge_base',
+        query,
+        limit * 2,
+        undefined,
+        undefined,
+        tenantOwnerId
+      );
+    } catch (error) {
+      if (!canDegradeToKeywordSearch(error)) throw error;
+      denseSearchError = error;
+    }
 
-    // 2. BM25 Keyword Search across internal index
+    // 2. BM25 Keyword Search across the persistent tenant-scoped index
     const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
     const bm25Scores: Array<{ chunk: DocumentChunk; score: number }> = [];
+    const persistedKeywordChunks = await qdrantPlatform.getKeywordChunks(tenantOwnerId);
+    const tenantKeywordChunks = new Map<string, DocumentChunk>();
 
-    this.keywordIndex.forEach((chunk) => {
-      if (!isOwnedByTenant(chunk, tenantOwnerId)) {
-        return;
-      }
+    this.keywordIndex.forEach(chunk => {
+      if (isOwnedByTenant(chunk, tenantOwnerId)) tenantKeywordChunks.set(chunk.chunkId, chunk);
+    });
+    persistedKeywordChunks.forEach(chunk => tenantKeywordChunks.set(chunk.chunkId, chunk));
+
+    tenantKeywordChunks.forEach((chunk) => {
+      if (!isOwnedByTenant(chunk, tenantOwnerId)) return;
       const chunkLower = chunk.text.toLowerCase();
       let matches = 0;
       queryTerms.forEach(term => {
@@ -414,17 +430,25 @@ export class MemoryEngine {
     bm25Scores.sort((a, b) => b.score - a.score);
 
     // 3. Reciprocal Rank Fusion (RRF) Reranking
-    const rrfMap: Map<string, { chunkId: string; text: string; documentTitle: string; rrfScore: number }> = new Map();
+    const rrfMap: Map<string, {
+      chunkId: string;
+      text: string;
+      documentTitle: string;
+      rrfScore: number;
+      sources: Set<'dense' | 'bm25'>;
+    }> = new Map();
     const kConstant = 60;
 
     // Dense RRF
     vectorResults.forEach((vr, rank) => {
       const rrf = 1 / (kConstant + rank + 1);
-      rrfMap.set(vr.id, {
-        chunkId: vr.id,
+      const chunkId = resolveRagChunkId(vr);
+      rrfMap.set(chunkId, {
+        chunkId,
         text: vr.content,
         documentTitle: vr.payload?.title || 'Knowledge Base',
-        rrfScore: rrf
+        rrfScore: rrf,
+        sources: new Set(['dense'])
       });
     });
 
@@ -434,15 +458,21 @@ export class MemoryEngine {
       const existing = rrfMap.get(bm.chunk.chunkId);
       if (existing) {
         existing.rrfScore += rrf;
+        existing.sources.add('bm25');
       } else {
         rrfMap.set(bm.chunk.chunkId, {
           chunkId: bm.chunk.chunkId,
           text: bm.chunk.text,
           documentTitle: bm.chunk.documentTitle,
-          rrfScore: rrf
+          rrfScore: rrf,
+          sources: new Set(['bm25'])
         });
       }
     });
+
+    if (denseSearchError && vectorResults.length === 0 && bm25Scores.length === 0) {
+      throw denseSearchError;
+    }
 
     const finalRAG = Array.from(rrfMap.values())
       .sort((a, b) => b.rrfScore - a.rrfScore)
@@ -452,7 +482,9 @@ export class MemoryEngine {
         text: item.text,
         documentTitle: item.documentTitle,
         score: Number(item.rrfScore.toFixed(5)),
-        retrievalSource: 'rrf_fusion' as const
+        retrievalSource: item.sources.size > 1
+          ? 'rrf_fusion' as const
+          : item.sources.has('dense') ? 'dense' as const : 'bm25' as const
       }));
 
     return finalRAG;

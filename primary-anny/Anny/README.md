@@ -73,3 +73,10 @@ Server-issued guest and administrator sessions use PostgreSQL-backed revocation 
 - Logout and administrator logout report a temporary service error if durable revocation cannot be confirmed.
 
 The `auth_sessions` table and indexes are created additively with `CREATE TABLE IF NOT EXISTS`; this feature does not alter or delete existing user, project, or memory records.
+
+
+### Persistent offline keyword retrieval
+
+Browser ANNY also persists tenant-owned BM25 keyword chunks in the `keyword_chunks` IndexedDB object store. The database upgrades additively from version 1 to version 2, retaining the existing vector collection store. Keyword reads require an owner ID and query the owner index, so records belonging to other users are not included in retrieval.
+
+This is device-local persistence. Server-side Node runtimes without IndexedDB still use the in-process keyword index unless a separate durable server-side knowledge store is configured; they must not be described as restart-safe BM25 storage.

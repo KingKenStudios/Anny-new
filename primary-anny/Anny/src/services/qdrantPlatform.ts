@@ -10,7 +10,7 @@
 import { aiProviderPlatform } from './aiProviderPlatform';
 import { envConfigService } from './envConfigService';
 import { IndexedDbVectorStore } from './indexedDbVectorStore';
-import type { LocalVectorStore } from './indexedDbVectorStore';
+import type { LocalVectorStore, StoredKeywordChunk } from './indexedDbVectorStore';
 
 export interface VectorDocument {
   id: string;
@@ -301,6 +301,27 @@ export class QdrantPlatform {
       else localDocuments.push(doc);
     }
     return doc;
+  }
+
+  public async putKeywordChunk(chunk: StoredKeywordChunk): Promise<boolean> {
+    const ownerUserId = String(chunk?.ownerUserId || '').trim();
+    if (!ownerUserId) throw new Error('MEMORY_OWNER_SCOPE_REQUIRED: Keyword ingestion requires an authenticated owner user ID.');
+    if (ownerUserId.length > 128 || /[\u0000-\u001f\u007f]/.test(ownerUserId)) {
+      throw new Error('MEMORY_OWNER_SCOPE_INVALID: Owner user ID must be a valid value of at most 128 characters.');
+    }
+    if (!this.localStore.isAvailable()) return false;
+    await this.localStore.putKeywordChunk({ ...chunk, ownerUserId });
+    return true;
+  }
+
+  public async getKeywordChunks(ownerUserId: string): Promise<StoredKeywordChunk[]> {
+    const owner = String(ownerUserId || '').trim();
+    if (!owner) throw new Error('MEMORY_OWNER_SCOPE_REQUIRED: Keyword retrieval requires an authenticated owner user ID.');
+    if (owner.length > 128 || /[\u0000-\u001f\u007f]/.test(owner)) {
+      throw new Error('MEMORY_OWNER_SCOPE_INVALID: Owner user ID must be a valid value of at most 128 characters.');
+    }
+    if (!this.localStore.isAvailable()) return [];
+    return this.localStore.getKeywordChunks(owner);
   }
 
   public async search(

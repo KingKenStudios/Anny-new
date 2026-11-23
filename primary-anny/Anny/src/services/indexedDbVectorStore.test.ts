@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { QdrantPlatform, type VectorDocument } from './qdrantPlatform';
-import type { LocalVectorStore } from './indexedDbVectorStore';
+import type { LocalVectorStore, StoredKeywordChunk } from './indexedDbVectorStore';
 
 class SharedTestStore implements LocalVectorStore {
   private records = new Map<string, VectorDocument>();
+  private keywordRecords = new Map<string, StoredKeywordChunk>();
   isAvailable(): boolean { return true; }
   async getCollection(collectionName: string): Promise<VectorDocument[]> {
     return [...this.records.entries()]
@@ -13,6 +14,12 @@ class SharedTestStore implements LocalVectorStore {
   }
   async put(collectionName: string, document: VectorDocument): Promise<void> {
     this.records.set(`${collectionName}:${document.id}`, document);
+  }
+  async putKeywordChunk(chunk: StoredKeywordChunk): Promise<void> {
+    this.keywordRecords.set(`${chunk.ownerUserId}:${chunk.chunkId}`, chunk);
+  }
+  async getKeywordChunks(ownerUserId: string): Promise<StoredKeywordChunk[]> {
+    return [...this.keywordRecords.values()].filter(chunk => chunk.ownerUserId === ownerUserId);
   }
   async count(): Promise<number> { return this.records.size; }
 }
@@ -56,6 +63,8 @@ test('offline local persistence failures are not silently downgraded to volatile
     isAvailable: () => true,
     getCollection: async () => { throw new Error('storage quota unavailable'); },
     put: async () => { throw new Error('storage quota unavailable'); },
+    putKeywordChunk: async () => { throw new Error('storage quota unavailable'); },
+    getKeywordChunks: async () => { throw new Error('storage quota unavailable'); },
     count: async () => { throw new Error('storage quota unavailable'); }
   };
   const platform = new QdrantPlatform({
@@ -70,4 +79,37 @@ test('offline local persistence failures are not silently downgraded to volatile
   );
   const health = await platform.checkHealth();
   assert.equal(health.status, 'LOCAL_PERSISTENCE_FAILED');
+});
+
+
+test('keyword chunks persist across platform instances and remain tenant-isolated', async () => {
+  const store = new SharedTestStore();
+  const config = () => ({ qdrantUrl: '', qdrantApiKey: undefined });
+  const first = new QdrantPlatform({ getConfig: config, embed: async () => [1, 0], localStore: store });
+  await first.putKeywordChunk({
+    chunkId: 'chunk-a',
+    documentTitle: 'Tenant A notes',
+    text: 'Private manufacturing plans for tenant A',
+    chunkIndex: 0,
+    tokens: 8,
+    ownerUserId: 'tenant-a'
+  });
+  await first.putKeywordChunk({
+    chunkId: 'chunk-b',
+    documentTitle: 'Tenant B notes',
+    text: 'Private manufacturing plans for tenant B',
+    chunkIndex: 0,
+    tokens: 8,
+    ownerUserId: 'tenant-b'
+  });
+
+  const restarted = new QdrantPlatform({ getConfig: config, embed: async () => [1, 0], localStore: store });
+  const tenantA = await restarted.getKeywordChunks('tenant-a');
+  const tenantB = await restarted.getKeywordChunks('tenant-b');
+
+  assert.equal(tenantA.length, 1);
+  assert.equal(tenantA[0].chunkId, 'chunk-a');
+  assert.equal(tenantB.length, 1);
+  assert.equal(tenantB[0].chunkId, 'chunk-b');
+  await assert.rejects(() => restarted.getKeywordChunks(''), /MEMORY_OWNER_SCOPE_REQUIRED/);
 });
