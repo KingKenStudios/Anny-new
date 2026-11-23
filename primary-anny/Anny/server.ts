@@ -650,7 +650,12 @@ async function startServer() {
   app.post("/api/v1/anny/integrations/keda/command", async (req, res) => {
     const authHeader = String(req.headers.authorization || '');
     const presentedToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    const session = presentedToken ? await authSecurityPlatform.verifyTokenPersistent(presentedToken) : null;
+    let session = null;
+    try {
+      session = presentedToken ? await authSecurityPlatform.verifyTokenPersistent(presentedToken) : null;
+    } catch {
+      return res.status(503).json({ ok: false, error: 'AUTH_SESSION_STORE_UNAVAILABLE' });
+    }
     if (!session || !authSecurityPlatform.hasPermission(session.role, 'CODE_GEN')) {
       return res.status(401).json({ ok: false, error: 'ANNY_AUTHENTICATION_REQUIRED' });
     }
@@ -740,7 +745,12 @@ async function startServer() {
     if (!refreshToken) {
       return res.status(400).json({ success: false, error: 'REFRESH_TOKEN_REQUIRED' });
     }
-    const rotated = await authSecurityPlatform.refreshSessionPersistent(refreshToken);
+    let rotated;
+    try {
+      rotated = await authSecurityPlatform.refreshSessionPersistent(refreshToken);
+    } catch {
+      return res.status(503).json({ success: false, error: 'AUTH_SESSION_STORE_UNAVAILABLE' });
+    }
     if (!rotated) {
       return res.status(401).json({ success: false, error: 'INVALID_OR_REVOKED_REFRESH_TOKEN' });
     }
@@ -799,7 +809,12 @@ async function startServer() {
   // Server-Side Administrator Session Verification (No client bypasses)
   // ---------------------------------------------------------------------
   app.get("/api/admin/session", async (req: AuthenticatedRequest, res) => {
-    const identity = req.authUser || (await resolveVerifiedIdentity(req, { allowApiKey: false }));
+    let identity;
+    try {
+      identity = req.authUser || (await resolveVerifiedIdentity(req, { allowApiKey: false }));
+    } catch {
+      return res.status(503).json({ authenticated: false, isAdmin: false, error: 'AUTH_SESSION_STORE_UNAVAILABLE' });
+    }
     if (!identity) {
       return res.json({ authenticated: false, isAdmin: false });
     }
