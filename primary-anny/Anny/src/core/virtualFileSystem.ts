@@ -195,16 +195,17 @@ export class VirtualFileSystem {
 
   // --- Write File ---
   
-  public writeFile(path: string, rawContent: string, isExecutable: boolean = false): VFSFileNode {
+  public writeFile(path: string, rawContent: any, isExecutable: boolean = false): VFSFileNode {
     throw new Error("PHANTOM_WRITE_ERROR: Unauthorized project mutation attempt. Direct VFS mutations are prohibited. Use vfsTransactionManager.");
   }
-  public _unsafe_writeFile(path: string, rawContent: string, isExecutable: boolean = false): VFSFileNode {
+  public _unsafe_writeFile(path: string, rawContent: any, isExecutable: boolean = false): VFSFileNode {
+    const stringContent = typeof rawContent === 'string' ? rawContent : (rawContent != null ? String(rawContent) : '');
     const norm = PathUtils.normalize(path);
     const parentPath = PathUtils.getParent(norm);
     const fileName = PathUtils.getName(norm);
 
     const isScript = norm.endsWith('.ts') || norm.endsWith('.tsx') || norm.endsWith('.js') || norm.endsWith('.jsx');
-    const content = isScript ? sanitizeConstDeclarations(rawContent) : rawContent;
+    const content = isScript ? sanitizeConstDeclarations(stringContent) : stringContent;
 
     const parentDir = this._unsafe_mkdir(parentPath);
     const existing = parentDir.children[fileName];
