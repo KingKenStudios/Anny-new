@@ -262,7 +262,7 @@ export class ProjectPersistenceService {
     }
   }
 
-  private saveToDisk(): void {
+  private saveToDisk(): boolean {
     try {
       const dir = path.dirname(this.storePath);
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -281,8 +281,10 @@ export class ProjectPersistenceService {
       fs.writeFileSync(tmpPath, payload, { encoding: 'utf8', mode: 0o600 });
       fs.renameSync(tmpPath, this.storePath);
       try { fs.chmodSync(this.storePath, 0o600); } catch {}
+      return true;
     } catch (err: any) {
       console.warn('[ProjectPersistence] Disk persistence write warning:', err?.message || err);
+      return false;
     }
   }
 
@@ -360,6 +362,7 @@ export class ProjectPersistenceService {
       updated_at: now,
     };
 
+      let persistedToPostgres = false;
       if (await this.ensurePgSchema()) {
         try {
           const result = await this.pool.query(
@@ -399,6 +402,7 @@ export class ProjectPersistenceService {
           if (Number(result.rowCount || 0) === 0) {
             throw new Error('FORBIDDEN_PROJECT_OWNERSHIP');
           }
+          persistedToPostgres = true;
         } catch (err: any) {
           if (String(err?.message || '').includes('FORBIDDEN_PROJECT_OWNERSHIP')) throw err;
           console.warn('[ProjectPersistence] Postgres upsert warning (saved to disk):', err?.message || err);
@@ -406,7 +410,12 @@ export class ProjectPersistenceService {
       }
 
       this.records.set(cleanId, record);
-      this.saveToDisk();
+      const diskSaved = this.saveToDisk();
+      if (!diskSaved && !persistedToPostgres) {
+        if (existing) this.records.set(cleanId, existing);
+        else this.records.delete(cleanId);
+        throw new Error('PROJECT_DISK_PERSISTENCE_FAILED');
+      }
       return record;
     } finally {
       releaseProjectLock();
@@ -489,8 +498,14 @@ export class ProjectPersistenceService {
         this.previewSessions.delete(id);
       }
     }
+    const previousSession = this.previewSessions.get(record.previewId);
     this.previewSessions.set(record.previewId, record);
-    this.saveToDisk();
+    const diskSaved = this.saveToDisk();
+    if (!diskSaved && !this.pool) {
+      if (previousSession) this.previewSessions.set(record.previewId, previousSession);
+      else this.previewSessions.delete(record.previewId);
+      throw new Error('PROJECT_DISK_PERSISTENCE_FAILED');
+    }
     return record;
   }
 
