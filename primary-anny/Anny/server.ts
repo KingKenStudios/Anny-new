@@ -611,7 +611,13 @@ async function startServer() {
       timestamp: new Date().toISOString(),
       capabilities: [
         { id: "ui_workspace", label: "ANNY Workspace & Local Tools", status: "available_offline" },
-        { id: "auth_sessions", label: "Server-Signed Session Auth & RBAC", status: "available_offline" },
+        {
+          id: "auth_sessions",
+          label: "Server-Signed Session Auth & RBAC",
+          status: dbHealth.status === "CONNECTED"
+            ? "available_online"
+            : (process.env.NODE_ENV === "production" ? "unavailable" : "available_volatile_development")
+        },
         { id: "document_policy", label: "Upload & RAG Sanitization Engine", status: "available_offline" },
         {
           id: "local_llm_ollama",
