@@ -338,6 +338,6 @@ test('professional visual design quality standards are included in the generatio
   assert.match(systemPrompt, /coherent art direction/);
   assert.match(systemPrompt, /real visual storytelling/);
   assert.match(systemPrompt, /Mobile is a designed experience/);
-  assert.match(systemPrompt, /no dead controls/);
+  assert.match(systemPrompt, /no dead controls/i);
   assert.match(systemPrompt, /never invent certifications, client logos, testimonials, awards, statistics/);
 });
