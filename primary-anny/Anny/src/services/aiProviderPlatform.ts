@@ -8,6 +8,9 @@ import { formatNaturalConversation } from '../utils/chatHelpers';
 import axios from 'axios';
 import { GoogleGenAI } from '@google/genai';
 import { envConfigService } from './envConfigService';
+import { ollamaDiscoveryService } from './ollamaService';
+import { assertOllamaMediaSupported, resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
+import { resolveProviderAttempts } from './providerRoutingUtils';
 
 export type AIProviderId = 
   | 'gemini' 
@@ -224,6 +227,25 @@ export class AIProviderPlatform {
         return;
       }
 
+      if (p === 'ollama') {
+        const discovery = await ollamaDiscoveryService.discoverAndTest();
+        const status: ProviderHealth['status'] = !discovery.reachable
+          ? 'OFFLINE'
+          : discovery.discoveredModels.length === 0 || !discovery.inferenceTestPassed
+            ? 'DEGRADED'
+            : 'HEALTHY';
+        this.healthMap.set(p, {
+          provider: p,
+          status,
+          latencyMs: Date.now() - startTime,
+          lastChecked: new Date().toISOString(),
+          ...(status === 'HEALTHY' ? {} : { error: discovery.error || (!discovery.discoveredModels.length
+            ? 'Ollama is reachable but no local models are installed.'
+            : 'Ollama did not pass a real local inference probe.') })
+        });
+        return;
+      }
+
       // Real, lightweight reachability check (not a fake "simulation") — a cheap
       // GET against each provider's models-list endpoint, 3s timeout.
       try {
@@ -249,8 +271,6 @@ export class AIProviderPlatform {
               return axios.get('https://api.together.xyz/v1/models', { headers: { Authorization: `Bearer ${config.togetherApiKey}` }, timeout: 3000 });
             case 'fireworks':
               return axios.get('https://api.fireworks.ai/inference/v1/models', { headers: { Authorization: `Bearer ${config.fireworksApiKey}` }, timeout: 3000 });
-            case 'ollama':
-              return axios.get(`${config.ollamaBaseUrl}/api/tags`, { timeout: 2000 });
           }
         };
         await check();
@@ -258,7 +278,7 @@ export class AIProviderPlatform {
       } catch (err: any) {
         this.healthMap.set(p, {
           provider: p,
-          status: p === 'ollama' ? 'OFFLINE' : 'DEGRADED',
+          status: 'DEGRADED',
           latencyMs: Date.now() - startTime,
           lastChecked: new Date().toISOString(),
           error: err.response?.status ? `HTTP ${err.response.status}` : (err.code || err.message)
@@ -307,7 +327,9 @@ export class AIProviderPlatform {
       : `${baseSystemPrompt}\n\n${UNIVERSAL_ANNY_CONVERSATION_POLICY}`;
     const effectiveMessages = nonSystemMessages.length > 0 ? nonSystemMessages : messages;
     const strictOffline = Boolean(options.offlineOnly);
-    const blockCloudFallback = Boolean(options.offlineOnly || options.disableCloudFallback);
+    // Explicitly selecting local Ollama must never silently send the prompt to
+    // a cloud provider if local inference fails.
+    const blockCloudFallback = Boolean(options.offlineOnly || options.disableCloudFallback || preferredProvider === 'ollama');
 
     if (strictOffline && preferredProvider && preferredProvider !== 'ollama') {
       throw new Error(`OFFLINE_UNAVAILABLE: Provider "${preferredProvider}" is blocked in OFFLINE_ONLY mode.`);
@@ -316,13 +338,15 @@ export class AIProviderPlatform {
     // Check if any message contains multimodal content (images/audio/etc)
     const hasMultimodal = messages.some(m => Array.isArray(m.content));
 
-    const providersToTry: AIProviderId[] = strictOffline
-      ? ['ollama']
-      : (blockCloudFallback && preferredProvider === 'ollama')
-        ? ['ollama']
-        : preferredProvider
-          ? [preferredProvider, ...this.providerPriority.filter(p => p !== preferredProvider)]
-          : this.providerPriority;
+    const providersToTry = resolveProviderAttempts(
+      this.providerPriority,
+      preferredProvider,
+      {
+        offlineOnly: strictOffline,
+        disableCloudFallback: Boolean(options.disableCloudFallback),
+        localProvider: 'ollama'
+      }
+    );
 
     let lastError: Error | null = null;
 
@@ -748,13 +772,16 @@ export class AIProviderPlatform {
         }
 
         if (provider === 'ollama') {
-          if (!options.model || options.model === 'none') {
-            throw new Error('OFFLINE_UNAVAILABLE: No verified local Ollama model is available.');
+          let discovery = ollamaDiscoveryService.getLastDiscovery();
+          if (!discovery?.reachable || !discovery.activeEndpoint || discovery.discoveredModels.length === 0) {
+            discovery = await ollamaDiscoveryService.discoverAndTest();
           }
-          const modelName = options.model;
+          const endpoint = resolveOllamaEndpoint(discovery);
+          const modelName = resolveOllamaModel(options.model, discovery.discoveredModels);
+          assertOllamaMediaSupported(effectiveMessages, modelName);
           const apiMessages = [
             { role: 'system', content: sysPrompt },
-            ...messages.map(m => {
+            ...effectiveMessages.map(m => {
               if (typeof m.content === 'string') {
                 return { role: m.role === 'model' ? 'assistant' : m.role, content: m.content };
               }
@@ -769,19 +796,50 @@ export class AIProviderPlatform {
               };
             })
           ];
-          const response = await axios.post(
-            `${config.ollamaBaseUrl}/api/chat`,
-            {
-              model: modelName,
-              messages: apiMessages,
-              stream: false
+          const requestBody: Record<string, any> = {
+            model: modelName,
+            messages: apiMessages,
+            stream: false,
+            options: {
+              ...(typeof options.temperature === 'number' ? { temperature: options.temperature } : {}),
+              ...(typeof options.maxTokens === 'number' ? { num_predict: options.maxTokens } : {})
             },
-            { timeout: options.timeoutMs || 15000 }
+            ...(options.responseMimeType === 'application/json' ? { format: 'json' } : {}),
+            ...(options.functions?.length ? {
+              tools: options.functions.map(fn => ({
+                type: 'function',
+                function: { name: fn.name, description: fn.description, parameters: fn.parameters }
+              }))
+            } : {})
+          };
+          const response = await axios.post(
+            `${endpoint}/api/chat`,
+            requestBody,
+            { timeout: options.timeoutMs || 120_000 }
           );
 
-          const content = response.data.message?.content || '';
+          const content = String(response.data.message?.content || '');
+          const rawFunctionCall = response.data.message?.tool_calls?.[0]?.function;
+          let functionCall: ChatResponse['functionCall'];
+          if (rawFunctionCall?.name) {
+            let args = rawFunctionCall.arguments;
+            if (typeof args === 'string') {
+              try {
+                args = JSON.parse(args);
+              } catch {
+                throw new Error('OLLAMA_TOOL_ARGUMENTS_INVALID: Local model returned malformed tool arguments.');
+              }
+            }
+            functionCall = {
+              name: String(rawFunctionCall.name),
+              arguments: args && typeof args === 'object' && !Array.isArray(args) ? args : {}
+            };
+          }
+          if (!content.trim() && !functionCall) {
+            throw new Error('OLLAMA_EMPTY_RESPONSE: Local Ollama returned neither text nor a tool call.');
+          }
           const latencyMs = Date.now() - startTime;
-          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(messages), content, 'ollama-local');
+          const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(effectiveMessages), content, 'ollama-local');
 
           return {
             content: options.preserveStructured ? content : formatNaturalConversation(content),
@@ -789,19 +847,24 @@ export class AIProviderPlatform {
             model: modelName,
             tokensUsed: tokens,
             estimatedCostUsd: costUsd,
-            latencyMs
+            latencyMs,
+            ...(functionCall ? { functionCall } : {})
           };
         }
       } catch (err: any) {
+        if (provider === 'ollama') ollamaDiscoveryService.invalidateDiscovery();
         const is429 = err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED');
         const isConnRefused = err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED');
         const shortReason = is429 ? 'Quota / Rate Limited (429)' : (isConnRefused ? 'Unreachable (ECONNREFUSED)' : (err.message || 'Error').slice(0, 120));
-        if (strictOffline || blockCloudFallback) {
+        if (strictOffline || (blockCloudFallback && provider === 'ollama')) {
           throw new Error(
             shortReason.startsWith('OFFLINE_UNAVAILABLE:')
               ? shortReason
               : `OFFLINE_UNAVAILABLE: Local Ollama inference failed (${shortReason}).`
           );
+        }
+        if (blockCloudFallback) {
+          throw new Error(`PROVIDER_UNAVAILABLE: ${provider} failed and provider fallback is disabled (${shortReason}).`);
         }
         console.warn(`[AI Provider Platform] Provider ${provider} unavailable: ${shortReason}. Failing over...`);
         lastError = err;

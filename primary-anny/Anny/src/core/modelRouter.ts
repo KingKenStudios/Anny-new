@@ -6,6 +6,7 @@
 
 import { aiProviderPlatform, AIProviderId, ChatMessage, ChatOptions, ChatResponse } from '../services/aiProviderPlatform';
 import { envConfigService } from '../services/envConfigService';
+import { isInstalledOllamaModel, resolveOllamaModel } from '../services/ollamaModelSelection';
 import { providerRegistryService, ProviderDefinition, ModelDefinition } from '../services/providerRegistryService';
 import { adaptiveIntelligenceEngine } from './AdaptiveIntelligenceEngine';
 
@@ -298,6 +299,10 @@ export class ModelRouter {
     }
 
     if (!this.isProviderAvailable(descriptor.provider)) return -1;
+    if (descriptor.provider === 'ollama') {
+      const installedModels = providerRegistryService.getProvider('ollama')?.availableModels || [];
+      if (!isInstalledOllamaModel(descriptor.model, installedModels)) return -1;
+    }
 
     let score = 0;
     const requiredCap = TASK_TO_CAPABILITY_MAP[strategy.taskCategory] || 'GENERAL';
@@ -537,9 +542,15 @@ export class ModelRouter {
       throw new Error('OFFLINE_UNAVAILABLE: Cloud providers are strictly blocked in OFFLINE_ONLY mode.');
     }
 
-    const chosenModel = (!isStrictOffline && !isStrictLocalFirst && options.model && options.model !== 'auto')
-      ? options.model
-      : decision.selectedModel;
+    const requestedModel = String(options.model || '').trim();
+    const chosenModel = decision.selectedProvider === 'ollama'
+      ? (!isStrictOffline && !isStrictLocalFirst && requestedModel &&
+          !['auto', 'ollama-local', 'local', 'ollama', 'none'].includes(requestedModel.toLowerCase())
+          ? resolveOllamaModel(requestedModel, providerRegistryService.getProvider('ollama')?.availableModels || [])
+          : decision.selectedModel)
+      : (!isStrictOffline && !isStrictLocalFirst && requestedModel && requestedModel !== 'auto'
+          ? requestedModel
+          : decision.selectedModel);
 
     try {
       const result = await aiProviderPlatform.chat(

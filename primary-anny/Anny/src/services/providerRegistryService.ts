@@ -6,7 +6,7 @@
 
 import axios from 'axios';
 import { envConfigService } from './envConfigService';
-import { ollamaDiscoveryService, OllamaDiscoveryResult } from './ollamaService';
+import { isOllamaChatModel, ollamaDiscoveryService, type OllamaDiscoveryResult } from './ollamaService';
 import { CapabilityType } from './enterpriseModelRouter';
 
 export type AIProviderId = 
@@ -492,7 +492,8 @@ export class ProviderRegistryService {
         ollamaProv.healthStatus = hasVerifiedModels ? 'CONNECTED' : 'DEGRADED';
         ollamaProv.isOnline = true;
         ollamaProv.baseURL = ollamaDiscovery.activeEndpoint || ollamaProv.baseURL;
-        ollamaProv.availableModels = ollamaDiscovery.discoveredModels.map((m) => m.name);
+        ollamaProv.availableModels = (ollamaDiscovery.chatModels ||
+          ollamaDiscovery.discoveredModels.filter(model => isOllamaChatModel(model.name)).map(model => model.name));
         ollamaProv.latencyMs = ollamaDiscovery.latencyMs;
         ollamaProv.lastSuccess = new Date().toISOString();
         ollamaProv.lastError = hasVerifiedModels

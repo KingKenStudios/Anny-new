@@ -19,14 +19,21 @@ export interface OllamaDiscoveryResult {
   reachable: boolean;
   activeEndpoint?: string;
   discoveredModels: OllamaModelInfo[];
+  chatModels?: string[];
   inferenceTestPassed: boolean;
   latencyMs: number;
   error?: string;
 }
 
+export function isOllamaChatModel(modelName: string): boolean {
+  const name = String(modelName || '').toLowerCase();
+  return Boolean(name) && !/(embed|embedding|rerank|reranker|whisper|asr|clip|tts|text-to-speech|speech)/.test(name);
+}
+
 export class OllamaDiscoveryService {
   private static instance: OllamaDiscoveryService;
   private lastDiscovery: OllamaDiscoveryResult | null = null;
+  private lastDiscoveryAt = 0;
 
   public static getInstance(): OllamaDiscoveryService {
     if (!OllamaDiscoveryService.instance) {
@@ -35,8 +42,13 @@ export class OllamaDiscoveryService {
     return OllamaDiscoveryService.instance;
   }
 
-  public getLastDiscovery(): OllamaDiscoveryResult | null {
+  public getLastDiscovery(maxAgeMs = 300_000): OllamaDiscoveryResult | null {
+    if (!this.lastDiscovery || Date.now() - this.lastDiscoveryAt > maxAgeMs) return null;
     return this.lastDiscovery;
+  }
+
+  public invalidateDiscovery(): void {
+    this.lastDiscoveryAt = 0;
   }
 
   /**
@@ -50,7 +62,7 @@ export class OllamaDiscoveryService {
       config.ollamaBaseUrl,
       'http://127.0.0.1:11434',
       'http://localhost:11434'
-    ])).filter(Boolean);
+    ])).filter(Boolean).map(endpoint => endpoint.replace(/\/+$/, ''));
 
     for (const endpoint of candidateEndpoints) {
       const startTime = Date.now();
@@ -58,25 +70,28 @@ export class OllamaDiscoveryService {
         const tagsRes = await axios.get(`${endpoint}/api/tags`, { timeout: 2500 });
         if (tagsRes.status === 200 && tagsRes.data) {
           const rawModels: any[] = tagsRes.data.models || [];
-          const discoveredModels: OllamaModelInfo[] = rawModels.map((m) => ({
-            name: m.name,
-            modified_at: m.modified_at,
-            size: m.size,
-            digest: m.digest,
-            details: m.details
-          }));
+          const discoveredModels: OllamaModelInfo[] = rawModels
+            .filter((model) => typeof model?.name === 'string' && model.name.trim().length > 0)
+            .map((m) => ({
+              name: m.name.trim(),
+              modified_at: m.modified_at,
+              size: m.size,
+              digest: m.digest,
+              details: m.details
+            }));
 
+          const chatModels = discoveredModels.filter(model => isOllamaChatModel(model.name));
           let inferencePassed = false;
-          // If models exist, test inference with first available model
-          if (discoveredModels.length > 0) {
+          // Test a chat-capable model, never an embedding/reranking-only model.
+          if (chatModels.length > 0) {
             try {
-              const testModel = discoveredModels[0].name;
+              const testModel = chatModels[0].name;
               const chatRes = await axios.post(`${endpoint}/api/chat`, {
                 model: testModel,
                 messages: [{ role: 'user', content: 'Return the number 42.' }],
                 stream: false
-              }, { timeout: 4000 });
-              if (chatRes.data?.message?.content) {
+              }, { timeout: 30_000 });
+              if (typeof chatRes.data?.message?.content === 'string' && chatRes.data.message.content.trim()) {
                 inferencePassed = true;
               }
             } catch (_e) {
@@ -89,9 +104,18 @@ export class OllamaDiscoveryService {
             reachable: true,
             activeEndpoint: endpoint,
             discoveredModels,
+            chatModels: chatModels.map(model => model.name),
             inferenceTestPassed: inferencePassed,
-            latencyMs
+            latencyMs,
+            ...(!inferencePassed
+              ? { error: discoveredModels.length === 0
+                  ? 'Ollama is reachable, but no local models are installed.'
+                  : chatModels.length === 0
+                    ? 'Ollama is reachable, but only embedding/reranking or non-chat models are installed.'
+                    : 'Ollama endpoint is reachable, but the installed chat model did not complete the inference probe.' }
+              : {})
           };
+          this.lastDiscoveryAt = Date.now();
           return this.lastDiscovery;
         }
       } catch (err: any) {
@@ -102,10 +126,12 @@ export class OllamaDiscoveryService {
     this.lastDiscovery = {
       reachable: false,
       discoveredModels: [],
+      chatModels: [],
       inferenceTestPassed: false,
       latencyMs: 0,
-      error: 'Ollama endpoint unreachable at candidate URLs. Set OLLAMA_BASE_URL to remote/LAN Ollama IP if running outside Cloud container.'
+      error: 'Ollama endpoint unreachable at candidate URLs. Set OLLAMA_BASE_URL to the remote/LAN Ollama IP if running outside the local host.'
     };
+    this.lastDiscoveryAt = Date.now();
     return this.lastDiscovery;
   }
 }
