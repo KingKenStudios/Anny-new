@@ -897,7 +897,8 @@ export class PreviewRuntimeService {
   ): Promise<PreviewSessionRecord> {
     const session = await this.getPreviewSessionStatus(previewId, requesterUid, isAdmin);
     session.status = 'STOPPED';
-    session.updatedAt = new Date().toISOString();
+    // Keep the capability credential stable so an old preview URL receives
+    // PREVIEW_SESSION_STOPPED rather than looking like a forged token.
     session.capabilityToken = this.deriveCapabilityToken(session);
     session.previewUrl = `/api/preview/sessions/${encodeURIComponent(session.previewId)}/app?token=${encodeURIComponent(session.capabilityToken)}`;
     await projectPersistenceService.upsertPreviewSession({
