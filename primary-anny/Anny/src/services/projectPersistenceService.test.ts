@@ -118,8 +118,14 @@ class FakeProjectPool {
       return { rows: [], rowCount: 0 };
     }
     if (/SELECT \* FROM anny_projects/.test(sql)) {
-      const row = this.rows.get(params[0]);
-      return { rows: row ? [{ ...row }] : [], rowCount: row ? 1 : 0 };
+      if (/WHERE project_id = \$1/.test(sql)) {
+        const row = this.rows.get(params[0]);
+        return { rows: row ? [{ ...row }] : [], rowCount: row ? 1 : 0 };
+      }
+      const rows = [...this.rows.values()].filter(row =>
+        !/WHERE owner_user_id = \$1/.test(sql) || row.owner_user_id === params[0]
+      );
+      return { rows: rows.map(row => ({ ...row })), rowCount: rows.length };
     }
     if (/INSERT INTO anny_projects/.test(sql)) {
       const [projectId, ownerUserId, sessionId, name, description, projectType, category,
@@ -232,6 +238,66 @@ test('preview session metadata survives disk restoration without storing capabil
       () => restored.upsertPreviewSession({ ...previewRecord, ownerUserId: 'tenant-b' }),
       /FORBIDDEN_PROJECT_OWNERSHIP/
     );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+
+test('PostgreSQL project reads refresh stale cache and authoritative misses do not resurrect deleted records', async () => {
+  const fixture = createIsolatedService();
+  const pool = new FakeProjectPool();
+  const service = fixture.service as any;
+  service.pool = pool;
+  service.pgSchemaReady = true;
+  try {
+    const created = await fixture.service.upsertProject({
+      projectId: 'fresh-project',
+      ownerUserId: 'tenant-a',
+      name: 'Initial name'
+    });
+    service.records.set('fresh-project', { ...created, name: 'stale cached name' });
+    pool.rows.get('fresh-project').name = 'latest database name';
+
+    const fresh = await fixture.service.getProjectById('fresh-project');
+    assert.equal(fresh?.name, 'latest database name');
+
+    service.records.set('deleted-project', {
+      ...created,
+      projectId: 'deleted-project',
+      project_id: 'deleted-project',
+      id: 'deleted-project'
+    });
+    const missing = await fixture.service.getProjectById('deleted-project');
+    assert.equal(missing, null);
+    assert.equal(service.records.has('deleted-project'), false);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('successful PostgreSQL tenant lists never merge stale cached projects', async () => {
+  const fixture = createIsolatedService();
+  const pool = new FakeProjectPool();
+  const service = fixture.service as any;
+  service.pool = pool;
+  service.pgSchemaReady = true;
+  try {
+    await fixture.service.upsertProject({
+      projectId: 'database-current',
+      ownerUserId: 'tenant-a',
+      name: 'Current database project'
+    });
+    service.records.set('stale-cache-only', {
+      ...service.records.get('database-current'),
+      projectId: 'stale-cache-only',
+      project_id: 'stale-cache-only',
+      id: 'stale-cache-only',
+      name: 'Stale cached project'
+    });
+
+    const projects = await fixture.service.listProjects('tenant-a', false);
+    assert.deepEqual(projects.map(project => project.projectId), ['database-current']);
   } finally {
     fixture.cleanup();
   }
