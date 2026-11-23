@@ -10,6 +10,7 @@ function createIsolatedService() {
   const service = Object.create(ProjectPersistenceService.prototype) as any;
   service.storePath = path.join(directory, 'projects.json');
   service.records = new Map();
+  service.deletedProjectIds = new Set();
   service.previewSessions = new Map();
   service.pool = null;
   service.pgSchemaReady = false;
@@ -298,6 +299,47 @@ test('successful PostgreSQL tenant lists never merge stale cached projects', asy
 
     const projects = await fixture.service.listProjects('tenant-a', false);
     assert.deepEqual(projects.map(project => project.projectId), ['database-current']);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+
+test('project deletion tombstones survive restart and prevent stale JSON resurrection', async () => {
+  const fixture = createIsolatedService();
+  try {
+    await fixture.service.upsertProject({
+      projectId: 'deleted-durable-project',
+      ownerUserId: 'tenant-a',
+      name: 'Project to delete'
+    });
+    assert.equal(await fixture.service.deleteProject('deleted-durable-project', 'tenant-a', false), true);
+    assert.equal(await fixture.service.getProjectById('deleted-durable-project'), null);
+
+    const disk = JSON.parse(fs.readFileSync(path.join(fixture.directory, 'projects.json'), 'utf8'));
+    assert.deepEqual(disk.deletedProjectIds, ['deleted-durable-project']);
+    assert.equal(disk.projects.some((project: any) => project.projectId === 'deleted-durable-project'), false);
+
+    const restored = Object.create(ProjectPersistenceService.prototype) as any;
+    restored.storePath = path.join(fixture.directory, 'projects.json');
+    restored.records = new Map();
+    restored.deletedProjectIds = new Set();
+    restored.previewSessions = new Map();
+    restored.pool = null;
+    restored.pgSchemaReady = false;
+    restored.projectWriteLocks = new Map();
+    restored.loadFromDisk();
+
+    assert.equal(await restored.getProjectById('deleted-durable-project'), null);
+    assert.deepEqual(await restored.listProjects('tenant-a', false), []);
+
+    const recreated = await restored.upsertProject({
+      projectId: 'deleted-durable-project',
+      ownerUserId: 'tenant-b',
+      name: 'New project after deletion'
+    });
+    assert.equal(recreated.ownerUserId, 'tenant-b');
+    assert.equal(restored.deletedProjectIds.has('deleted-durable-project'), false);
   } finally {
     fixture.cleanup();
   }
