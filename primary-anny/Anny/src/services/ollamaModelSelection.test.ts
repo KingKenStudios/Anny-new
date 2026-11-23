@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { assertOllamaMediaSupported, isInstalledOllamaModel, isOllamaVisionModel, resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
+import { assertOllamaMediaSupported, isInstalledOllamaModel, isOllamaEmbeddingModel, isOllamaVisionModel, resolveOllamaEmbeddingModel, resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
 import type { OllamaDiscoveryResult } from './ollamaService';
 
 const discovery: OllamaDiscoveryResult = {
@@ -77,4 +77,15 @@ test('offline media validation allows text and vision images but rejects unsuppo
   assert.throws(() => assertOllamaMediaSupported([
     { content: [{ fileData: { mimeType: 'application/pdf', fileUri: 'file://private.pdf' } }] }
   ], 'llava:7b'), /remote file references/i);
+});
+
+
+test('local embedding model selection requires an installed embedding model and exact configured tag', () => {
+  const installed = ['llama3.2:latest', 'nomic-embed-text:latest', 'mxbai-embed-large:latest'];
+  assert.equal(isOllamaEmbeddingModel('nomic-embed-text:latest'), true);
+  assert.equal(isOllamaEmbeddingModel('llama3.2:latest'), false);
+  assert.equal(resolveOllamaEmbeddingModel(undefined, installed), 'nomic-embed-text:latest');
+  assert.equal(resolveOllamaEmbeddingModel('mxbai-embed-large', installed), 'mxbai-embed-large:latest');
+  assert.throws(() => resolveOllamaEmbeddingModel('nomic-embed-text:v2', installed), /not installed/i);
+  assert.throws(() => resolveOllamaEmbeddingModel(undefined, ['llama3.2:latest']), /Install a local Ollama embedding model/i);
 });
