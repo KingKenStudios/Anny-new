@@ -939,7 +939,11 @@ export class AIProviderPlatform {
   // Embeddings generation. No synthetic vectors or silent provider substitution are allowed.
   public async embeddings(text: string, provider?: AIProviderId): Promise<{ embedding: number[]; provider: AIProviderId }> {
     const config = envConfigService.getConfig();
-    const selectedProvider: AIProviderId = provider || (config.geminiApiKey ? 'gemini' : 'ollama');
+    const configuredEmbeddingProvider = config.embeddingProvider || 'auto';
+    const selectedProvider: AIProviderId = provider ||
+      (configuredEmbeddingProvider === 'ollama' ? 'ollama' :
+        configuredEmbeddingProvider === 'gemini' ? 'gemini' :
+          config.geminiApiKey ? 'gemini' : 'ollama');
 
     if (selectedProvider === 'gemini') {
       if (!config.geminiApiKey) {
