@@ -10,6 +10,7 @@ import { GoogleGenAI } from '@google/genai';
 import { envConfigService } from './envConfigService';
 import { ollamaDiscoveryService } from './ollamaService';
 import { resolveOllamaEndpoint, resolveOllamaModel } from './ollamaModelSelection';
+import { resolveProviderAttempts } from './providerRoutingUtils';
 
 export type AIProviderId = 
   | 'gemini' 
@@ -339,13 +340,15 @@ export class AIProviderPlatform {
     // Check if any message contains multimodal content (images/audio/etc)
     const hasMultimodal = messages.some(m => Array.isArray(m.content));
 
-    const providersToTry: AIProviderId[] = strictOffline || (blockCloudFallback && (!preferredProvider || preferredProvider === 'ollama'))
-      ? ['ollama']
-      : blockCloudFallback && preferredProvider
-        ? [preferredProvider]
-        : preferredProvider
-          ? [preferredProvider, ...this.providerPriority.filter(p => p !== preferredProvider)]
-          : this.providerPriority;
+    const providersToTry = resolveProviderAttempts(
+      this.providerPriority,
+      preferredProvider,
+      {
+        offlineOnly: strictOffline,
+        disableCloudFallback: Boolean(options.disableCloudFallback),
+        localProvider: 'ollama'
+      }
+    );
 
     let lastError: Error | null = null;
 
