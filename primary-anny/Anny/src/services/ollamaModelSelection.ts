@@ -9,11 +9,12 @@ export function resolveOllamaEndpoint(discovery: OllamaDiscoveryResult): string 
 
 export function resolveOllamaModel(
   requestedModel: string | undefined,
-  discoveredModels: OllamaModelInfo[]
+  discoveredModels: Array<OllamaModelInfo | string>
 ): string {
-  const chatModels = Array.isArray(discoveredModels)
-    ? discoveredModels.filter(model => isOllamaChatModel(model.name))
+  const modelNames = Array.isArray(discoveredModels)
+    ? discoveredModels.map(model => typeof model === 'string' ? model : model.name)
     : [];
+  const chatModels = modelNames.filter(name => isOllamaChatModel(name));
   if (chatModels.length === 0) {
     throw new Error('OFFLINE_UNAVAILABLE: Ollama is reachable but no local chat-capable models are installed.');
   }
@@ -21,14 +22,14 @@ export function resolveOllamaModel(
   const rawRequested = String(requestedModel || '').trim();
   const requested = rawRequested.replace(/^ollama:/i, '');
   const autoSelect = !requested || ['none', 'ollama', 'ollama-local', 'local', 'auto'].includes(requested.toLowerCase());
-  if (autoSelect) return chatModels[0].name;
+  if (autoSelect) return chatModels[0];
 
-  const exact = chatModels.find(model => model.name === requested);
-  if (exact) return exact.name;
+  const exact = chatModels.find(name => name === requested);
+  if (exact) return exact;
 
   if (!requested.includes(':')) {
-    const alias = chatModels.find(model => model.name.split(':')[0] === requested);
-    if (alias) return alias.name;
+    const alias = chatModels.find(name => name.split(':')[0] === requested);
+    if (alias) return alias;
   }
 
   throw new Error(`OFFLINE_UNAVAILABLE: Requested Ollama model "${requested}" is not installed locally.`);
