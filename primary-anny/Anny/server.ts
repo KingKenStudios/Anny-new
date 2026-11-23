@@ -64,6 +64,14 @@ import {
   validateAndPrepareMusicRelease,
   generateVideoStreamingPipeline,
 } from './src/core/broadcastMediaEngine.ts';
+import {
+  projectPersistenceService,
+  isValidProjectId,
+} from './src/services/projectPersistenceService.ts';
+import {
+  previewRuntimeService,
+  STANDALONE_TAB_SANDBOX_CSP,
+} from './src/services/previewRuntimeService.ts';
 
 import FormData from "form-data";
 import { Readable } from "stream";
@@ -896,11 +904,26 @@ async function startServer() {
       const verifiedUserId = req.authUser!.uid;
       const isAdmin = req.authUser!.isAdmin;
 
+      let effectiveExistingVfs = existingVfs && typeof existingVfs === 'object' ? existingVfs : {};
       if (projectId && typeof projectId === 'string' && projectId !== 'default_project') {
         const cleanProjId = String(projectId).trim();
+        const persisted = await projectPersistenceService.getProjectById(cleanProjId);
+        if (persisted) {
+          if (!isAdmin && persisted.ownerUserId && persisted.ownerUserId !== verifiedUserId) {
+            return res.status(403).json({ success: false, error: 'FORBIDDEN_PROJECT_OWNERSHIP' });
+          }
+          if (
+            Object.keys(effectiveExistingVfs).length === 0 &&
+            contextOverride?.updateExisting &&
+            persisted.files &&
+            Object.keys(persisted.files).length > 0
+          ) {
+            effectiveExistingVfs = persisted.files;
+          }
+        }
         const existingMatches = await postgresPlatform.query<any>('projects', (p: any) =>
           p.projectId === cleanProjId || p.project_id === cleanProjId || p.id === cleanProjId
-        );
+        ).catch(() => []);
         if (existingMatches.length > 0) {
           const existingOwner = existingMatches[0].ownerUserId || existingMatches[0].userId;
           if (!isAdmin && existingOwner && existingOwner !== verifiedUserId) {
@@ -915,7 +938,7 @@ async function startServer() {
         userPrompt: promptStr,
         sessionId: sessionId || 'pipeline_session',
         projectId: projectId || 'default_project',
-        existingVfs: existingVfs || {},
+        existingVfs: effectiveExistingVfs,
         history: history || [],
         images: Array.isArray(images) ? images : [],
         files: Array.isArray(files) ? files : [],
@@ -946,8 +969,9 @@ async function startServer() {
           }
         }
       }
+      const hasSynthesizedFiles = Object.keys(synthesizedFiles).length > 0;
       const isBuildRequest = reqType === 'build';
-      if (isBuildRequest && Object.keys(synthesizedFiles).length === 0) {
+      if (isBuildRequest && !hasSynthesizedFiles) {
         const detailedReason =
           (kernelOutput as any)?.error ||
           (kernelOutput as any)?.failureReason ||
@@ -959,6 +983,17 @@ async function startServer() {
           ? detailedReason
           : `PROJECT_GENERATION_FAILED: ${detailedReason}`;
         console.warn('[AnnyCorePipeline] Build produced no valid files:', formattedError);
+        if (projectId && typeof projectId === 'string' && projectId !== 'default_project' && isValidProjectId(projectId)) {
+          await projectPersistenceService.upsertProject({
+            projectId: projectId.trim(),
+            ownerUserId: verifiedUserId,
+            sessionId: typeof sessionId === 'string' ? sessionId : undefined,
+            name: String(req.body.projectName || projectId).slice(0, 140),
+            buildStatus: 'FAILED',
+            previewStatus: 'ERROR',
+            lastError: formattedError,
+          }).catch(() => {});
+        }
         return res.status(422).json({
           success: false,
           error: formattedError,
@@ -970,24 +1005,76 @@ async function startServer() {
         });
       }
 
-      if (isBuildRequest && projectId && typeof projectId === 'string' && projectId !== 'default_project') {
-        const cleanProjId = String(projectId).trim();
+      let persistedProjectRecord: any = null;
+      let previewSummary: any = null;
+      const effectiveProjectId =
+        hasSynthesizedFiles && (!projectId || projectId === 'default_project')
+          ? `proj_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`
+          : (typeof projectId === 'string' ? projectId.trim() : '');
+
+      if (hasSynthesizedFiles && isValidProjectId(effectiveProjectId) && effectiveProjectId !== 'default_project') {
+        const projectName = String(
+          primaryAppArtifact?.manifest?.projectName || req.body.projectName || effectiveProjectId
+        ).slice(0, 140);
+        const projectDesc = String(
+          primaryAppArtifact?.manifest?.description || pipelineLog?.coding?.summary || 'ANNY Build Project'
+        ).slice(0, 500);
+        const projectCategory = String(primaryAppArtifact?.projectType || 'Website').slice(0, 64);
+
+        const rawLogs: string[] = Array.isArray(pipelineLog?.executionSteps)
+          ? pipelineLog.executionSteps.map((s: any) => String(s))
+          : [];
+
+        persistedProjectRecord = await projectPersistenceService.upsertProject({
+          projectId: effectiveProjectId,
+          ownerUserId: verifiedUserId,
+          sessionId: typeof sessionId === 'string' ? sessionId : undefined,
+          name: projectName,
+          description: projectDesc,
+          projectType: projectCategory,
+          category: projectCategory,
+          model: String(pipelineLog?.modelsExecuted?.[0] || 'Anny Core'),
+          status: 'Active',
+          files: synthesizedFiles,
+          manifest: primaryAppArtifact?.manifest || null,
+          buildStatus: 'READY',
+          previewStatus: 'STARTING',
+          buildLogs: rawLogs,
+          lastError: null,
+          bumpVersion: true,
+        });
+
+        try {
+          const previewSession = await previewRuntimeService.createOrRefreshPreviewSession({
+            projectId: effectiveProjectId,
+            ownerUserId: verifiedUserId,
+            isAdmin,
+            name: projectName,
+            files: synthesizedFiles,
+            version: persistedProjectRecord.version,
+          });
+          previewSummary = previewRuntimeService.getPublicSessionSummary(previewSession);
+          persistedProjectRecord = await projectPersistenceService.getProjectById(effectiveProjectId) || persistedProjectRecord;
+        } catch (previewErr: any) {
+          console.warn('[AnnyCorePipeline] Preview session pre-warm warning:', previewErr?.message || previewErr);
+        }
+
         const existingMatches = await postgresPlatform.query<any>('projects', (p: any) =>
-          p.projectId === cleanProjId || p.project_id === cleanProjId || p.id === cleanProjId
-        );
+          p.projectId === effectiveProjectId || p.project_id === effectiveProjectId || p.id === effectiveProjectId
+        ).catch(() => []);
         if (existingMatches.length === 0) {
           await postgresPlatform.insert<any>('projects', {
-            projectId: cleanProjId,
-            project_id: cleanProjId,
+            projectId: effectiveProjectId,
+            project_id: effectiveProjectId,
             ownerUserId: verifiedUserId,
             userId: verifiedUserId,
-            name: String(primaryAppArtifact?.manifest?.projectName || req.body.projectName || cleanProjId).slice(0, 140),
-            description: String(primaryAppArtifact?.manifest?.description || pipelineLog?.coding?.summary || 'ANNY Build Project').slice(0, 500),
-            category: primaryAppArtifact?.projectType || 'Website',
+            name: projectName,
+            description: projectDesc,
+            category: projectCategory,
             model: 'Anny Core',
             status: 'Active',
             files_count: Object.keys(synthesizedFiles).length
-          });
+          }).catch(() => {});
         } else {
           const target = existingMatches[0];
           const existingOwner = target.ownerUserId || target.userId;
@@ -995,7 +1082,7 @@ async function startServer() {
             await postgresPlatform.update<any>('projects', target.id, {
               files_count: Object.keys(synthesizedFiles).length,
               status: 'Active'
-            });
+            }).catch(() => {});
           }
         }
       }
@@ -1007,6 +1094,7 @@ async function startServer() {
       return res.json({
         success: true,
         taskId: pipelineLog?.taskId || kernelOutput.executionId || `task_${Date.now()}`,
+        projectId: effectiveProjectId || projectId,
         files: synthesizedFiles,
         summary: primaryAppArtifact?.manifest?.description || pipelineLog?.coding?.summary || 'ANNY Core Synthesis Complete',
         manifest: primaryAppArtifact?.manifest,
@@ -1020,7 +1108,20 @@ async function startServer() {
         distinctModelCount: pipelineLog?.distinctModelCount,
         response: normalizedResponse,
         sources: groundingSources,
-        verificationStatus: kernelOutput.verificationStatus
+        verificationStatus: kernelOutput.verificationStatus,
+        project: persistedProjectRecord
+          ? {
+              projectId: persistedProjectRecord.projectId,
+              name: persistedProjectRecord.name,
+              version: persistedProjectRecord.version,
+              buildStatus: persistedProjectRecord.buildStatus,
+              previewStatus: persistedProjectRecord.previewStatus,
+              projectType: persistedProjectRecord.projectType,
+              files_count: persistedProjectRecord.files_count,
+              updatedAt: persistedProjectRecord.updatedAt,
+            }
+          : undefined,
+        preview: previewSummary || undefined,
       });
     } catch (err: any) {
       console.error("[AnnyCorePipeline] Execution failed:", err.message);
@@ -1040,15 +1141,49 @@ async function startServer() {
     try {
       const uid = req.authUser!.uid;
       const isAdmin = req.authUser!.isAdmin;
-      const projects = await postgresPlatform.query('projects', (p: any) =>
+      const durableProjects = await projectPersistenceService.listProjects(uid, isAdmin);
+      const legacyProjects = await postgresPlatform.query('projects', (p: any) =>
         isAdmin || p.ownerUserId === uid || p.userId === uid
+      ).catch(() => []);
+
+      const byId = new Map<string, any>();
+      for (const lp of legacyProjects as any[]) {
+        const key = String(lp.projectId || lp.project_id || lp.id || '');
+        if (key) byId.set(key, lp);
+      }
+      for (const dp of durableProjects) {
+        const { files: _omitFiles, ...summary } = dp;
+        byId.set(dp.projectId, summary);
+      }
+      const projects = Array.from(byId.values()).sort((a, b) =>
+        String(b.updatedAt || b.updated_at || '').localeCompare(String(a.updatedAt || a.updated_at || ''))
       );
       res.json({ success: true, projects });
     } catch (err: any) {
       const msg = String(err?.message || 'Unable to fetch projects');
-      const status = msg.includes('POSTGRES_NOT_CONFIGURED') ? 503 : 500;
       console.error("Failed to fetch projects:", msg);
-      res.status(status).json({ error: msg });
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  app.get("/api/anny/projects/:projectId", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const isAdmin = req.authUser!.isAdmin;
+      const rawId = String(req.params.projectId || '').trim();
+      if (!isValidProjectId(rawId)) {
+        return res.status(400).json({ success: false, error: 'INVALID_PROJECT_ID' });
+      }
+      const project = await projectPersistenceService.getProjectById(rawId);
+      if (!project) {
+        return res.status(404).json({ success: false, error: 'PROJECT_NOT_FOUND' });
+      }
+      if (!isAdmin && project.ownerUserId !== uid) {
+        return res.status(403).json({ success: false, error: 'FORBIDDEN_PROJECT_OWNERSHIP' });
+      }
+      return res.json({ success: true, project });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to load project' });
     }
   });
 
@@ -1057,42 +1192,91 @@ async function startServer() {
       const uid = req.authUser!.uid;
       const isAdmin = req.authUser!.isAdmin;
       const rawId = req.body?.projectId || req.body?.id;
-      if (typeof rawId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(rawId.trim())) {
+      if (!isValidProjectId(rawId)) {
         return res.status(400).json({ success: false, error: 'INVALID_PROJECT_ID' });
       }
       const cleanId = rawId.trim();
-      const matches = await postgresPlatform.query<any>('projects', (p: any) =>
-        p.projectId === cleanId || p.project_id === cleanId || p.id === cleanId
-      );
-      if (matches.length > 0) {
-        const existing = matches[0];
-        const existingOwner = existing.ownerUserId || existing.userId;
-        if (!isAdmin && existingOwner && existingOwner !== uid) {
-          return res.status(403).json({ success: false, error: 'FORBIDDEN_PROJECT_OWNERSHIP' });
-        }
-        const updated = await postgresPlatform.update<any>('projects', existing.id, {
-          name: typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name.trim().slice(0, 140) : existing.name,
-          description: typeof req.body?.description === 'string' ? req.body.description.slice(0, 500) : existing.description,
-          category: typeof req.body?.category === 'string' ? req.body.category.slice(0, 64) : existing.category
-        });
-        return res.json({ success: true, project: updated });
+      const existing = await projectPersistenceService.getProjectById(cleanId);
+      if (existing && !isAdmin && existing.ownerUserId !== uid) {
+        return res.status(403).json({ success: false, error: 'FORBIDDEN_PROJECT_OWNERSHIP' });
       }
 
-      // Strictly derive ownerUserId from verified server session (never trust client-supplied ownerUserId)
-      const created = await postgresPlatform.insert<any>('projects', {
+      const saved = await projectPersistenceService.upsertProject({
         projectId: cleanId,
-        project_id: cleanId,
-        ownerUserId: uid,
-        userId: uid,
-        name: typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name.trim().slice(0, 140) : cleanId,
-        description: typeof req.body?.description === 'string' ? req.body.description.slice(0, 500) : 'ANNY Cloud Project',
-        category: typeof req.body?.category === 'string' ? req.body.category.slice(0, 64) : 'Website',
-        model: 'Anny Core',
-        status: 'Active'
+        ownerUserId: existing?.ownerUserId || uid,
+        sessionId: typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined,
+        name: typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name.trim() : existing?.name || cleanId,
+        description: typeof req.body?.description === 'string' ? req.body.description : existing?.description,
+        projectType: typeof req.body?.projectType === 'string' ? req.body.projectType : existing?.projectType,
+        category: typeof req.body?.category === 'string' ? req.body.category : existing?.category,
+        files: req.body?.files && typeof req.body.files === 'object' ? req.body.files : undefined,
+        manifest: req.body?.manifest && typeof req.body.manifest === 'object' ? req.body.manifest : undefined,
+        buildStatus: req.body?.files && Object.keys(req.body.files).length > 0 ? 'READY' : existing?.buildStatus,
       });
-      return res.json({ success: true, project: created });
+
+      const matches = await postgresPlatform.query<any>('projects', (p: any) =>
+        p.projectId === cleanId || p.project_id === cleanId || p.id === cleanId
+      ).catch(() => []);
+      if (matches.length === 0) {
+        await postgresPlatform.insert<any>('projects', {
+          projectId: cleanId,
+          project_id: cleanId,
+          ownerUserId: saved.ownerUserId,
+          userId: saved.ownerUserId,
+          name: saved.name,
+          description: saved.description,
+          category: saved.category,
+          model: saved.model,
+          status: saved.status,
+          files_count: saved.files_count,
+        }).catch(() => {});
+      }
+
+      return res.json({ success: true, project: saved });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err?.message || 'Failed to register project' });
+    }
+  });
+
+  app.put("/api/anny/projects/:projectId/files", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const isAdmin = req.authUser!.isAdmin;
+      const cleanId = String(req.params.projectId || '').trim();
+      if (!isValidProjectId(cleanId)) {
+        return res.status(400).json({ success: false, error: 'INVALID_PROJECT_ID' });
+      }
+      const files = req.body?.files;
+      if (!files || typeof files !== 'object' || Array.isArray(files)) {
+        return res.status(400).json({ success: false, error: 'INVALID_FILES_MAP' });
+      }
+      const updated = await projectPersistenceService.updateProjectFiles(cleanId, uid, files, {
+        isAdmin,
+        name: typeof req.body?.name === 'string' ? req.body.name : undefined,
+      });
+      return res.json({ success: true, project: updated });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Failed to update project files');
+      return res.status(msg === 'FORBIDDEN_PROJECT_OWNERSHIP' ? 403 : 500).json({ success: false, error: msg });
+    }
+  });
+
+  app.delete("/api/anny/projects/:projectId", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const isAdmin = req.authUser!.isAdmin;
+      const cleanId = String(req.params.projectId || '').trim();
+      if (!isValidProjectId(cleanId)) {
+        return res.status(400).json({ success: false, error: 'INVALID_PROJECT_ID' });
+      }
+      const deleted = await projectPersistenceService.deleteProject(cleanId, uid, isAdmin);
+      if (!deleted) {
+        return res.status(404).json({ success: false, error: 'PROJECT_NOT_FOUND' });
+      }
+      return res.json({ success: true, projectId: cleanId });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Failed to delete project');
+      return res.status(msg === 'FORBIDDEN_PROJECT_OWNERSHIP' ? 403 : 500).json({ success: false, error: msg });
     }
   });
 
@@ -1105,15 +1289,21 @@ async function startServer() {
         return res.status(400).json({ authorized: false, error: 'INVALID_PROJECT_ID' });
       }
 
-      const matches = await postgresPlatform.query<any>('projects', (p: any) =>
-        p.projectId === rawProjectId || p.project_id === rawProjectId || p.id === rawProjectId
-      );
-      if (matches.length === 0) {
-        return res.status(404).json({ authorized: false, error: 'PROJECT_NOT_FOUND' });
+      let ownerUid: string | undefined;
+      const persisted = await projectPersistenceService.getProjectById(rawProjectId);
+      if (persisted) {
+        ownerUid = persisted.ownerUserId;
+      } else {
+        const matches = await postgresPlatform.query<any>('projects', (p: any) =>
+          p.projectId === rawProjectId || p.project_id === rawProjectId || p.id === rawProjectId
+        ).catch(() => []);
+        if (matches.length === 0) {
+          return res.status(404).json({ authorized: false, error: 'PROJECT_NOT_FOUND' });
+        }
+        const target = matches[0];
+        ownerUid = target.ownerUserId || target.userId;
       }
 
-      const target = matches[0];
-      const ownerUid = target.ownerUserId || target.userId;
       if (!ownerUid || typeof ownerUid !== 'string') {
         return res.status(403).json({ authorized: false, error: 'PROJECT_OWNER_UNBOUND' });
       }
@@ -1132,6 +1322,148 @@ async function startServer() {
       });
     } catch (err: any) {
       return res.status(500).json({ authorized: false, error: err?.message || 'Project authorization error' });
+    }
+  });
+
+  // =========================================================================
+  // OFFLINE-FIRST ISOLATED PREVIEW RUNTIME & MANAGED PREVIEW SESSION ROUTES
+  // =========================================================================
+  app.get("/api/preview/runtime/react-vendor.js", (_req, res) => {
+    try {
+      const bundle = previewRuntimeService.getReactVendorBundle();
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      return res.send(bundle);
+    } catch (err: any) {
+      return res.status(500).send(`/* Preview vendor runtime unavailable: ${String(err?.message || 'error')} */`);
+    }
+  });
+
+  app.post("/api/preview/runtime/compile-css", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const files = req.body?.files;
+      if (!files || typeof files !== 'object' || Array.isArray(files)) {
+        return res.status(400).json({ success: false, error: 'INVALID_FILES_MAP' });
+      }
+      const css = await previewRuntimeService.compileTailwindCssFromSources(files);
+      return res.json({ success: true, css });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || 'Tailwind CSS compilation failed' });
+    }
+  });
+
+  app.post("/api/preview/sessions", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const uid = req.authUser!.uid;
+      const isAdmin = req.authUser!.isAdmin;
+      const rawProjId = String(req.body?.projectId || '').trim();
+      if (!isValidProjectId(rawProjId)) {
+        return res.status(400).json({ success: false, error: 'INVALID_PROJECT_ID' });
+      }
+      const session = await previewRuntimeService.createOrRefreshPreviewSession({
+        projectId: rawProjId,
+        ownerUserId: uid,
+        isAdmin,
+        name: typeof req.body?.name === 'string' ? req.body.name : undefined,
+        files: req.body?.files && typeof req.body.files === 'object' ? req.body.files : undefined,
+      });
+      return res.json({
+        success: true,
+        preview: previewRuntimeService.getPublicSessionSummary(session),
+      });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Failed to start preview session');
+      const status = msg === 'FORBIDDEN_PROJECT_OWNERSHIP' ? 403 : msg === 'PROJECT_NOT_FOUND' ? 404 : 422;
+      return res.status(status).json({ success: false, error: msg });
+    }
+  });
+
+  app.get("/api/preview/sessions/:previewId/status", requireAuth(), (req: AuthenticatedRequest, res) => {
+    try {
+      const session = previewRuntimeService.getPreviewSessionStatus(
+        String(req.params.previewId || ''),
+        req.authUser!.uid,
+        req.authUser!.isAdmin
+      );
+      return res.json({
+        success: true,
+        preview: previewRuntimeService.getPublicSessionSummary(session),
+      });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Preview status unavailable');
+      const status = msg === 'FORBIDDEN_PREVIEW_OWNERSHIP' ? 403 : msg === 'PREVIEW_SESSION_NOT_FOUND' ? 404 : 400;
+      return res.status(status).json({ success: false, error: msg });
+    }
+  });
+
+  app.post("/api/preview/sessions/:previewId/refresh", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const existing = previewRuntimeService.getPreviewSessionStatus(
+        String(req.params.previewId || ''),
+        req.authUser!.uid,
+        req.authUser!.isAdmin
+      );
+      const updated = await previewRuntimeService.createOrRefreshPreviewSession({
+        projectId: existing.projectId,
+        ownerUserId: req.authUser!.uid,
+        isAdmin: req.authUser!.isAdmin,
+        files: req.body?.files && typeof req.body.files === 'object' ? req.body.files : undefined,
+      });
+      return res.json({
+        success: true,
+        preview: previewRuntimeService.getPublicSessionSummary(updated),
+      });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Preview refresh failed');
+      const status = msg === 'FORBIDDEN_PREVIEW_OWNERSHIP' || msg === 'FORBIDDEN_PROJECT_OWNERSHIP' ? 403 : 422;
+      return res.status(status).json({ success: false, error: msg });
+    }
+  });
+
+  app.post("/api/preview/sessions/:previewId/stop", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const stopped = await previewRuntimeService.stopPreviewSession(
+        String(req.params.previewId || ''),
+        req.authUser!.uid,
+        req.authUser!.isAdmin
+      );
+      return res.json({
+        success: true,
+        preview: previewRuntimeService.getPublicSessionSummary(stopped),
+      });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Preview stop failed');
+      const status = msg === 'FORBIDDEN_PREVIEW_OWNERSHIP' ? 403 : msg === 'PREVIEW_SESSION_NOT_FOUND' ? 404 : 400;
+      return res.status(status).json({ success: false, error: msg });
+    }
+  });
+
+  app.get("/api/preview/sessions/:previewId/app", async (req, res) => {
+    try {
+      const previewId = String(req.params.previewId || '');
+      const token = String(req.query.token || '');
+      const { html } = await previewRuntimeService.serveIsolatedPreviewHtml(previewId, token);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Content-Security-Policy', STANDALONE_TAB_SANDBOX_CSP);
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).send(html);
+    } catch (err: any) {
+      const msg = String(err?.message || 'Preview unavailable');
+      const status =
+        msg === 'UNAUTHORIZED_PREVIEW_CAPABILITY'
+          ? 403
+          : msg === 'PREVIEW_SESSION_STOPPED'
+            ? 410
+            : 404;
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; style-src 'unsafe-inline';");
+      return res.status(status).send(
+        `<!doctype html><html><body style="background:#050817;color:#fda4af;font-family:monospace;padding:32px;"><h3>ANNY Preview Unavailable (${status})</h3><p>${msg.replace(/[<>&]/g, '')}</p></body></html>`
+      );
     }
   });
 

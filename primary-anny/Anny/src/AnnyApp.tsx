@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AnnyWorkspace } from './AnnyWorkspace';
-import { AnnyProjectsView } from './views/AnnyProjectsView';
+import { AnnyProjectsView, type LoadedProjectPayload } from './views/AnnyProjectsView';
 import { AnnySessionHistoryView } from './views/AnnySessionHistoryView';
 import { AnnyAgentsView } from './views/AnnyAgentsView';
 import { AnnyKnowledgeView } from './views/AnnyKnowledgeView';
@@ -88,6 +88,7 @@ export const AnnyApp: React.FC<AnnyAppProps> = (props) => {
   const [isProfessionalEditorActive, setIsProfessionalEditorActive] = useState<boolean>(false);
   const [isFileDragActive, setIsFileDragActive] = useState(false);
   const [pendingDroppedFiles, setPendingDroppedFiles] = useState<File[]>([]);
+  const [activeLoadedProject, setActiveLoadedProject] = useState<LoadedProjectPayload | null>(null);
 
   useEffect(() => {
     let dragDepth = 0;
@@ -135,6 +136,7 @@ export const AnnyApp: React.FC<AnnyAppProps> = (props) => {
 
   const handleTabChange = (tab: string) => {
     if (tab === 'new-chat') {
+      setActiveLoadedProject(null);
       if (props.startNewChat) {
         props.startNewChat();
       }
@@ -182,9 +184,11 @@ export const AnnyApp: React.FC<AnnyAppProps> = (props) => {
         <AnnyProjectsView
           userId={userId}
           onToggleMobileMenu={handleToggleMenu}
-          onOpenChatWithProject={(projName) =>
-            handleOpenChatWithPrompt(`Open project ${projName} and analyze architectural components.`)
-          }
+          onOpenChatWithProject={(promptStr) => handleOpenChatWithPrompt(promptStr)}
+          onOpenProjectWorkspace={(loaded) => {
+            setActiveLoadedProject(loaded);
+            handleTabChange('chats');
+          }}
         />
       );
     }
@@ -287,6 +291,7 @@ export const AnnyApp: React.FC<AnnyAppProps> = (props) => {
         onEditorStateChange={setIsProfessionalEditorActive}
         pendingDroppedFiles={pendingDroppedFiles}
         onConsumeDroppedFiles={() => setPendingDroppedFiles([])}
+        activeLoadedProject={activeLoadedProject}
       />
     );
   };

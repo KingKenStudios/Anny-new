@@ -4,7 +4,12 @@ import { safeStorage } from './lib/storage';
 import { fetchWithAuth } from './lib/apiUtils';
 import { generateRealProjectTitle } from './lib/projectTitleUtils';
 import { systemBus } from './core/systemBus';
-import { isSynthesisOrPlaceholderContent, isAppWebsiteOr3DRequest, formatNaturalConversation } from './utils/chatHelpers';
+import {
+  isSynthesisOrPlaceholderContent,
+  isAppWebsiteOr3DRequest,
+  detectWebsiteOrAppIntent,
+  formatNaturalConversation,
+} from './utils/chatHelpers';
 import { WorkspaceManager } from "./core/workspaceManager";
 import { executionStreamManager } from "./core/executionStreamManager";
 import { universalExecutionController } from "./core/universalExecutionController";
@@ -358,6 +363,13 @@ interface AnnyWorkspaceProps {
   onEditorStateChange?: (isProfessional: boolean) => void;
   pendingDroppedFiles?: File[];
   onConsumeDroppedFiles?: () => void;
+  activeLoadedProject?: {
+    projectId: string;
+    name: string;
+    version?: number;
+    files?: Record<string, string>;
+    previewUrl?: string;
+  } | null;
 }
 
 export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
@@ -384,6 +396,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   setIsVisionActive,
   pendingDroppedFiles = [],
   onConsumeDroppedFiles,
+  activeLoadedProject = null,
 }) => {
   const [prompt, setPrompt] = useState(initialPrompt || '');
   const [activeMode, setActiveMode] = useState('builder');
@@ -812,6 +825,24 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   const [currentlySpeakingId, setCurrentlySpeakingId] = useState<string | null>(null);
   const isSubmittingRef = useRef(false);
   const visionRef = useRef<any>(null);
+  const sessionProjectMapRef = useRef<Map<string, string>>(new Map());
+  const prevChatIdRef = useRef<string | null | undefined>(currentChatId);
+  const codePersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [projectMetaState, setProjectMetaState] = useState<{
+    projectId: string;
+    name: string;
+    version: number;
+    previewUrl: string | null;
+    lastSavedAt: string | null;
+    isSaving: boolean;
+  }>(() => ({
+    projectId: WorkspaceManager.getInstance().getActiveProjectId(),
+    name: WorkspaceManager.getInstance().getActiveProjectName(),
+    version: 1,
+    previewUrl: null,
+    lastSavedAt: null,
+    isSaving: false,
+  }));
 
   const speakText = (text: string, id: string) => {
     if (currentlySpeakingId === id) {
@@ -891,16 +922,116 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     };
   }, [currentChatId]);
 
-  // Sync isolated workspace, clear active project, and reset to conversation view when session changes
+  // Sync isolated workspace while preserving active generated projects across session updates
   useEffect(() => {
-    if (currentChatId) {
-      const sessionObj = parentChatHistory.find(c => c.id === currentChatId);
-      WorkspaceManager.getInstance().switchWorkspace(currentChatId, sessionObj?.title || `Session ${currentChatId}`);
-      setIsSplitScreen(false);
-      setIsVisualEditor(false);
-      setVfsFiles(getVfsMap());
+    if (!currentChatId) {
+      prevChatIdRef.current = currentChatId;
+      return;
     }
+
+    const mgr = WorkspaceManager.getInstance();
+    const mappedProjectId = sessionProjectMapRef.current.get(currentChatId);
+    const activeProjId = mgr.getActiveProjectId();
+    const currentFiles = mgr.getVFS().getAllFiles();
+
+    if (mappedProjectId) {
+      const targetName =
+        projectMetaState.projectId === mappedProjectId
+          ? projectMetaState.name
+          : parentChatHistory.find((c) => c.id === currentChatId)?.title || mappedProjectId;
+      if (activeProjId !== mappedProjectId) {
+        mgr.switchWorkspace(mappedProjectId, targetName, user?.uid || 'global', 'fullstack');
+      }
+      const map = getVfsMap();
+      setVfsFiles(map);
+      if (Object.keys(map).length > 0) {
+        setIsSplitScreen(true);
+      }
+      prevChatIdRef.current = currentChatId;
+      return;
+    }
+
+    // If currentChatId was assigned immediately after starting a build from an empty session,
+    // bind the newly created proj_* workspace instead of resetting it!
+    if (
+      !prevChatIdRef.current &&
+      activeProjId &&
+      activeProjId.startsWith('proj_') &&
+      currentFiles.length > 0
+    ) {
+      sessionProjectMapRef.current.set(currentChatId, activeProjId);
+      prevChatIdRef.current = currentChatId;
+      return;
+    }
+
+    // Check if pending project belongs to an explicitly loaded project
+    if (activeLoadedProject?.projectId && activeProjId === activeLoadedProject.projectId && currentFiles.length > 0) {
+      sessionProjectMapRef.current.set(currentChatId, activeLoadedProject.projectId);
+      prevChatIdRef.current = currentChatId;
+      return;
+    }
+
+    const sessionObj = parentChatHistory.find((c) => c.id === currentChatId);
+    mgr.switchWorkspace(currentChatId, sessionObj?.title || `Session ${currentChatId}`);
+    setIsSplitScreen(false);
+    setIsVisualEditor(false);
+    setVfsFiles(getVfsMap());
+    setProjectMetaState({
+      projectId: currentChatId,
+      name: sessionObj?.title || 'Anny Workspace',
+      version: 1,
+      previewUrl: null,
+      lastSavedAt: null,
+      isSaving: false,
+    });
+    prevChatIdRef.current = currentChatId;
   }, [currentChatId]);
+
+  // Hydrate workspace when an existing saved project is opened from Projects view
+  useEffect(() => {
+    if (!activeLoadedProject?.projectId) return;
+    const { projectId, name, version, files, previewUrl } = activeLoadedProject;
+    const mgr = WorkspaceManager.getInstance();
+    mgr.switchWorkspace(projectId, name || projectId, user?.uid || 'global', 'fullstack');
+    const vfs = mgr.getVFS();
+    if (files && typeof files === 'object' && Object.keys(files).length > 0) {
+      vfs.clearAll();
+      for (const [rawPath, content] of Object.entries(files)) {
+        const normPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+        vfs._unsafe_writeFile(normPath, String(content ?? ''));
+      }
+      vfs.saveToStorage();
+    }
+    safeStorage.setItem('anny_current_project_id', projectId);
+    if (currentChatId) {
+      sessionProjectMapRef.current.set(currentChatId, projectId);
+    }
+    const nextMap = getVfsMap();
+    setVfsFiles(nextMap);
+    const firstFile =
+      nextMap['/src/App.tsx'] !== undefined
+        ? '/src/App.tsx'
+        : Object.keys(nextMap)[0] || '/package.json';
+    setActiveCodeFile(firstFile);
+    setOpenTabs([firstFile]);
+    setProjectMetaState({
+      projectId,
+      name: name || projectId,
+      version: version || 1,
+      previewUrl: previewUrl || null,
+      lastSavedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isSaving: false,
+    });
+    setBuildFailureInfo(null);
+    setIsSplitScreen(true);
+    setPreviewTab('preview');
+    setMobileSplitView('preview');
+    setReloadKey((k) => k + 1);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('anny_project_generated', { detail: { projectId } }));
+      window.dispatchEvent(new CustomEvent('anny_vfs_changed', { detail: { projectId } }));
+    }
+  }, [activeLoadedProject]);
 
   // Watch the active VFS for any changes to keep the workspace state perfectly in sync
   useEffect(() => {
@@ -986,16 +1117,22 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     };
   }, [isGenerating, activeProj?.status, universalExecutionController.getIsExecuting()]);
 
-  // Auto-reset local state when switching to a new chat (messages becomes empty)
+  // Auto-reset local state when switching to a new empty chat (unless holding a hydrated project)
   useEffect(() => {
     if (messages && messages.length === 0) {
+      const activeId = WorkspaceManager.getInstance().getActiveProjectId();
+      const mapped = currentChatId ? sessionProjectMapRef.current.get(currentChatId) : undefined;
+      const isHydratedProject =
+        (mapped && mapped === activeId) ||
+        (activeLoadedProject?.projectId && activeLoadedProject.projectId === activeId);
       setChatHistory([]);
-      setIsSplitScreen(false);
-      setPreviewTab('preview');
-      setIsVisualEditor(false);
-      setVfsFiles({});
-      setActiveProj(undefined);
-      // VFS is automatically switched by WorkspaceManager, so we just reset UI state
+      if (!isHydratedProject) {
+        setIsSplitScreen(false);
+        setPreviewTab('preview');
+        setIsVisualEditor(false);
+        setVfsFiles({});
+        setActiveProj(undefined);
+      }
     } else if (messages && messages.length > 0) {
       // Sync local chatHistory with parent messages if available
       setChatHistory(messages);
@@ -1108,11 +1245,61 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     setAttachedFiles((prev) => prev.filter((f) => f.id !== id));
   };
 
+  const persistVfsToServer = React.useCallback(
+    async (explicitProjectId?: string) => {
+      const targetProjectId = explicitProjectId || projectMetaState.projectId || WorkspaceManager.getInstance().getActiveProjectId();
+      if (!targetProjectId || targetProjectId === 'ws_default_1') return;
+      const currentFiles = getVfsMap();
+      const cleanFiles: Record<string, string> = {};
+      for (const [k, v] of Object.entries(currentFiles)) {
+        if (!k.startsWith('/__anny_')) {
+          cleanFiles[k] = v;
+        }
+      }
+      if (Object.keys(cleanFiles).length === 0) return;
+
+      setProjectMetaState((prev) => ({ ...prev, isSaving: true }));
+      try {
+        const res = await fetchWithAuth(`/api/anny/projects/${encodeURIComponent(targetProjectId)}/files`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files: cleanFiles, name: projectMetaState.name }),
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data?.success) {
+          setProjectMetaState((prev) => ({
+            ...prev,
+            version: data.project?.version || prev.version,
+            previewUrl: data.preview?.previewUrl || prev.previewUrl,
+            lastSavedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            isSaving: false,
+          }));
+        } else {
+          setProjectMetaState((prev) => ({ ...prev, isSaving: false }));
+        }
+      } catch {
+        setProjectMetaState((prev) => ({ ...prev, isSaving: false }));
+      }
+    },
+    [projectMetaState.projectId, projectMetaState.name]
+  );
+
   // Code editor handlers
   const handleCodeChange = (content: string) => {
     setActiveFileContent(content);
     WorkspaceManager.getInstance().getVFS()._unsafe_writeFile(activeCodeFile, content);
     setVfsFiles(getVfsMap());
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('anny_vfs_changed', {
+          detail: { projectId: WorkspaceManager.getInstance().getActiveProjectId() },
+        })
+      );
+    }
+    if (codePersistTimerRef.current) clearTimeout(codePersistTimerRef.current);
+    codePersistTimerRef.current = setTimeout(() => {
+      void persistVfsToServer();
+    }, 1200);
   };
 
   const handleDeleteFile = (path: string) => {
@@ -1459,13 +1646,19 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     const isAudioRequest = creativeIntent.domain === 'AUDIO';
     const isGreeting = /^(hello|hi|hey|how are you|what'?s up|yo|morning|evening|afternoon|test|ping)\b/i.test(lowerQuery) && lowerQuery.length < 50;
 
-    const contextContinuation = /^(continue|keep going|go on|proceed|do it|do that|yes|okay|ok|then|now|next)\b/i.test(lowerQuery)
-      || /\b(the app|the website|the project|the code|the backend|the frontend|the page|the component|the preview|the build|it|that|this|the current project)\b/i.test(lowerQuery);
-    const explicitTopicShift = /^(change topic|different topic|unrelated|forget that|instead|separate question|another question|something else)\b/i.test(lowerQuery);
-    const directQuestion = /^(what|why|how|can you explain|tell me|advise|should i|do you think|would you|could you)\b/i.test(lowerQuery);
-    const projectModification = vfsHasCode && !isImageRequest && !isVideoRequest && !isAudioRequest && (/\b(fix|repair|change|modify|update|edit|add|remove|delete|rename|refactor|improve|make|continue|finish|complete|connect|implement)\b/i.test(lowerQuery) || contextContinuation);
-    const isNewBuild = (creativeIntent.domain === 'APPLICATION' || (/^(build|create|generate|develop|construct|scaffold|design)\b/i.test(lowerQuery) && !contextContinuation)) && !isImageRequest && !isVideoRequest && !isAudioRequest;
-    const isBuildRequest = !isImageRequest && !isVideoRequest && !isAudioRequest && !isGreeting && !explicitTopicShift && !directQuestion && (creativeIntent.domain === 'APPLICATION' || isNewBuild || projectModification || (isAppWebsiteOr3DRequest(query) && /\b(build|create|generate|develop|make)\b/i.test(lowerQuery)));
+    const intentDecision = detectWebsiteOrAppIntent(query, {
+      hasActiveProject: vfsHasCode,
+      creativeDomain: creativeIntent.domain,
+    });
+    const projectModification = Boolean(vfsHasCode && intentDecision.isProjectEdit);
+    const isNewBuild = Boolean(intentDecision.isBuildRequest && !projectModification);
+    const isBuildRequest = Boolean(
+      !isImageRequest &&
+        !isVideoRequest &&
+        !isAudioRequest &&
+        !isGreeting &&
+        intentDecision.isBuildRequest
+    );
 
     // 1. REAL IMAGE & DEDICATED LOGO GENERATION WORKFLOW
     if (isImageRequest) {
@@ -1882,8 +2075,12 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       return;
     }
 
-    if (isBuildRequest && !isSplitScreen) {
-      setIsSplitScreen(true);
+    if (isBuildRequest) {
+      if (!isSplitScreen) {
+        setIsSplitScreen(true);
+      }
+      setPreviewTab('preview');
+      setMobileSplitView('preview');
     }
 
     // Do NOT show temporary placeholder messages with action icons during generation.
@@ -1897,10 +2094,30 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     try {
       const execId = 'ANNY_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
       const isExplicitUpdate = projectModification && vfsHasCode;
-      let projectId = safeStorage.getItem('anny_current_project_id') || WorkspaceManager.getInstance().getActiveProjectId();
-      if (isBuildRequest && !isExplicitUpdate) {
-        projectId = WorkspaceManager.getInstance().createProjectWorkspace(generateRealProjectTitle(query), user?.uid || 'global', 'fullstack');
+      let projectId =
+        (currentChatId ? sessionProjectMapRef.current.get(currentChatId) : undefined) ||
+        safeStorage.getItem('anny_current_project_id') ||
+        WorkspaceManager.getInstance().getActiveProjectId();
+      if (isBuildRequest && (!isExplicitUpdate || !projectId || !projectId.startsWith('proj_'))) {
+        const createdTitle = generateRealProjectTitle(query);
+        projectId = WorkspaceManager.getInstance().createProjectWorkspace(createdTitle, user?.uid || 'global', 'fullstack');
         safeStorage.setItem('anny_current_project_id', projectId);
+        if (currentChatId) {
+          sessionProjectMapRef.current.set(currentChatId, projectId);
+        }
+        setProjectMetaState({
+          projectId,
+          name: createdTitle,
+          version: 1,
+          previewUrl: null,
+          lastSavedAt: null,
+          isSaving: false,
+        });
+      } else if (isBuildRequest && projectId) {
+        if (currentChatId) {
+          sessionProjectMapRef.current.set(currentChatId, projectId);
+        }
+        setProjectMetaState((prev) => ({ ...prev, projectId }));
       }
       if (isBuildRequest) {
         setLastBuildPrompt(query);
@@ -2002,26 +2219,73 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         throw new Error(orchRes?.error || `ANNY pipeline failed with HTTP ${res.status}`);
       }
 
-      if (isBuildRequest) {
-        const fileCount = orchRes.files && typeof orchRes.files === 'object' ? Object.keys(orchRes.files).length : 0;
-        const isSuccess = orchRes.success !== false && fileCount > 0 && orchRes.verificationStatus !== 'FAILED';
+      const responseFileCount =
+        orchRes.files && typeof orchRes.files === 'object' ? Object.keys(orchRes.files).length : 0;
+
+      if (isBuildRequest || responseFileCount > 0) {
+        const isSuccess = orchRes.success !== false && responseFileCount > 0 && orchRes.verificationStatus !== 'FAILED';
         if (orchRes.verification) {
           setBuildVerification(orchRes.verification);
         }
 
         if (isSuccess) {
           executionStreamManager.setStage('editing', 'Writing synthesized codebase files to workspace...');
-          const vfs = WorkspaceManager.getInstance().getVFS();
-          for (const [path, content] of Object.entries(orchRes.files)) {
-            vfs._unsafe_writeFile(path, content as string);
+          const resolvedProjectId =
+            (typeof orchRes.project?.projectId === 'string' && orchRes.project.projectId) || projectId;
+          const resolvedProjectName =
+            (typeof orchRes.project?.name === 'string' && orchRes.project.name) ||
+            generateRealProjectTitle(query);
+          const mgr = WorkspaceManager.getInstance();
+          if (resolvedProjectId && mgr.getActiveProjectId() !== resolvedProjectId) {
+            mgr.switchWorkspace(resolvedProjectId, resolvedProjectName, user?.uid || 'global', 'fullstack');
           }
+          const vfs = mgr.getVFS();
+          for (const [rawPath, content] of Object.entries(orchRes.files)) {
+            const normPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+            vfs._unsafe_writeFile(normPath, content as string);
+          }
+          vfs.saveToStorage();
+          safeStorage.setItem('anny_current_project_id', resolvedProjectId);
+          if (currentChatId) {
+            sessionProjectMapRef.current.set(currentChatId, resolvedProjectId);
+          }
+
+          const updatedMap = getVfsMap();
+          setVfsFiles(updatedMap);
+          const preferredCodeFile =
+            updatedMap['/src/App.tsx'] !== undefined
+              ? '/src/App.tsx'
+              : Object.keys(updatedMap)[0] || activeCodeFile;
+          if (preferredCodeFile) {
+            setActiveCodeFile(preferredCodeFile);
+            setOpenTabs((prev) => Array.from(new Set([preferredCodeFile, ...prev.filter((p) => updatedMap[p] !== undefined)])));
+          }
+
+          setProjectMetaState({
+            projectId: resolvedProjectId,
+            name: resolvedProjectName,
+            version: Number(orchRes.project?.version) || (isExplicitUpdate ? projectMetaState.version + 1 : 1),
+            previewUrl: typeof orchRes.preview?.previewUrl === 'string' ? orchRes.preview.previewUrl : null,
+            lastSavedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            isSaving: false,
+          });
+
+          setIsSplitScreen(true);
+          setPreviewTab('preview');
+          setMobileSplitView('preview');
 
           // Ensure preview re-renders
           if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('anny_project_generated', {
-              detail: { projectId: WorkspaceManager.getInstance().getActiveProjectId() }
-            }));
-            window.dispatchEvent(new CustomEvent('anny_vfs_changed'));
+            window.dispatchEvent(
+              new CustomEvent('anny_project_generated', {
+                detail: { projectId: resolvedProjectId },
+              })
+            );
+            window.dispatchEvent(
+              new CustomEvent('anny_vfs_changed', {
+                detail: { projectId: resolvedProjectId },
+              })
+            );
           }
 
           setBuildFailureInfo(null);
@@ -2038,7 +2302,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
           setReloadKey((k) => k + 1);
           executionStreamManager.setStage('runtime', 'Opening verified application in preview...');
           executionStreamManager.completeExecution('Application generation completed successfully. Application is ready and running in preview.');
-        } else {
+        } else if (isBuildRequest) {
           const failureDetail = orchRes.error || orchRes.summary || 'Build failed: Pipeline returned no valid files.';
           setBuildFailureInfo({
             error: failureDetail,
@@ -2185,33 +2449,37 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#040614]">
           {/* Top Header Bar for Split View */}
           <header className="px-3 sm:px-4 py-2 bg-[#060818] border-b border-white/10 flex flex-wrap items-center justify-between gap-2 sm:gap-4 z-20 shrink-0">
-            <div className="flex items-center gap-2 sm:gap-3">
-            <MobileLogoMenu onToggleMobileMenu={onToggleMobileMenu} />
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <MobileLogoMenu onToggleMobileMenu={onToggleMobileMenu} />
 
               <button
+                type="button"
                 onClick={() => setIsSplitScreen(false)}
-                className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 px-2.5 sm:px-3 py-1.5 rounded-xl border border-white/10 transition-all cursor-pointer"
+                className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 px-2.5 sm:px-3 py-1.5 rounded-xl border border-white/10 transition-all cursor-pointer whitespace-nowrap shrink-0"
               >
                 <ArrowLeft className="w-3.5 h-3.5 text-slate-400" />
-                <span className="hidden sm:inline">Back to Workspace</span>
-                <span className="sm:hidden">Back</span>
+                <span className="hidden sm:inline">Back to Chat</span>
+                <span className="sm:hidden">Chat</span>
               </button>
 
               <div className="h-4 w-px bg-white/10 hidden sm:block" />
 
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-white tracking-wide truncate max-w-[140px] sm:max-w-none">
-                  Anny Workspace
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-xs font-bold text-white tracking-wide truncate max-w-[160px] sm:max-w-[260px]">
+                  {projectMetaState.name || 'ANNY Website Builder'}
                 </span>
-                <Pencil className="w-3 h-3 text-slate-400 hover:text-white cursor-pointer shrink-0" />
+                <span className="text-[11px] font-mono text-slate-400 tabular-nums shrink-0">
+                  v{projectMetaState.version}
+                </span>
               </div>
             </div>
 
-            {/* Mobile View Toggle Switcher (Chat vs Preview) */}
+            {/* Mobile View Toggle Switcher (Chat vs Preview vs Code) */}
             <div className="flex lg:hidden items-center p-0.5 rounded-xl bg-slate-900/90 border border-white/10">
               <button
+                type="button"
                 onClick={() => setMobileSplitView('chat')}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
                   mobileSplitView === 'chat'
                     ? 'bg-indigo-600 text-white shadow-md'
                     : 'text-slate-400 hover:text-white'
@@ -2220,40 +2488,54 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                 AI Chat
               </button>
               <button
-                onClick={() => setMobileSplitView('preview')}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                  mobileSplitView === 'preview'
+                type="button"
+                onClick={() => {
+                  setMobileSplitView('preview');
+                  setPreviewTab('preview');
+                }}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                  mobileSplitView === 'preview' && previewTab === 'preview'
                     ? 'bg-indigo-600 text-white shadow-md'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Preview / Code
+                Preview
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileSplitView('preview');
+                  setPreviewTab('code');
+                }}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                  mobileSplitView === 'preview' && previewTab === 'code'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Code
               </button>
             </div>
 
-            {/* Right Telemetry & Status */}
-            <div className="flex items-center gap-2 sm:gap-3 text-xs">
-              <div className="hidden lg:flex items-center gap-3 text-[10px] font-mono text-slate-300 bg-white/5 px-2.5 py-1 rounded-lg border border-white/5">
-                <span>
-                  CPU <strong className="text-blue-400">16%</strong>
-                </span>
-                <span>
-                  GPU <strong className="text-emerald-400">35%</strong>
-                </span>
-                <span>
-                  RAM <strong className="text-purple-400">54%</strong>
-                </span>
-                <span className="text-slate-500">|</span>
-                <span className="font-sans text-slate-200">{currentTime}</span>
-              </div>
-
-              <button className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 hidden sm:block">
-                <Bell className="w-3.5 h-3.5" />
-              </button>
-
-              <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center text-white text-[10px] font-bold shadow-md">
-                ∞
-              </div>
+            {/* Right Project Time & Actions */}
+            <div className="flex items-center gap-2 text-xs shrink-0">
+              {startNewChat && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSplitScreen(false);
+                    startNewChat();
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-semibold flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                  title="Start New Conversation"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">New Chat</span>
+                </button>
+              )}
+              <span className="hidden md:inline font-mono text-[11px] text-slate-400 tabular-nums">
+                {currentTime}
+              </span>
             </div>
           </header>
 
@@ -2809,107 +3091,122 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                   </button>
                 </div>
 
-                {/* Right Action Buttons */}
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setReloadKey((k) => k + 1);
-                      showNotice('Live preview refreshed.', 'info');
-                    }}
-                    title="Refresh live preview"
-                    className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 cursor-pointer"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                  </button>
+                    {/* Right Action Buttons */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReloadKey((k) => k + 1);
+                          showNotice('Live preview refreshed.', 'info');
+                        }}
+                        title="Refresh live preview"
+                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      </button>
 
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const files = Object.entries(vfsFiles);
-                      if (files.length === 0) {
-                        showNotice('Generate a project first before exporting a deployment bundle.', 'warning');
-                        return;
-                      }
-                      try {
-                        const zip = new JSZip();
-                        for (const [filePath, fileContent] of files) {
-                          const cleanPath = filePath.replace(/^\/+/, '');
-                          if (cleanPath) zip.file(cleanPath, String(fileContent ?? ''));
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const files = Object.entries(vfsFiles);
+                          if (files.length === 0) {
+                            showNotice('Generate a project first before downloading a ZIP bundle.', 'warning');
+                            return;
+                          }
+                          try {
+                            const zip = new JSZip();
+                            for (const [filePath, fileContent] of files) {
+                              if (filePath.startsWith('/__anny_')) continue;
+                              const cleanPath = filePath.replace(/^\/+/, '');
+                              if (cleanPath) zip.file(cleanPath, String(fileContent ?? ''));
+                            }
+                            const blob = await zip.generateAsync({ type: 'blob' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            const slug = (projectMetaState.name || projectMetaState.projectId || 'anny-project')
+                              .toLowerCase()
+                              .replace(/[^a-z0-9._-]+/g, '-')
+                              .replace(/^-|-$/g, '');
+                            a.href = url;
+                            a.download = `${slug || 'anny-project'}.zip`;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+                            showNotice(`Downloaded ${files.length} workspace files as ${slug || 'anny-project'}.zip`, 'success');
+                          } catch (err: any) {
+                            showNotice(err?.message || 'Unable to package workspace ZIP bundle.', 'error');
+                          }
+                        }}
+                        title="Download generated project files (.zip)"
+                        className="px-3 py-1 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white font-semibold text-xs shadow-md hover:brightness-110 flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Download ZIP</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsFullscreenPreview(true)}
+                        className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs flex items-center gap-1 border border-white/10 cursor-pointer hover:border-indigo-500/50 hover:text-white transition-all shadow-sm whitespace-nowrap"
+                      >
+                        <Maximize2 className="w-3 h-3 text-indigo-400" />
+                        <span className="hidden sm:inline">Fullscreen</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Main Content Stage */}
+                  <div className="flex-1 overflow-hidden flex flex-col min-h-0 bg-[#02030d]">
+                    {previewTab === 'preview' ? (
+                      <WorkspacePreviewContainer
+                        isPreviewFullScreen={isFullscreenPreview}
+                        setIsPreviewFullScreen={setIsFullscreenPreview}
+                        setReloadKey={setReloadKey}
+                        buildState={
+                          isGenerating
+                            ? 'in_progress'
+                            : buildFailureInfo || activeProj?.status === 'failed'
+                              ? 'failed'
+                              : 'completed'
                         }
-                        const blob = await zip.generateAsync({ type: 'blob' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        const slug = (activeProj?.id || 'anny-project').replace(/[^a-zA-Z0-9._-]/g, '_');
-                        a.href = url;
-                        a.download = `${slug}-deploy-bundle.zip`;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
-                        showNotice(`Exported ${files.length} workspace files as ${slug}-deploy-bundle.zip`, 'success');
-                      } catch (err: any) {
-                        showNotice(err?.message || 'Unable to package workspace ZIP bundle.', 'error');
-                      }
-                    }}
-                    title="Export deployable project bundle (.zip)"
-                    className="px-3 py-1 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white font-semibold text-xs shadow-md hover:brightness-110 flex items-center gap-1 cursor-pointer"
-                  >
-                    <span>Deploy</span>
-                    <ChevronDown className="w-3 h-3" />
-                  </button>
-
-                  <button
-                    onClick={() => setIsFullscreenPreview(true)}
-                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs flex items-center gap-1 border border-white/10 cursor-pointer hover:border-indigo-500/50 hover:text-white transition-all shadow-sm"
-                  >
-                    <Maximize2 className="w-3 h-3 text-indigo-400" />
-                    <span className="hidden sm:inline">Fullscreen</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Main Content Stage */}
-              <div className="flex-1 overflow-hidden flex flex-col min-h-0 bg-[#02030d]">
-                {previewTab === 'preview' ? (
-                  <WorkspacePreviewContainer
-                    isPreviewFullScreen={isFullscreenPreview}
-                    setIsPreviewFullScreen={setIsFullscreenPreview}
-                    setReloadKey={setReloadKey}
-                    buildState={
-                      isGenerating
-                        ? 'in_progress'
-                        : buildFailureInfo || activeProj?.status === 'failed'
-                          ? 'failed'
-                          : 'completed'
-                    }
-                    hasExistingProject={hasBuiltApp}
-                    deviceMode={deviceViewport}
-                    setDeviceMode={setDeviceViewport}
-                    currentBuildPrompt={lastBuildPrompt || prompt || 'Synthesizing application...'}
-                    liveBuildAction={
-                      activeProj?.currentStage ||
-                      (isGenerating ? 'Generating project files...' : buildFailureInfo ? 'Build failed' : 'Build Ready')
-                    }
-                    buildProgressPct={
-                      typeof activeProj?.progressPct === 'number'
-                        ? activeProj.progressPct
-                        : isGenerating
-                          ? 45
-                          : buildFailureInfo
-                            ? 0
-                            : 100
-                    }
-                    buildStages={buildStages}
-                    buildError={buildFailureInfo?.error || activeProj?.errors?.[0]}
-                    buildDiagnostics={buildFailureInfo?.diagnostics}
-                    onRetryBuild={lastBuildPrompt ? () => handleSend(lastBuildPrompt) : undefined}
-                    setRightTab={setPreviewTab}
-                    activeProjectId={WorkspaceManager.getInstance().getActiveProjectId() || activeProj?.id || 'anny-project'}
-                    reloadKey={reloadKey}
-                    previewRuntimeReady={hasBuiltApp && !isGenerating && !buildFailureInfo}
-                    onOpenVisualEdit={() => setIsVisualEditor(true)}
-                  />
+                        hasExistingProject={hasBuiltApp}
+                        deviceMode={deviceViewport}
+                        setDeviceMode={setDeviceViewport}
+                        currentBuildPrompt={lastBuildPrompt || prompt || 'Synthesizing application...'}
+                        liveBuildAction={
+                          activeProj?.currentStage ||
+                          (isGenerating ? 'Generating project files...' : buildFailureInfo ? 'Build failed' : 'Build Ready')
+                        }
+                        buildProgressPct={
+                          typeof activeProj?.progressPct === 'number'
+                            ? activeProj.progressPct
+                            : isGenerating
+                              ? 45
+                              : buildFailureInfo
+                                ? 0
+                                : 100
+                        }
+                        buildStages={buildStages}
+                        buildError={buildFailureInfo?.error || activeProj?.errors?.[0]}
+                        buildDiagnostics={buildFailureInfo?.diagnostics}
+                        onRetryBuild={lastBuildPrompt ? () => handleSend(lastBuildPrompt) : undefined}
+                        setRightTab={setPreviewTab}
+                        activeProjectId={WorkspaceManager.getInstance().getActiveProjectId() || activeProj?.id || 'anny-project'}
+                        reloadKey={reloadKey}
+                        previewRuntimeReady={hasBuiltApp && !isGenerating && !buildFailureInfo}
+                        onOpenVisualEdit={() => setIsVisualEditor(true)}
+                        projectName={projectMetaState.name}
+                        projectVersion={projectMetaState.version}
+                        previewSessionUrl={projectMetaState.previewUrl}
+                        onRebuild={() => setReloadKey((k) => k + 1)}
+                        onOpenNewTabError={(msg) => showNotice(msg, 'error')}
+                        onFixRuntimeError={(errorMsg) => {
+                          void handleSend(
+                            `Fix this runtime error in the generated application while preserving existing features: ${errorMsg}`
+                          );
+                        }}
+                      />
                 ) : previewTab === 'logs' ? (
                   <div className="p-4 flex-1 overflow-y-auto space-y-4 font-mono text-xs text-slate-200">
                     <div className="rounded-2xl border border-white/10 bg-[#080c20] p-4 space-y-2">
@@ -2983,29 +3280,32 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                       setFileSearch={setFileSearch}
                       setRightTab={(tab) => setPreviewTab(tab)}
                       setVfsFiles={setVfsFiles}
-                      projectName={activeProj?.id || WorkspaceManager.getInstance().getActiveProjectId() || 'anny-project'}
+                      projectName={projectMetaState.name || activeProj?.id || WorkspaceManager.getInstance().getActiveProjectId() || 'anny-project'}
+                      onSaveToProject={() => void persistVfsToServer()}
+                      isSaving={projectMetaState.isSaving}
                     />
                   )}
               </div>
 
               {/* Bottom Preview Status Bar */}
-              <div className="px-4 py-1.5 bg-[#060818] border-t border-white/10 flex items-center justify-between text-[10px] text-slate-400 shrink-0 font-mono">
+              <div className="px-4 py-1.5 bg-[#060818] border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400 shrink-0 font-mono tabular-nums">
                 <div className="flex items-center gap-3">
-                  <span className="flex items-center gap-1 text-emerald-400">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                    Responsive
+                  <span className="text-slate-300">
+                    {Object.keys(vfsFiles).length} files
                   </span>
-                  <span className="flex items-center gap-1 text-cyan-400">
-                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                    Ready
+                  <span className="text-slate-600">·</span>
+                  <span className="text-slate-400">
+                    {isGenerating ? 'Building' : buildFailureInfo ? 'Build failed' : hasBuiltApp ? 'Workspace active' : 'No project loaded'}
                   </span>
                 </div>
 
-                <div className="flex items-center gap-4">
-                  <span>☁️ Auto-saving...</span>
-                  <span>Last updated: 2s ago</span>
-                  <span className="px-2 py-0.5 rounded-full bg-purple-950 border border-purple-500/40 text-purple-300 font-semibold font-sans">
-                    • Live Preview
+                <div className="flex items-center gap-3">
+                  <span>
+                    {projectMetaState.isSaving
+                      ? 'Saving changes...'
+                      : projectMetaState.lastSavedAt
+                        ? `Saved ${projectMetaState.lastSavedAt}`
+                        : 'Ready'}
                   </span>
                 </div>
               </div>

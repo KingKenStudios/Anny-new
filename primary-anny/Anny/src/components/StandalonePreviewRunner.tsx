@@ -126,7 +126,8 @@ const ALLOWED_PREVIEW_MESSAGE_TYPES = new Set([
   'PREVIEW_WAITING',
   'PREVIEW_LOG',
   'PREVIEW_RUNTIME_ERROR',
-  'PREVIEW_VFS_SYN'
+  'PREVIEW_VFS_SYN',
+  'PREVIEW_NAVIGATION'
 ]);
 
 const ALLOWED_SNAPSHOT_KEYS = new Set([
@@ -233,6 +234,15 @@ export function sanitizePreviewFrameMessage(raw: unknown): Record<string, unknow
       type: 'PREVIEW_VFS_SYN',
       projectId: data.projectId,
       handshakeId: data.handshakeId
+    };
+  }
+  if (msgType === 'PREVIEW_NAVIGATION') {
+    const navPath = typeof data.path === 'string' && data.path.trim() ? data.path.slice(0, 256) : '/';
+    return {
+      type: 'PREVIEW_NAVIGATION',
+      path: navPath,
+      canGoBack: Boolean(data.canGoBack),
+      canGoForward: Boolean(data.canGoForward)
     };
   }
   return null;
@@ -649,24 +659,42 @@ export function buildIsolatedPreviewSrcDoc(params: {
   cssMap: Record<string, string>;
   parentOrigin: string;
   allowExternalCdn?: boolean;
+  inlineReactVendorScript?: string;
+  compiledCss?: string;
 }): string {
+  const sanitizedCssMap: Record<string, string> = {};
+  for (const [k, v] of Object.entries(params.cssMap || {})) {
+    if (typeof v !== 'string') continue;
+    sanitizedCssMap[k] = v
+      .replace(/@import\s+["']tailwindcss["']\s*;?/g, '')
+      .replace(/@tailwind\s+[a-z]+\s*;?/g, '');
+  }
+
   const safePayloadJson = JSON.stringify({
     projectId: params.projectId,
     entryFile: params.entryFile,
     modules: params.transpiledModules,
-    css: params.cssMap,
+    css: sanitizedCssMap,
     parentOrigin: params.parentOrigin
   }).replace(/<\//g, '<\\/');
 
   const allowExternalCdn = params.allowExternalCdn === true;
   const cspPolicy = allowExternalCdn
-    ? "default-src 'none'; connect-src 'self' data: blob:; script-src 'self' https://cdn.jsdelivr.net https://cdn.tailwindcss.com 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none';"
-    : STRICT_DEFAULT_DENY_CSP;
+    ? "default-src 'none'; connect-src 'self' data: blob:; script-src 'self' https://cdn.jsdelivr.net https://cdn.tailwindcss.com 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: blob: https:; media-src 'self' data: blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none';"
+    : "default-src 'none'; connect-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: blob: https:; media-src 'self' data: blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none';";
+
+  const inlineVendorTag = params.inlineReactVendorScript
+    ? `  <script>${params.inlineReactVendorScript.replace(/<\/script/gi, '<\\/script')}</script>`
+    : '';
 
   const cdnScripts = allowExternalCdn
     ? `  <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>`
+    : '';
+
+  const compiledCssTag = params.compiledCss
+    ? `  <style id="anny-compiled-tailwind">${params.compiledCss.replace(/<\/style/gi, '<\\/style')}</style>`
     : '';
 
   return `<!DOCTYPE html>
@@ -678,8 +706,11 @@ export function buildIsolatedPreviewSrcDoc(params: {
   <title>ANNY Isolated Sandbox Runtime</title>
 ${cdnScripts}
   <style>
-    html, body, #root { margin: 0; padding: 0; min-height: 100vh; width: 100%; background: #020617; color: #f8fafc; font-family: Inter, system-ui, sans-serif; }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body, #root { margin: 0; padding: 0; min-height: 100vh; width: 100%; background: #020617; color: #f8fafc; font-family: Inter, system-ui, -apple-system, sans-serif; }
   </style>
+${compiledCssTag}
+${inlineVendorTag}
 </head>
 <body>
   <div id="root"></div>
@@ -723,9 +754,20 @@ ${cdnScripts}
         });
       });
 
+      window.addEventListener('unhandledrejection', function(ev) {
+        var reason = ev && ev.reason ? (ev.reason.message || String(ev.reason)) : 'Unhandled promise rejection';
+        notifyParent({
+          type: 'PREVIEW_RUNTIME_ERROR',
+          message: String(reason).slice(0, 2000),
+          filename: String(payload.entryFile || '').slice(0, 300),
+          lineno: 0
+        });
+      });
+
       // Inject VFS CSS files
       var cssMap = payload.css || {};
       Object.keys(cssMap).forEach(function(cssPath) {
+        if (!cssMap[cssPath]) return;
         var st = document.createElement('style');
         st.id = 'vfs-style-' + cssPath;
         st.textContent = cssMap[cssPath];
@@ -738,6 +780,153 @@ ${cdnScripts}
         document.getElementById('root').innerHTML = '<div style="padding:24px;color:#fda4af;font-family:monospace;">Isolated preview runtime awaiting React UMD scripts.</div>';
         return;
       }
+
+      // Built-in route & history state synced with Workspace Preview toolbar Back/Forward buttons
+      var routeHistory = ['/'];
+      var routeIndex = 0;
+      var routeListeners = new Set();
+
+      function emitNavState() {
+        notifyParent({
+          type: 'PREVIEW_NAVIGATION',
+          path: routeHistory[routeIndex] || '/',
+          canGoBack: routeIndex > 0,
+          canGoForward: routeIndex < routeHistory.length - 1
+        });
+      }
+
+      function navigateToRoute(nextPath, pushHistory) {
+        var norm = typeof nextPath === 'string' && nextPath.trim() ? nextPath.trim() : '/';
+        if (!norm.startsWith('/')) norm = '/' + norm;
+        var current = routeHistory[routeIndex] || '/';
+        if (norm !== current) {
+          if (pushHistory !== false) {
+            routeHistory = routeHistory.slice(0, routeIndex + 1);
+            routeHistory.push(norm);
+            routeIndex = routeHistory.length - 1;
+          }
+          routeListeners.forEach(function(fn) { try { fn(norm); } catch(_e) {} });
+        }
+        emitNavState();
+      }
+
+      window.addEventListener('message', function(ev) {
+        if (ev.source !== window.parent) return;
+        var cmd = ev.data;
+        if (!cmd || typeof cmd !== 'object' || cmd.type !== 'PREVIEW_NAVIGATE_COMMAND') return;
+        if (cmd.action === 'back' && routeIndex > 0) {
+          routeIndex -= 1;
+          var backPath = routeHistory[routeIndex] || '/';
+          routeListeners.forEach(function(fn) { try { fn(backPath); } catch(_e) {} });
+          emitNavState();
+        } else if (cmd.action === 'forward' && routeIndex < routeHistory.length - 1) {
+          routeIndex += 1;
+          var fwdPath = routeHistory[routeIndex] || '/';
+          routeListeners.forEach(function(fn) { try { fn(fwdPath); } catch(_e) {} });
+          emitNavState();
+        } else if (cmd.action === 'goto' && typeof cmd.path === 'string') {
+          navigateToRoute(cmd.path, true);
+        }
+      });
+
+      document.addEventListener('click', function(ev) {
+        var anchor = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
+        if (!anchor) return;
+        var href = anchor.getAttribute('href') || '';
+        if (href.startsWith('/') && !href.startsWith('//')) {
+          ev.preventDefault();
+          navigateToRoute(href, true);
+        } else if (href.startsWith('#')) {
+          var targetId = href.slice(1);
+          var el = targetId ? document.getElementById(targetId) : null;
+          if (el && el.scrollIntoView) {
+            ev.preventDefault();
+            el.scrollIntoView({ behavior: 'smooth' });
+          }
+        }
+      });
+
+      function useRouterPath() {
+        var pair = React.useState(routeHistory[routeIndex] || '/');
+        var pathState = pair[0];
+        var setPathState = pair[1];
+        React.useEffect(function() {
+          routeListeners.add(setPathState);
+          return function() { routeListeners.delete(setPathState); };
+        }, []);
+        return pathState;
+      }
+
+      var RouterShim = {
+        __esModule: true,
+        BrowserRouter: function(p) { return React.createElement(React.Fragment, null, p && p.children); },
+        HashRouter: function(p) { return React.createElement(React.Fragment, null, p && p.children); },
+        MemoryRouter: function(p) { return React.createElement(React.Fragment, null, p && p.children); },
+        Routes: function(p) {
+          var pathNow = useRouterPath();
+          var children = React.Children.toArray(p && p.children);
+          var matched = null;
+          var fallback = null;
+          for (var i = 0; i < children.length; i++) {
+            var ch = children[i];
+            if (!ch || !ch.props) continue;
+            var rp = ch.props.path;
+            if (rp === '*') { fallback = ch.props.element || null; continue; }
+            if (rp === pathNow || (ch.props.index && pathNow === '/')) {
+              matched = ch.props.element || null;
+              break;
+            }
+          }
+          return matched || fallback || (children[0] && children[0].props ? children[0].props.element : null);
+        },
+        Route: function() { return null; },
+        Link: function(p) {
+          var to = (p && p.to) || '/';
+          return React.createElement('a', Object.assign({}, p, {
+            href: typeof to === 'string' ? to : '/',
+            onClick: function(e) {
+              e.preventDefault();
+              if (p && p.onClick) p.onClick(e);
+              if (typeof to === 'string') navigateToRoute(to, true);
+            }
+          }), p && p.children);
+        },
+        NavLink: function(p) {
+          var pathNow = useRouterPath();
+          var to = (p && p.to) || '/';
+          var active = pathNow === to;
+          var cls = typeof (p && p.className) === 'function' ? p.className({ isActive: active }) : (p && p.className) || '';
+          return React.createElement('a', Object.assign({}, p, {
+            href: typeof to === 'string' ? to : '/',
+            className: cls,
+            onClick: function(e) {
+              e.preventDefault();
+              if (p && p.onClick) p.onClick(e);
+              if (typeof to === 'string') navigateToRoute(to, true);
+            }
+          }), typeof (p && p.children) === 'function' ? p.children({ isActive: active }) : (p && p.children));
+        },
+        Navigate: function(p) {
+          React.useEffect(function() { if (p && p.to) navigateToRoute(String(p.to), false); }, [p && p.to]);
+          return null;
+        },
+        Outlet: function() { return null; },
+        useNavigate: function() {
+          return function(to) {
+            if (typeof to === 'number' && to < 0 && routeIndex > 0) {
+              routeIndex -= 1;
+              var bp = routeHistory[routeIndex] || '/';
+              routeListeners.forEach(function(fn) { try { fn(bp); } catch(_e) {} });
+              emitNavState();
+            } else if (typeof to === 'string') {
+              navigateToRoute(to, true);
+            }
+          };
+        },
+        useLocation: function() { var pathname = useRouterPath(); return { pathname: pathname, search: '', hash: '', state: null }; },
+        useParams: function() { return {}; },
+        useSearchParams: function() { return [new URLSearchParams(), function() {}]; }
+      };
 
       var safeFont = { family: 'inter, sans-serif', className: 'font-sans', name: 'sans-serif', toString: function() { return 'font-sans'; } };
       var SafeFontComponent = function(props) {
@@ -847,7 +1036,11 @@ ${cdnScripts}
           return {
             render: function(el, container) {
               __annyMountedByMain = true;
-              if (ReactDOM.render) ReactDOM.render(el, container || document.getElementById('root'));
+              if (ReactDOM.createRoot) {
+                ReactDOM.createRoot(container || document.getElementById('root')).render(el);
+              } else if (ReactDOM.render) {
+                ReactDOM.render(el, container || document.getElementById('root'));
+              }
             },
             createRoot: function(container) {
               return {
@@ -867,6 +1060,7 @@ ${cdnScripts}
             __esModule: true
           };
         }
+        if (modName === 'react-router-dom' || modName === 'react-router') return RouterShim;
         if (modName === 'lucide-react') return LucideProxy;
         if (modName === 'recharts') return RechartsProxy;
         if (modName === 'framer-motion' || modName === 'motion/react' || modName === 'motion') {
@@ -918,6 +1112,7 @@ ${cdnScripts}
             ReactDOM.render(React.createElement(ExportedApp), document.getElementById('root'));
           }
         }
+        emitNavState();
         notifyParent({ type: 'PREVIEW_READY', projectId: payload.projectId, path: entry });
       } catch (err) {
         var errMsg = (err && err.message) ? err.message : String(err);
@@ -990,6 +1185,9 @@ export function bundleVFSForIsolatedPreview(
   options?: {
     projectId?: string;
     parentOrigin?: string;
+    inlineReactVendorScript?: string;
+    compiledCss?: string;
+    allowExternalCdn?: boolean;
   }
 ): VfsPreviewBundleResult {
   const activeProjId = options?.projectId || 'ws_default_1';
@@ -1189,7 +1387,10 @@ export function bundleVFSForIsolatedPreview(
     entryFile: foundPath,
     transpiledModules,
     cssMap,
-    parentOrigin
+    parentOrigin,
+    inlineReactVendorScript: options?.inlineReactVendorScript,
+    compiledCss: options?.compiledCss,
+    allowExternalCdn: options?.allowExternalCdn
   });
 
   return {
@@ -1207,6 +1408,37 @@ export function bundleVFSForIsolatedPreview(
    WITHOUT `allow-same-origin`). Never executes generated JS/HTML on the
    authenticated ANNY origin.
    ========================================================================= */
+let cachedReactVendorScript: string | null = null;
+let pendingReactVendorPromise: Promise<string> | null = null;
+
+async function loadOfflineReactVendorScript(baseOrigin?: string): Promise<string> {
+  if (cachedReactVendorScript) return cachedReactVendorScript;
+  if (pendingReactVendorPromise) return pendingReactVendorPromise;
+  const origin =
+    baseOrigin && baseOrigin !== '*' && baseOrigin !== 'null'
+      ? baseOrigin.replace(/\/$/, '')
+      : typeof window !== 'undefined' && window.location.origin !== 'null'
+        ? window.location.origin
+        : '';
+  if (!origin) return '';
+
+  pendingReactVendorPromise = fetch(`${origin}/api/preview/runtime/react-vendor.js`, { mode: 'cors' })
+    .then(async (res) => {
+      if (!res.ok) return '';
+      const text = await res.text();
+      if (text && text.includes('createRoot')) {
+        cachedReactVendorScript = text;
+        return text;
+      }
+      return '';
+    })
+    .catch(() => '')
+    .finally(() => {
+      pendingReactVendorPromise = null;
+    });
+  return pendingReactVendorPromise;
+}
+
 export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ projectId }) => {
   const [isolatedSrcDoc, setIsolatedSrcDoc] = useState<string | null>(null);
   const [htmlContent, setHtmlContent] = useState<string | null>(null);
@@ -1216,12 +1448,20 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
   const [isExecuting, setIsExecuting] = useState(false);
   const [currentMessage, setCurrentMessage] = useState('Preparing build...');
   const [isolatedPreviewVfs, setIsolatedPreviewVfs] = useState<any | null>(null);
+  const [reactVendorJs, setReactVendorJs] = useState<string>(cachedReactVendorScript || '');
   const sandboxIframeRef = React.useRef<HTMLIFrameElement>(null);
   const handshakeStateRef = React.useRef<{
     projectId: string;
     handshakeId: string;
     lastAcceptedSeq: number;
   } | null>(null);
+
+  useEffect(() => {
+    const parentOrigin = resolveParentTargetOrigin();
+    void loadOfflineReactVendorScript(parentOrigin).then((js) => {
+      if (js) setReactVendorJs(js);
+    });
+  }, []);
 
   useEffect(() => {
     const unsub = executionStreamManager.subscribe((state) => {
@@ -1233,9 +1473,21 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
     return () => unsub();
   }, []);
 
-  // Forward validated messages from the inner opaque-origin sandbox iframe to the outer container
+  // Forward validated messages between the inner opaque-origin sandbox iframe and the outer workspace
   useEffect(() => {
-    const handleInnerMessage = (event: MessageEvent) => {
+    const handleMessageBridge = (event: MessageEvent) => {
+      if (
+        typeof window !== 'undefined' &&
+        window.parent &&
+        window.parent !== window &&
+        event.source === window.parent &&
+        event.data &&
+        typeof event.data === 'object' &&
+        (event.data as any).type === 'PREVIEW_NAVIGATE_COMMAND'
+      ) {
+        sandboxIframeRef.current?.contentWindow?.postMessage(event.data, '*');
+        return;
+      }
       if (!isValidPreviewFrameMessage(event, sandboxIframeRef.current?.contentWindow)) {
         return;
       }
@@ -1244,8 +1496,8 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
         postPreviewMessageToParent(clean);
       }
     };
-    window.addEventListener('message', handleInnerMessage);
-    return () => window.removeEventListener('message', handleInnerMessage);
+    window.addEventListener('message', handleMessageBridge);
+    return () => window.removeEventListener('message', handleMessageBridge);
   }, []);
 
   // Parent-to-Preview VFS Snapshot Handshake Protocol (for opaque-origin outer iframes)
@@ -1471,9 +1723,15 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
 
       try {
         setHtmlContent(null);
+        const compiledFileCss =
+          typeof vfs.exists === 'function' && vfs.exists('/__anny_compiled_tailwind.css')
+            ? vfs.readFile('/__anny_compiled_tailwind.css')
+            : '';
         const bundle = bundleVFSForIsolatedPreview(vfs, {
           projectId: activeProjId,
-          parentOrigin
+          parentOrigin,
+          inlineReactVendorScript: reactVendorJs || cachedReactVendorScript || undefined,
+          compiledCss: compiledFileCss || undefined
         });
         setIsolatedSrcDoc(bundle.srcDoc);
         setCompileError(null);
@@ -1565,7 +1823,7 @@ export const DynamicVFSAppRunner: React.FC<{ projectId?: string | null }> = ({ p
       cancelled = true;
       invalidatePreviewSessionAuthorizations(sessionId);
     };
-  }, [vfsVersion, projectId, isBuilding, isolatedPreviewVfs]);
+  }, [vfsVersion, projectId, isBuilding, isolatedPreviewVfs, reactVendorJs]);
 
   /* legacy compiler block replaced */
 

@@ -251,9 +251,9 @@ function detectConversationalRevision(
     };
   }
 
-  // Application / Website iterative edits ("Add a mobile navigation menu", "Make the homepage more premium")
+  // Application / Website iterative edits ("Add a mobile navigation menu", "Make the homepage more premium", "Add an About page")
   const appRefinementPattern =
-    /\b(homepage|navigation menu|navbar|sidebar|footer|checkout|cart|hero section|dark mode|light mode|mobile menu|responsive|database|api route|login page|dashboard tab|add a page|make the (?:site|website|app|homepage|ui|layout))\b/i;
+    /\b(homepage|home page|about page|contact page|contact form|navigation menu|navbar|sidebar|footer|header|hero section|background|checkout|cart|dark mode|light mode|mobile menu|responsive|database|api route|login page|dashboard tab|pricing|testimonials|add a page|add an? \w+ page|make (?:the |it )?(?:site|website|app|homepage|ui|layout|more modern|cleaner|faster)|change (?:the )?(?:homepage|background|colors?|theme|font|layout|header|footer)|fix (?:this |the )?(?:error|bug|build|preview))\b/i;
 
   if ((effectiveDomain === 'APPLICATION' || ctxAny?.hasVfsProject) && appRefinementPattern.test(lower)) {
     return {
@@ -334,9 +334,9 @@ function classifyApplicationCategory(lower: string): ApplicationIntentCategory |
   }
 
   const buildVerb =
-    /\b(build|create|make|generate|develop|design|construct|scaffold|code|implement|ship|launch)\b/i.test(lower);
+    /\b(build|create|make|generate|develop|design|construct|scaffold|code|implement|ship|launch|i need|i want)\b/i.test(lower);
   const appNoun =
-    /\b(website|web\s*app|webapp|application|full[- ]?stack|online store|e-?commerce|storefront|marketplace|saas|dashboard|admin panel|portal|inventory(?:\s+management)?\s+app|crm|erp|booking system|portfolio site|portfolio website|landing page|mobile\s*(?:app|ui)|platform|management system|school portal|pos system)\b/i.test(
+    /\b(website|web\s*site|web\s*page|webpage|web\s*app(?:lication)?|webapp|application|full[- ]?stack|online store|e-?commerce|storefront|marketplace|saas|dashboard|admin panel|portal|inventory(?:\s+management)?\s+(?:app|system)|crm|erp|booking system|portfolio(?:\s+site|\s+website)?|landing page|business\s+site|company\s+site|social\s+media(?:\s+platform|\s+network|\s+app|\s+site)?|community\s+platform|mobile\s*(?:app|ui)|platform|management system|school portal|pos system)\b/i.test(
       lower
     );
 
@@ -349,13 +349,13 @@ function classifyApplicationCategory(lower: string): ApplicationIntentCategory |
   if (/\b(portfolio)\b/i.test(lower)) return 'PORTFOLIO';
   if (/\b(mobile\s*(?:ui|app)|ios app|android app)\b/i.test(lower)) return 'MOBILE_UI_GENERATION';
   if (
-    /\b(full[- ]?stack|inventory|online store|e-?commerce|storefront|marketplace|crm|erp|booking|management app|management system|with backend|with database|with api|with auth)\b/i.test(
+    /\b(full[- ]?stack|inventory|online store|e-?commerce|storefront|marketplace|social media|community platform|crm|erp|booking|management app|management system|with backend|with database|with api|with auth)\b/i.test(
       lower
     )
   ) {
     return 'FULLSTACK_APPLICATION';
   }
-  if (/\b(web\s*app|webapp|application|tool|workspace|studio app)\b/i.test(lower)) return 'WEB_APP_GENERATION';
+  if (/\b(web\s*app(?:lication)?|webapp|application|tool|workspace|studio app)\b/i.test(lower)) return 'WEB_APP_GENERATION';
   return 'WEBSITE_GENERATION';
 }
 
