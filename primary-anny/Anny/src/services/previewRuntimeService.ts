@@ -219,7 +219,7 @@ export class PreviewRuntimeService {
       return existingSecret;
     }
 
-    const generatedSecret = crypto.randomBytes(32).toString('hex');
+    const generatedSecret = crypto.randomBytes(48).toString('base64url');
     try {
       fs.writeFileSync(secretPath, generatedSecret, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
     } catch (error: any) {
