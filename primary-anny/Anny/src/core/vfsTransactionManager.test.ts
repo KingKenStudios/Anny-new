@@ -74,3 +74,46 @@ test('VFS writes and snapshots reject inactive transaction IDs', async () => {
     /TRANSACTION_NOT_ACTIVE/
   );
 });
+
+
+test('initialization writes and deletes are limited to the active workspace', () => {
+  const manager = WorkspaceManager.getInstance();
+  const previous = manager.getCurrentWorkspace();
+  const projectId = 'vfs-init-test-' + Date.now();
+  manager.switchWorkspace(projectId, 'VFS Initialization Test', 'global', 'test');
+  const vfs = manager.getVFS();
+  try {
+    vfsTransactionManager.initializeProjectFile('/allowed.txt', 'allowed');
+    assert.equal(vfs.readFile('/allowed.txt'), 'allowed');
+    assert.throws(
+      () => vfsTransactionManager.initializeProjectFile('/other.txt', 'blocked', 'another-project'),
+      /PROJECT_CONTEXT_REQUIRED/
+    );
+    assert.throws(
+      () => vfsTransactionManager.initializeProjectFileDelete('/allowed.txt', 'another-project'),
+      /PROJECT_CONTEXT_REQUIRED/
+    );
+    vfsTransactionManager.initializeProjectFileDelete('/allowed.txt');
+    assert.equal(vfs.exists('/allowed.txt'), false);
+  } finally {
+    if (previous) manager.switchWorkspace(previous.id, previous.name, previous.organizationId, previous.type);
+  }
+});
+
+test('transactional writes fail if active workspace changes after authorization', async () => {
+  const manager = WorkspaceManager.getInstance();
+  const previous = manager.getCurrentWorkspace();
+  const projectId = 'vfs-context-change-' + Date.now();
+  manager.switchWorkspace(projectId, 'VFS Context Test', 'global', 'test');
+  try {
+    const tx = await vfsTransactionManager.begin(projectId, 'session-1', 'global');
+    manager.switchWorkspace('different-project', 'Different Project', 'global', 'test');
+    assert.throws(
+      () => vfsTransactionManager.writeFile(tx, '/blocked.txt', 'blocked'),
+      /PROJECT_CONTEXT_MISMATCH/
+    );
+    await vfsTransactionManager.rollback(tx);
+  } finally {
+    if (previous) manager.switchWorkspace(previous.id, previous.name, previous.organizationId, previous.type);
+  }
+});
