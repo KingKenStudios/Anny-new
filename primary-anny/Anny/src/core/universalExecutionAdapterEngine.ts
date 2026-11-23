@@ -242,8 +242,9 @@ export class UniversalExecutionAdapterEngine {
   }
 
   private logsForSelection(target: ExecutionAdapter, buildLogs: string[]): void {
-    systemBus.publish('RuntimeAdapterUnavailable', 'UniversalExecutionAdapterEngine', {
+    systemBus.publish('RuntimeStateChanged', 'UniversalExecutionAdapterEngine', {
       adapterId: target.id,
+      status: 'SIMULATED_UNAVAILABLE',
       reason: 'Real runtime build unavailable; simulation did not start a process.',
       logs: buildLogs.slice(-20)
     });
