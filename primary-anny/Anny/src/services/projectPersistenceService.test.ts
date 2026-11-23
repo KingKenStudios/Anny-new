@@ -274,6 +274,18 @@ test('PostgreSQL project reads refresh stale cache and authoritative misses do n
     const missing = await fixture.service.getProjectById('deleted-project');
     assert.equal(missing, null);
     assert.equal(service.records.has('deleted-project'), false);
+    assert.equal(service.deletedProjectIds.has('deleted-project'), true);
+
+    const restored = Object.create(ProjectPersistenceService.prototype) as any;
+    restored.storePath = path.join(fixture.directory, 'projects.json');
+    restored.records = new Map();
+    restored.deletedProjectIds = new Set();
+    restored.previewSessions = new Map();
+    restored.pool = null;
+    restored.pgSchemaReady = false;
+    restored.projectWriteLocks = new Map();
+    restored.loadFromDisk();
+    assert.equal(await restored.getProjectById('deleted-project'), null);
   } finally {
     fixture.cleanup();
   }
