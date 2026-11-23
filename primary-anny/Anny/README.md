@@ -89,6 +89,6 @@ Preview-session metadata is persisted with the project store, using PostgreSQL w
 Preview capability credentials are derived with HMAC-SHA-256 from the preview identity and a stable server secret. The raw capability token is never stored in PostgreSQL or the project JSON file.
 
 - In production, set a strong, stable `SESSION_SECRET`; preview creation fails closed if it is missing or weak.
-- In local development, ANNY creates `.anny-data/preview-capability.key` with restrictive file permissions and reuses it across restarts.
+- In local development, ANNY creates `.anny-data/preview-capability.key` with mode `0600`, keeps the local data directory at mode `0700`, and reuses the key across restarts. The entire `.anny-data/` directory is Git-ignored.
 - If PostgreSQL is configured but the durable preview-session registry is unavailable, preview status, refresh, stop, and serving return a service-unavailable response instead of trusting stale process memory.
 - Preview session ownership is checked against the owning persisted project.
