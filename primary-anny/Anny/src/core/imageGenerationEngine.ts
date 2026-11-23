@@ -13,6 +13,7 @@
 
 import { classifyCreativeIntent } from '../creative/CreativeIntentRouter';
 import { generateVectorLogoBundle } from '../creative/LogoGenerationPipeline';
+import { normalizeImageSource } from '../creative/mediaNormalization';
 import { buildEnhancedPrompt } from '../creative/PromptEnhancer';
 import type { CreativeImageResult, CreativeProviderCapability, LogoDesignPlan } from '../creative/types';
 import { fetchWithAuth } from '../lib/apiUtils';
@@ -171,14 +172,22 @@ class ImageGenerationEngine {
       });
 
       const payload: CreativeImageResult = await response.json();
-      if (!response.ok || !payload.success || !payload.primaryImageUrl) {
-        throw new Error(payload.error || `Image generation failed (${response.status})`);
+      const normalized = normalizeImageSource({
+        imageUrl: payload.imageUrl,
+        primaryImageUrl: payload.primaryImageUrl,
+        url: payload.url,
+        base64: payload.base64,
+        mimeType: payload.mimeType || payload.primaryMimeType,
+      });
+      if (!response.ok || !payload.success || !normalized.valid || !normalized.src || payload.quality?.valid === false) {
+        throw new Error(payload.error || normalized.error || `Image generation failed (${response.status})`);
       }
 
+      const resolvedFormat = payload.primaryFormat || (normalized.mimeType === 'image/svg+xml' ? 'svg' : normalized.mimeType === 'image/jpeg' ? 'jpeg' : normalized.mimeType === 'image/webp' ? 'webp' : 'png');
       const title = payload.logoBundle?.plan.brandName
         ? `${payload.logoBundle.plan.brandName} Logo`
         : effectivePrompt.slice(0, 60);
-      const workspacePath = `/assets/generated/${payload.artifactId}.${payload.primaryFormat}`;
+      const workspacePath = `/assets/generated/${payload.artifactId}.${resolvedFormat}`;
       const asset: GeneratedImageAsset = {
         id: payload.artifactId,
         artifactId: payload.artifactId,
@@ -187,21 +196,21 @@ class ImageGenerationEngine {
         title,
         workspacePath,
         prompt: effectivePrompt,
-        enhancedPrompt: payload.enhancedPrompt.enhancedPrompt,
-        category: payload.classification.category,
-        url: payload.primaryImageUrl,
-        assetUrl: payload.primaryImageUrl,
-        dataUrlOrPath: payload.primaryImageUrl,
-        mimeType: payload.primaryMimeType,
-        format: payload.primaryFormat,
+        enhancedPrompt: payload.enhancedPrompt?.enhancedPrompt || effectivePrompt,
+        category: payload.classification?.category || classification.category,
+        url: normalized.src,
+        assetUrl: normalized.src,
+        dataUrlOrPath: normalized.src,
+        mimeType: normalized.mimeType,
+        format: resolvedFormat,
         provider: payload.provider,
         providerUsed: payload.provider,
         modelUsed: payload.model,
         status: 'VERIFIED',
-        dimensions: { width: payload.quality.width, height: payload.quality.height },
+        dimensions: { width: payload.quality?.width || 1024, height: payload.quality?.height || 1024 },
         logoBundle: payload.logoBundle,
         quality: payload.quality,
-        timestamp: payload.generatedAt,
+        timestamp: payload.generatedAt || new Date().toISOString(),
       };
       this.generatedAssets.set(asset.assetId, asset);
       return asset;

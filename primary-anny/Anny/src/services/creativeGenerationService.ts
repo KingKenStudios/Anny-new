@@ -26,14 +26,19 @@ import { classifyCreativeIntent } from '../creative/CreativeIntentRouter';
 import {
   base64ToBytes,
   bytesToBase64,
+  validateAudioAsset,
   validateImageAsset,
   validateVideoAsset,
 } from '../creative/ImageQualityValidator';
 import { generateVectorLogoBundle } from '../creative/LogoGenerationPipeline';
+import { attachCanonicalImageFields } from '../creative/mediaNormalization';
+import { synthesizeLocalWavAudio } from '../creative/localAudioSynthEngine';
 import { buildEnhancedPrompt } from '../creative/PromptEnhancer';
 import type {
   ActiveArtifactContext,
   AttachmentMetadata,
+  AudioGenerationType,
+  CreativeAudioResult,
   CreativeImageResult,
   CreativeProviderCapability,
   GeneratedImageOption,
@@ -159,6 +164,50 @@ function createGeminiClient(): GoogleGenAI | null {
   });
 }
 
+export interface StoredAudioAsset {
+  assetKey: string;
+  bytes: Uint8Array;
+  mimeType: string;
+  filename: string;
+  ownerUserId?: string;
+  ownerOrgId?: string;
+  createdAt: string;
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  label: string
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new Error(`${label} timed out after ${timeoutMs}ms.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms.`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function stripDataUrlPrefix(input: string): { base64: string; detectedMime?: string } {
   const match = input.match(/^data:([^;]+);base64,([\s\S]+)$/);
   if (match) {
@@ -171,6 +220,7 @@ class CreativeGenerationService {
   private videoJobs: Map<string, VideoJobRecord> = new Map();
   private videoBuffers: Map<string, { bytes: Uint8Array; mimeType: string }> = new Map();
   private imageAssets: Map<string, StoredImageAsset> = new Map();
+  private audioAssets: Map<string, StoredAudioAsset> = new Map();
   private customVideoAdapter: VideoProviderAdapter | null = null;
   private customImageAdapter: ImageProviderAdapter | null = null;
 
@@ -200,6 +250,28 @@ class CreativeGenerationService {
     requester?: { userId?: string; orgId?: string; isAdmin?: boolean }
   ): StoredImageAsset | null {
     const asset = this.imageAssets.get(assetKey);
+    if (!asset) return null;
+    if (requester?.isAdmin) return asset;
+    if (asset.ownerUserId && requester?.userId && asset.ownerUserId !== requester.userId) {
+      return null;
+    }
+    return asset;
+  }
+
+  private storeAudioAsset(asset: StoredAudioAsset): string {
+    if (this.audioAssets.size >= 80) {
+      const oldestKey = this.audioAssets.keys().next().value;
+      if (oldestKey) this.audioAssets.delete(oldestKey);
+    }
+    this.audioAssets.set(asset.assetKey, asset);
+    return `/api/creative/audio/asset/${encodeURIComponent(asset.assetKey)}`;
+  }
+
+  public getAudioAsset(
+    assetKey: string,
+    requester?: { userId?: string; orgId?: string; isAdmin?: boolean }
+  ): StoredAudioAsset | null {
+    const asset = this.audioAssets.get(assetKey);
     if (!asset) return null;
     if (requester?.isAdmin) return asset;
     if (asset.ownerUserId && requester?.userId && asset.ownerUserId !== requester.userId) {
@@ -304,8 +376,36 @@ class CreativeGenerationService {
         models: ['lyria-3-clip-preview', 'lyria-3-pro-preview'],
         status: hasGemini ? 'AVAILABLE' : 'UNCONFIGURED',
         detail: hasGemini
-          ? 'Configured for real audio track generation in King Ken Studios Music Studio.'
-          : 'Configure GEMINI_API_KEY on the server to generate playable music tracks.',
+          ? 'Configured for cloud music generation in King Ken Studios Music Studio.'
+          : 'Configure GEMINI_API_KEY on the server to synthesize cloud Lyria tracks or AI Voice TTS.',
+      },
+      {
+        id: 'local-pcm-audio-synth',
+        name: 'ANNY Deterministic WAV Audio Synthesizer',
+        domain: 'AUDIO',
+        kind: 'local_vector',
+        configured: true,
+        offlineCapable: true,
+        requiresPaidKey: false,
+        supportedFormats: ['audio/wav'],
+        models: ['anny-wav-synth-v1'],
+        status: 'AVAILABLE',
+        detail: 'Generates verified 16-bit PCM RIFF/WAV music loops, instrumentals, drum beats, and SFX offline without paid APIs.',
+      },
+      {
+        id: 'gemini-voice-tts',
+        name: 'Google Gemini Neural Voice TTS',
+        domain: 'AUDIO',
+        kind: 'cloud_api',
+        configured: hasGemini,
+        offlineCapable: false,
+        requiresPaidKey: false,
+        supportedFormats: ['audio/wav'],
+        models: ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'],
+        status: hasGemini ? 'AVAILABLE' : 'UNCONFIGURED',
+        detail: hasGemini
+          ? 'Configured on server for natural spoken voiceovers and text-to-speech.'
+          : 'Configure GEMINI_API_KEY on the server to enable neural speech synthesis (TTS).',
       },
       {
         id: 'gemini-vision-qa',
@@ -427,17 +527,21 @@ class CreativeGenerationService {
     }
     parts.push({ text: params.prompt });
 
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ role: 'user', parts }],
-      config: {
-        responseModalities: ['IMAGE', 'TEXT'],
-        imageConfig: {
-          aspectRatio: params.aspectRatio as any,
-          ...(model === 'gemini-nano-banana-2.1' ? { imageSize: '2K' as any } : {}),
+    const response = await promiseWithTimeout(
+      ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts }],
+        config: {
+          responseModalities: ['IMAGE', 'TEXT'],
+          imageConfig: {
+            aspectRatio: params.aspectRatio as any,
+            ...(model === 'gemini-nano-banana-2.1' ? { imageSize: '2K' as any } : {}),
+          },
         },
-      },
-    });
+      }),
+      35000,
+      `Gemini image model ${model}`
+    );
 
     const candidateParts = response.candidates?.[0]?.content?.parts || [];
     for (const part of candidateParts) {
@@ -475,19 +579,24 @@ class CreativeGenerationService {
           ? '1024x1536'
           : '1024x1024';
 
-    const response = await fetch('https://api.openai.com/v1/images/generations', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+    const response = await fetchWithTimeout(
+      'https://api.openai.com/v1/images/generations',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-image-1',
+          prompt: params.prompt,
+          size,
+          n: 1,
+        }),
       },
-      body: JSON.stringify({
-        model: 'gpt-image-1',
-        prompt: params.prompt,
-        size,
-        n: 1,
-      }),
-    });
+      35000,
+      'OpenAI Image API'
+    );
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
@@ -523,17 +632,22 @@ class CreativeGenerationService {
     const width = params.aspectRatio === '9:16' ? 768 : params.aspectRatio === '16:9' ? 1280 : 1024;
     const height = params.aspectRatio === '9:16' ? 1280 : params.aspectRatio === '16:9' ? 768 : 1024;
 
-    const response = await fetch(`${baseUrl}/sdapi/v1/txt2img`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt: params.prompt,
-        negative_prompt: params.negativePrompt,
-        width,
-        height,
-        steps: 24,
-      }),
-    });
+    const response = await fetchWithTimeout(
+      `${baseUrl}/sdapi/v1/txt2img`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: params.prompt,
+          negative_prompt: params.negativePrompt,
+          width,
+          height,
+          steps: 24,
+        }),
+      },
+      45000,
+      'Local Stable Diffusion'
+    );
 
     if (!response.ok) {
       throw new Error(`Local Stable Diffusion endpoint error (${response.status}).`);
@@ -775,14 +889,14 @@ class CreativeGenerationService {
         }
       }
 
-      return {
+      return attachCanonicalImageFields({
         success: true,
         artifactId,
         classification,
         enhancedPrompt: enhanced,
         primaryImageUrl: primaryVariant.dataUrl,
         primaryMimeType: 'image/svg+xml',
-        primaryFormat: 'svg',
+        primaryFormat: 'svg' as const,
         provider: 'local-vector-svg',
         model: 'anny-vector-svg-v1',
         quality,
@@ -793,27 +907,27 @@ class CreativeGenerationService {
         generatedAt: nowIso,
         revisionNumber: logoBundle.plan.revisionNumber,
         parentArtifactId: req.parentArtifactId || req.activeContext?.artifactId,
-      };
+      });
     }
 
     // 2. RASTER IMAGE GENERATION, MULTI-OPTION GALLERY & REFERENCE-PRESERVING IMAGE EDITING PIPELINE
     const enhanced = buildEnhancedPrompt(classification);
 
     if (classification.requiresReferenceImage && hydratedRefs.length === 0) {
-      return {
+      return attachCanonicalImageFields({
         success: false,
         artifactId,
         classification,
         enhancedPrompt: enhanced,
         primaryImageUrl: '',
         primaryMimeType: 'application/octet-stream',
-        primaryFormat: 'png',
+        primaryFormat: 'png' as const,
         provider: 'none',
         model: 'none',
         quality: {
           valid: false,
           mimeType: 'application/octet-stream',
-          format: 'unknown',
+          format: 'unknown' as const,
           byteLength: 0,
           width: 0,
           height: 0,
@@ -821,15 +935,16 @@ class CreativeGenerationService {
           isVectorSvg: false,
           sanitizedSvg: false,
           duplicateDetected: false,
-          semanticReviewStatus: 'skipped',
+          semanticReviewStatus: 'skipped' as const,
           errors: ['Reference image is required for image editing or transformation.'],
           warnings: [],
         },
         generatedAt: nowIso,
         revisionNumber: nextRevisionNumber,
         error: 'Please select a generated image or upload a reference image so ANNY can preserve the original subject and composition while applying your edit.',
+        errorCode: 'MISSING_REFERENCE_IMAGE',
         recoveryGuidance: 'Click "Edit" on any generated image or upload a source image into the composer, then submit your edit instruction.',
-      };
+      });
     }
 
     const variationAngles = [
@@ -1012,20 +1127,20 @@ class CreativeGenerationService {
       const errorMsg = noProviderConfigured
         ? `No raster image generation provider is currently configured for ${classification.category.replace(/_/g, ' ').toLowerCase()} generation.`
         : `All configured image providers failed: ${uniqueAttempts.join(' | ')}`;
-      return {
+      return attachCanonicalImageFields({
         success: false,
         artifactId,
         classification,
         enhancedPrompt: enhanced,
         primaryImageUrl: '',
         primaryMimeType: 'application/octet-stream',
-        primaryFormat: 'png',
+        primaryFormat: 'png' as const,
         provider: noProviderConfigured ? 'unconfigured' : 'provider_error',
         model: 'none',
         quality: {
           valid: false,
           mimeType: 'application/octet-stream',
-          format: 'unknown',
+          format: 'unknown' as const,
           byteLength: 0,
           width: 0,
           height: 0,
@@ -1033,7 +1148,7 @@ class CreativeGenerationService {
           isVectorSvg: false,
           sanitizedSvg: false,
           duplicateDetected: false,
-          semanticReviewStatus: 'skipped',
+          semanticReviewStatus: 'skipped' as const,
           errors: [errorMsg],
           warnings: [],
         },
@@ -1041,13 +1156,14 @@ class CreativeGenerationService {
         generatedAt: nowIso,
         revisionNumber: nextRevisionNumber,
         error: errorMsg,
+        errorCode: noProviderConfigured ? 'NO_IMAGE_PROVIDER_CONFIGURED' : 'IMAGE_GENERATION_FAILED',
         recoveryGuidance:
           'Configure GEMINI_API_KEY, OPENAI_API_KEY, or a free local Stable Diffusion endpoint (SD_WEBUI_URL) on the server. Note: Vector brand logos and icons work 100% locally offline without any external API key.',
-      };
+      });
     }
 
     const primary = collectedOptions[0];
-    return {
+    return attachCanonicalImageFields({
       success: true,
       artifactId,
       classification,
@@ -1064,7 +1180,7 @@ class CreativeGenerationService {
       generatedAt: nowIso,
       revisionNumber: nextRevisionNumber,
       parentArtifactId: req.parentArtifactId || req.activeContext?.artifactId,
-    };
+    });
   }
 
   /**
@@ -1201,7 +1317,7 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
     if (apiKey && parsed.hostname === 'generativelanguage.googleapis.com') {
       headers['x-goog-api-key'] = apiKey;
     }
-    const resp = await fetch(parsed.toString(), { headers });
+    const resp = await fetchWithTimeout(parsed.toString(), { headers }, 60000, 'Gemini video asset download');
     if (!resp.ok) {
       throw new Error(`Failed to retrieve generated video media (HTTP ${resp.status}).`);
     }
@@ -1488,6 +1604,7 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
         playableValidated: false,
         productionPlan,
         error: 'No real video rendering provider is configured on the server.',
+        errorCode: 'VIDEO_RENDERER_NOT_CONFIGURED',
         recoveryGuidance:
           'Configure a billing-enabled GEMINI_API_KEY on the server to enable real MP4 video rendering via gemini-omni-1.2-flash (Interactions API). You can review and refine the generated storyboard plan right now.',
       };
@@ -1649,93 +1766,282 @@ Provide 3 coherent shots totaling ~${duration} seconds in ${aspectRatio} aspect 
   }
 
   /**
-   * Real Music Studio audio synthesis using Google Lyria (`lyria-3-clip-preview` / `lyria-3-pro-preview`)
-   * via generateContentStream when GEMINI_API_KEY is configured; honest unconfigured status otherwise.
+   * Unified Audio, Music, Beat, SFX & Voice TTS Generation Engine:
+   * - VOICE: Google Gemini Neural TTS (`gemini-3.8-flash-lite-tts`) when GEMINI_API_KEY is configured;
+   *   honest AUDIO_RENDERER_NOT_CONFIGURED error when unconfigured.
+   * - MUSIC / INSTRUMENTAL / BEAT / SFX: Uses Google Lyria (`lyria-3-clip-preview` / `lyria-3-pro-preview`)
+   *   when configured & online (unless mode === 'offline' or beat/sfx local synthesis is selected);
+   *   falls back cleanly or runs offline via ANNY's deterministic 16-bit PCM RIFF/WAV synthesizer.
+   *   Every output is verified with `validateAudioAsset()` so zero empty or malformed audio is ever returned.
    */
   public async generateCreativeAudio(params: {
     prompt: string;
+    type?: AudioGenerationType;
     fullTrack?: boolean;
-  }): Promise<{
-    success: boolean;
-    provider: string;
-    model: string;
-    audioUrl?: string;
-    mimeType?: string;
-    byteLength?: number;
-    lyrics?: string;
-    error?: string;
-    recoveryGuidance?: string;
-  }> {
-    const ai = createGeminiClient();
-    if (!ai) {
+    mode?: 'auto' | 'cloud' | 'offline';
+    voiceName?: string;
+    ownerUserId?: string;
+    ownerOrgId?: string;
+  }): Promise<CreativeAudioResult> {
+    const cleanPrompt = (params.prompt || '').trim();
+    const audioType: AudioGenerationType = params.type || 'MUSIC';
+    const mode = params.mode || 'auto';
+    const assetKey = `art_aud_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+
+    if (!cleanPrompt) {
       return {
         success: false,
+        audioType,
+        provider: 'validation',
+        model: 'none',
+        audioUrl: '',
+        url: '',
+        mimeType: 'audio/wav',
+        byteLength: 0,
+        errorCode: 'INVALID_AUDIO_PROMPT',
+        error: 'Please enter a prompt describing the audio, music, beat, SFX, or voiceover to generate.',
+      };
+    }
+
+    const ai = mode === 'offline' ? null : createGeminiClient();
+
+    // 1. CLOUD VOICE / TEXT-TO-SPEECH (TTS)
+    if (audioType === 'VOICE') {
+      if (!ai) {
+        return {
+          success: false,
+          audioType: 'VOICE',
+          provider: 'unconfigured',
+          model: 'none',
+          audioUrl: '',
+          url: '',
+          mimeType: 'audio/wav',
+          byteLength: 0,
+          errorCode: 'AUDIO_RENDERER_NOT_CONFIGURED',
+          error: 'Cloud Voice TTS requires a configured GEMINI_API_KEY on the server (or offline speech is unsupported here).',
+          recoveryGuidance: 'Set GEMINI_API_KEY on the server to synthesize natural speech via gemini-3.8-flash-lite-tts, or select Music / Instrumental / Beat / SFX for instant local WAV synthesis.',
+        };
+      }
+
+      try {
+        const ttsModel = 'gemini-3.8-flash-lite-tts';
+        const resp = await promiseWithTimeout(
+          ai.models.generateContent({
+            model: ttsModel,
+            contents: [{ role: 'user', parts: [{ text: cleanPrompt }] }],
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: params.voiceName || 'Kore' },
+                },
+              },
+            },
+          }),
+          30000,
+          'Gemini Voice TTS'
+        );
+
+        const audioPart = resp.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.data);
+        if (!audioPart?.inlineData?.data) {
+          throw new Error(`${ttsModel} returned no inline audio payload.`);
+        }
+        const rawBytes = base64ToBytes(audioPart.inlineData.data);
+        const declaredMime = audioPart.inlineData.mimeType || 'audio/wav';
+        const validation = validateAudioAsset(new Uint8Array(rawBytes), declaredMime);
+        if (!validation.valid) {
+          throw new Error(validation.error || 'Gemini TTS audio output failed container validation.');
+        }
+
+        const storedUrl = this.storeAudioAsset({
+          assetKey,
+          bytes: rawBytes,
+          mimeType: validation.mimeType,
+          filename: `ANNY_Voice_${assetKey}.${validation.format === 'mp3' ? 'mp3' : 'wav'}`,
+          ownerUserId: params.ownerUserId,
+          ownerOrgId: params.ownerOrgId,
+          createdAt: new Date().toISOString(),
+        });
+        const dataUrl = `data:${validation.mimeType};base64,${bytesToBase64(rawBytes)}`;
+
+        return {
+          success: true,
+          audioType: 'VOICE',
+          provider: 'gemini-voice-tts',
+          model: ttsModel,
+          audioUrl: dataUrl,
+          url: storedUrl,
+          assetKey,
+          mimeType: validation.mimeType,
+          byteLength: rawBytes.byteLength,
+          durationSeconds: validation.durationSeconds,
+          metadata: { voiceName: params.voiceName || 'Kore' },
+        };
+      } catch (err: any) {
+        const msg = String(err?.message || 'Cloud Voice TTS failed.');
+        return {
+          success: false,
+          audioType: 'VOICE',
+          provider: 'gemini-voice-tts',
+          model: 'gemini-3.8-flash-lite-tts',
+          audioUrl: '',
+          url: '',
+          mimeType: 'audio/wav',
+          byteLength: 0,
+          errorCode: 'VOICE_TTS_FAILED',
+          error: msg,
+          recoveryGuidance: 'Verify GEMINI_API_KEY permissions and try a shorter narration prompt.',
+        };
+      }
+    }
+
+    // 2. CLOUD MUSIC GENERATION VIA LYRIA (when configured and mode permits)
+    const shouldTryLyria = Boolean(ai) && (mode === 'cloud' || audioType === 'MUSIC' || audioType === 'INSTRUMENTAL');
+    if (shouldTryLyria && ai) {
+      const model = params.fullTrack ? 'lyria-3-pro-preview' : 'lyria-3-clip-preview';
+      try {
+        const streamPromise = ai.models.generateContentStream({
+          model,
+          contents: audioType === 'INSTRUMENTAL' ? `${cleanPrompt} (instrumental only, no vocals)` : cleanPrompt,
+        });
+        const stream = await promiseWithTimeout(streamPromise, 20000, `Lyria ${model}`);
+
+        const audioChunks: Buffer[] = [];
+        let mimeType = 'audio/mpeg';
+        let hasMime = false;
+        let lyrics = '';
+
+        await promiseWithTimeout(
+          (async () => {
+            for await (const chunk of stream) {
+              const parts = chunk.candidates?.[0]?.content?.parts || [];
+              for (const part of parts) {
+                if (part.inlineData?.data) {
+                  if (!hasMime && part.inlineData.mimeType) {
+                    mimeType = part.inlineData.mimeType;
+                    hasMime = true;
+                  }
+                  audioChunks.push(Buffer.from(part.inlineData.data, 'base64'));
+                }
+                if (part.text) {
+                  lyrics += part.text;
+                }
+              }
+            }
+          })(),
+          45000,
+          `Lyria stream ${model}`
+        );
+
+        const combined = new Uint8Array(Buffer.concat(audioChunks));
+        const validation = validateAudioAsset(combined, mimeType);
+        if (validation.valid) {
+          const ext = validation.format === 'mp3' ? 'mp3' : validation.format === 'ogg' ? 'ogg' : 'wav';
+          const storedUrl = this.storeAudioAsset({
+            assetKey,
+            bytes: combined,
+            mimeType: validation.mimeType,
+            filename: `ANNY_${audioType}_${assetKey}.${ext}`,
+            ownerUserId: params.ownerUserId,
+            ownerOrgId: params.ownerOrgId,
+            createdAt: new Date().toISOString(),
+          });
+          return {
+            success: true,
+            audioType,
+            provider: 'gemini-lyria-music',
+            model,
+            audioUrl: `data:${validation.mimeType};base64,${bytesToBase64(combined)}`,
+            url: storedUrl,
+            assetKey,
+            mimeType: validation.mimeType,
+            byteLength: combined.byteLength,
+            durationSeconds: validation.durationSeconds,
+            lyrics: lyrics.trim() || undefined,
+          };
+        }
+      } catch (err: any) {
+        if (mode === 'cloud') {
+          const msg = String(err?.message || 'Lyria audio synthesis failed.');
+          const isPaidOrAuth = /401|403|429|PERMISSION_DENIED|RESOURCE_EXHAUSTED|API_KEY_INVALID/i.test(msg);
+          return {
+            success: false,
+            audioType,
+            provider: 'gemini-lyria-music',
+            model,
+            audioUrl: '',
+            url: '',
+            mimeType: 'audio/mpeg',
+            byteLength: 0,
+            errorCode: isPaidOrAuth ? 'AUDIO_RENDERER_AUTH_OR_QUOTA' : 'AUDIO_RENDERER_FAILED',
+            error: msg,
+            recoveryGuidance: isPaidOrAuth
+              ? 'Lyria 3 requires a billing-enabled GEMINI_API_KEY. Switch mode to Auto or Offline to synthesize local WAV audio without paid keys.'
+              : 'Retry or switch to Local WAV Synth mode.',
+          };
+        }
+        // In 'auto' mode, cleanly fall through to local deterministic WAV synthesis
+      }
+    }
+
+    if (mode === 'cloud' && !ai) {
+      return {
+        success: false,
+        audioType,
         provider: 'unconfigured',
         model: 'none',
-        error: 'Music generation requires a configured audio provider (GEMINI_API_KEY for Lyria).',
-        recoveryGuidance: 'Configure a billing-enabled GEMINI_API_KEY on the server to synthesize real WAV/MP3 tracks with Lyria 3.',
+        audioUrl: '',
+        url: '',
+        mimeType: 'audio/wav',
+        byteLength: 0,
+        errorCode: 'AUDIO_RENDERER_NOT_CONFIGURED',
+        error: 'Cloud audio generation requested, but GEMINI_API_KEY is not configured on the server.',
+        recoveryGuidance: 'Set GEMINI_API_KEY for cloud Lyria generation, or use Auto/Local Synth mode for instant playable WAV generation.',
       };
     }
 
-    const model = params.fullTrack ? 'lyria-3-pro-preview' : 'lyria-3-clip-preview';
-    try {
-      const stream = await ai.models.generateContentStream({
-        model,
-        contents: params.prompt,
-      });
-
-      const audioChunks: Buffer[] = [];
-      let mimeType = 'audio/mpeg';
-      let hasMime = false;
-      let lyrics = '';
-
-      for await (const chunk of stream) {
-        const parts = chunk.candidates?.[0]?.content?.parts || [];
-        for (const part of parts) {
-          if (part.inlineData?.data) {
-            if (!hasMime && part.inlineData.mimeType) {
-              mimeType = part.inlineData.mimeType;
-              hasMime = true;
-            }
-            audioChunks.push(Buffer.from(part.inlineData.data, 'base64'));
-          }
-          if (part.text) {
-            lyrics += part.text;
-          }
-        }
-      }
-
-      if (audioChunks.length === 0) {
-        throw new Error(`${model} returned no audio stream bytes.`);
-      }
-
-      const combined = Buffer.concat(audioChunks);
-      if (combined.byteLength < 64) {
-        throw new Error(`${model} returned an invalid or truncated audio payload (${combined.byteLength} bytes).`);
-      }
-
-      return {
-        success: true,
-        provider: 'gemini-lyria-music',
-        model,
-        audioUrl: `data:${mimeType};base64,${combined.toString('base64')}`,
-        mimeType,
-        byteLength: combined.byteLength,
-        lyrics: lyrics.trim() || undefined,
-      };
-    } catch (err: any) {
-      const msg = String(err?.message || 'Lyria audio synthesis failed.');
-      const isPaidOrAuth = /401|403|429|PERMISSION_DENIED|RESOURCE_EXHAUSTED|API_KEY_INVALID/i.test(msg);
+    // 3. LOCAL DETERMINISTIC PCM RIFF/WAV SYNTHESIS (MUSIC, INSTRUMENTAL, BEAT, SFX)
+    const synthType = audioType === 'BEAT' || audioType === 'SFX' || audioType === 'INSTRUMENTAL' ? audioType : 'MUSIC';
+    const synth = synthesizeLocalWavAudio({ prompt: cleanPrompt, audioType: synthType });
+    const validation = validateAudioAsset(synth.audioBytes, synth.mimeType);
+    if (!validation.valid) {
       return {
         success: false,
-        provider: 'gemini-lyria-music',
-        model,
-        error: msg,
-        recoveryGuidance: isPaidOrAuth
-          ? 'Lyria 3 models require a billing-enabled GEMINI_API_KEY in server Secrets with active quota.'
-          : 'Retry with a clear musical style, tempo, and instrumentation prompt.',
+        audioType,
+        provider: synth.provider,
+        model: synth.model,
+        audioUrl: '',
+        url: '',
+        mimeType: 'audio/wav',
+        byteLength: 0,
+        errorCode: 'LOCAL_AUDIO_VALIDATION_FAILED',
+        error: validation.error || 'Local WAV synthesizer failed container validation.',
       };
     }
+
+    const storedUrl = this.storeAudioAsset({
+      assetKey,
+      bytes: synth.audioBytes,
+      mimeType: validation.mimeType,
+      filename: `ANNY_${synthType}_${assetKey}.wav`,
+      ownerUserId: params.ownerUserId,
+      ownerOrgId: params.ownerOrgId,
+      createdAt: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      audioType,
+      provider: synth.provider,
+      model: synth.model,
+      audioUrl: `data:${validation.mimeType};base64,${bytesToBase64(synth.audioBytes)}`,
+      url: storedUrl,
+      assetKey,
+      mimeType: validation.mimeType,
+      byteLength: synth.audioBytes.byteLength,
+      durationSeconds: synth.durationSeconds,
+      metadata: synth.metadata,
+    };
   }
 }
 

@@ -22,7 +22,7 @@ interface AnnyModelsViewProps {
 
 export const AnnyModelsView: React.FC<AnnyModelsViewProps> = ({
   onToggleMobileMenu,
-  currentModel = 'G-Ai 3.6 Omni',
+  currentModel = 'auto',
   onSelectModel,
 }) => {
   const [activeModel, setActiveModel] = useState(currentModel);
@@ -30,87 +30,100 @@ export const AnnyModelsView: React.FC<AnnyModelsViewProps> = ({
   const modelsList = [
     {
       id: 'm-1',
-      name: 'G-Ai 3.6 Omni',
-      provider: 'Anny Native Engine',
-      badge: 'Flagship Multimodal',
-      description: 'Next-gen multimodal AI engine supporting live split-screen code editing, vision analysis, deep research, voice synthesis, and multi-file project generation.',
-      contextWindow: '2,000,000 tokens',
-      speed: '⚡ Lightning (120 t/s)',
-      reasoning: 'Ultra High (99.4%)',
+      modelId: 'auto',
+      name: 'ANNY Adaptive Router',
+      provider: 'ANNY Neural Router',
+      badge: 'Flagship Auto-Route',
+      description: 'Intelligent routing across Gemini, Groq, OpenAI, and local Ollama GGUF for live split-screen coding, vision analysis, and multi-file builds.',
+      contextWindow: 'Dynamic',
+      speed: 'Adaptive',
+      reasoning: 'High',
       status: 'Active / Default',
       color: 'from-cyan-500 via-indigo-500 to-fuchsia-600',
       recommendedFor: 'Full-stack Web & App Generation, Vision, Code',
     },
     {
       id: 'm-2',
-      name: 'Gemini 1.5 Pro',
+      modelId: 'gemini-4-hydrogen',
+      name: 'Gemini 4 Hydrogen',
       provider: 'Google AI Studio',
-      badge: 'Long-Context Powerhouse',
-      description: 'Breakthrough 2M context window optimized for large codebase analysis, video processing, and document ingestion.',
-      contextWindow: '2,000,000 tokens',
-      speed: 'Fast (85 t/s)',
-      reasoning: 'High (98.2%)',
-      status: 'Ready',
+      badge: 'Reasoning & Multimodal Core',
+      description: 'High-capability reasoning model optimized for complex software architecture, multimodal analysis, and structured builds.',
+      contextWindow: '1,000,000 tokens',
+      speed: 'Fast',
+      reasoning: 'Ultra High',
+      status: 'Server Key Optional',
       color: 'from-blue-500 to-cyan-500',
-      recommendedFor: 'Repository Audits, Large Video Analysis, PDF Ingestion',
+      recommendedFor: 'Repository Audits, Vision Analysis, Multi-File Apps',
     },
     {
       id: 'm-3',
-      name: 'Claude 3.5 Sonnet',
-      provider: 'Anthropic',
-      badge: 'Coding Specialist',
-      description: 'Industry-leading benchmark scores for complex logic, nuanced writing, refactoring, and code generation.',
-      contextWindow: '200,000 tokens',
-      speed: 'Fast (90 t/s)',
-      reasoning: 'High (98.8%)',
-      status: 'Ready',
+      modelId: 'gemini-3.1-flash-lite',
+      name: 'Gemini 3.1 Flash Lite',
+      provider: 'Google AI Studio',
+      badge: 'Low-Latency Engine',
+      description: 'Fast, responsive multimodal engine tuned for interactive chat, code completion, and quick creative workflows.',
+      contextWindow: '1,000,000 tokens',
+      speed: 'Ultra Fast',
+      reasoning: 'High',
+      status: 'Server Key Optional',
       color: 'from-amber-500 to-orange-600',
-      recommendedFor: 'Complex Refactoring, Algorithm Design, Technical Writing',
+      recommendedFor: 'Interactive Chat, Code Editing, Fast Iteration',
     },
     {
       id: 'm-4',
-      name: 'GPT-4o',
-      provider: 'OpenAI',
-      badge: 'Omni Reasoning',
-      description: 'Versatile omni model with high general reasoning, web search grounding, and creative problem solving.',
-      contextWindow: '128,000 tokens',
-      speed: 'Very Fast (105 t/s)',
-      reasoning: 'High (97.9%)',
-      status: 'Ready',
+      modelId: 'ollama-local',
+      name: 'Ollama Local GGUF',
+      provider: 'Local Sovereign Node',
+      badge: 'Offline & Sovereign',
+      description: 'Runs locally via your Ollama daemon on 127.0.0.1:11434 with zero external cloud dependency.',
+      contextWindow: 'Model Dependent',
+      speed: 'Local Hardware',
+      reasoning: 'Local Sovereign',
+      status: 'Offline Capable',
       color: 'from-emerald-500 to-teal-600',
-      recommendedFor: 'General Purpose Chat, Logic Puzzles, Marketing',
+      recommendedFor: 'Offline Coding, Private Workloads, Air-Gapped Systems',
     },
     {
       id: 'm-5',
-      name: 'DeepSeek R1',
+      modelId: 'deepseek-coder',
+      name: 'DeepSeek Coder / R1',
       provider: 'DeepSeek AI',
-      badge: 'Open Reasoning Model',
-      description: 'Advanced chain-of-thought mathematical reasoning model with step-by-step verification trees.',
+      badge: 'Open Reasoning & Code',
+      description: 'Dedicated reasoning and coding engine for algorithm synthesis, debugging, and backend logic.',
       contextWindow: '128,000 tokens',
-      speed: 'Standard (60 t/s)',
-      reasoning: 'Extreme (99.1%)',
-      status: 'Ready',
+      speed: 'Standard',
+      reasoning: 'Extreme',
+      status: 'Server Key Optional',
       color: 'from-purple-500 to-indigo-600',
       recommendedFor: 'Math Proofs, Deep Logic, Chain of Thought',
     },
     {
       id: 'm-6',
-      name: 'FLUX.1 & Suno V3',
-      provider: 'AKIN Media Engine',
-      badge: 'Image & Audio Generation',
-      description: 'Dedicated diffusion and audio synthesis model pipeline for photorealistic images, UI assets, and music.',
-      contextWindow: 'N/A (Media Generation)',
-      speed: 'Fast (3-5 sec)',
+      modelId: 'creative-media-suite',
+      name: 'ANNY Creative Media Engines',
+      provider: 'Local SVG/WAV + Gemini Image/Veo/Lyria',
+      badge: 'Image, Audio & Video',
+      description: 'Unified media pipeline combining deterministic offline SVG/PCM-WAV synthesis with optional cloud image, TTS, and video engines.',
+      contextWindow: 'Media Pipeline',
+      speed: 'Fast',
       reasoning: 'Creative',
       status: 'Ready',
       color: 'from-pink-500 to-rose-600',
-      recommendedFor: 'Photorealistic Images, Vector Assets, Audio Tracks',
+      recommendedFor: 'Logos, Raster Images, WAV Music/Beats/SFX, Storyboards',
     },
   ];
 
-  const handleChoose = (name: string) => {
-    setActiveModel(name);
-    if (onSelectModel) onSelectModel(name);
+  const handleChoose = (modelId: string) => {
+    setActiveModel(modelId);
+    try {
+      const raw = typeof window !== 'undefined' ? window.localStorage?.getItem('anny_settings_v1') : null;
+      const parsed = raw ? JSON.parse(raw) : {};
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('anny_settings_v1', JSON.stringify({ ...parsed, defaultModel: modelId }));
+      }
+    } catch {}
+    if (onSelectModel) onSelectModel(modelId);
   };
 
   return (
@@ -137,7 +150,7 @@ export const AnnyModelsView: React.FC<AnnyModelsViewProps> = ({
       {/* Models Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {modelsList.map((model) => {
-          const isSelected = activeModel === model.name;
+          const isSelected = activeModel === model.modelId || activeModel === model.name;
           return (
             <div
               key={model.id}
@@ -163,7 +176,7 @@ export const AnnyModelsView: React.FC<AnnyModelsViewProps> = ({
                   </div>
 
                   <button
-                    onClick={() => handleChoose(model.name)}
+                    onClick={() => handleChoose(model.modelId)}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                       isSelected
                         ? 'bg-cyan-500 text-black shadow-[0_0_15px_rgba(0,229,255,0.5)]'

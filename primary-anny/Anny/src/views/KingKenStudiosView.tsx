@@ -36,8 +36,11 @@ import type { LightboxImageItem } from '../components/ImageLightboxViewer';
 import { WorkspaceManager } from '../core/workspaceManager';
 import { creativeArtifactStore } from '../creative/CreativeArtifactStore';
 import { downloadVerifiedImage } from '../creative/imageDownloadService';
+import { normalizeAudioSource, normalizeImageSource } from '../creative/mediaNormalization';
 import type {
+  AudioGenerationType,
   CreativeArtifactRecord,
+  CreativeAudioResult,
   CreativeImageResult,
   CreativeProviderCapability,
   VideoJobRecord,
@@ -83,12 +86,16 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
   const [activeVideoJob, setActiveVideoJob] = useState<VideoJobRecord | null>(null);
   const [videoEditPrompt, setVideoEditPrompt] = useState('');
   const [videoError, setVideoError] = useState<string | null>(null);
+  const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null);
+  const [videoPlaybackError, setVideoPlaybackError] = useState<string | null>(null);
 
-  // Music Studio State
+  // Music & Audio Studio State
+  const [musicType, setMusicType] = useState<AudioGenerationType>('MUSIC');
   const [musicPrompt, setMusicPrompt] = useState('Afrobeats luxury studio instrumental with warm brass, deep 808 bassline, and crisp percussion for King Ken Studios');
   const [musicFullTrack, setMusicFullTrack] = useState(false);
   const [musicLoading, setMusicLoading] = useState(false);
-  const [musicResult, setMusicResult] = useState<{ audioUrl?: string; lyrics?: string; model?: string; provider?: string; error?: string; recoveryGuidance?: string } | null>(null);
+  const [musicResult, setMusicResult] = useState<CreativeAudioResult | null>(null);
+  const [audioPlaybackError, setAudioPlaybackError] = useState<string | null>(null);
 
   // Website Design Studio State
   const [webPrompt, setWebPrompt] = useState('Build a modern music and creative agency website for King Ken Studios with artist showcase, audio previews, studio booking form, and responsive navigation');
@@ -150,6 +157,48 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
     return () => clearInterval(timer);
   }, [activeVideoJob?.jobId, activeVideoJob?.status]);
 
+  // Resolve authenticated video blob URL when protected /api/* endpoint completes
+  useEffect(() => {
+    let revoked = false;
+    let currentObjUrl: string | null = null;
+    setVideoPlaybackError(null);
+
+    if (
+      activeVideoJob?.status === 'COMPLETED' &&
+      activeVideoJob.playableValidated &&
+      activeVideoJob.videoUrl
+    ) {
+      if (activeVideoJob.videoUrl.startsWith('data:') || activeVideoJob.videoUrl.startsWith('blob:')) {
+        setVideoBlobUrl(activeVideoJob.videoUrl);
+      } else {
+        setVideoBlobUrl(null);
+        void (async () => {
+          try {
+            const res = await fetchWithAuth(activeVideoJob.videoUrl!);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            if (revoked) return;
+            currentObjUrl = URL.createObjectURL(blob);
+            setVideoBlobUrl(currentObjUrl);
+          } catch (err: any) {
+            if (!revoked) {
+              setVideoPlaybackError(err?.message || 'Unable to load authenticated video stream.');
+            }
+          }
+        })();
+      }
+    } else {
+      setVideoBlobUrl(null);
+    }
+
+    return () => {
+      revoked = true;
+      if (currentObjUrl) {
+        URL.revokeObjectURL(currentObjUrl);
+      }
+    };
+  }, [activeVideoJob?.jobId, activeVideoJob?.status, activeVideoJob?.videoUrl]);
+
   const loadProviders = async () => {
     try {
       const res = await fetchWithAuth('/api/creative/providers');
@@ -200,6 +249,7 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
   };
 
   const handleGenerateGraphics = async (isRevision = false) => {
+    if (graphicsLoading) return;
     const effectivePrompt = isRevision ? revisionNote.trim() : graphicsPrompt.trim();
     if (!effectivePrompt) return;
     setGraphicsLoading(true);
@@ -242,13 +292,22 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
         }),
       });
 
-      const data: CreativeImageResult = await response.json();
-      if (!response.ok || !data.success || !data.primaryImageUrl) {
-        throw new Error(data.error || data.recoveryGuidance || 'Image generation failed.');
+      const data: CreativeImageResult = await response.json().catch(() => ({} as any));
+      const normalized = normalizeImageSource(data);
+      if (!response.ok || !data.success || !normalized.valid || data.quality?.valid === false) {
+        const msg = data.error || normalized.error || `Image generation failed (HTTP ${response.status}).`;
+        const guidance = data.recoveryGuidance ? ` ${data.recoveryGuidance}` : '';
+        throw new Error(`${msg}${guidance}`);
       }
 
-      setGraphicsResult(data);
-      setGraphicsRevisions((prev) => (isRevision ? [...prev, data] : [data]));
+      const resolvedData: CreativeImageResult = {
+        ...data,
+        primaryImageUrl: normalized.src,
+        imageUrl: normalized.src,
+        url: normalized.src,
+      };
+      setGraphicsResult(resolvedData);
+      setGraphicsRevisions((prev) => (isRevision ? [...prev, resolvedData] : [resolvedData]));
       if (isRevision) setRevisionNote('');
 
       const project = creativeArtifactStore.ensureProject('King Ken Studios');
@@ -287,6 +346,7 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
   };
 
   const handleStartVideo = async (isFollowUp = false) => {
+    if (videoLoading) return;
     const prompt = isFollowUp ? videoEditPrompt.trim() : videoPrompt.trim();
     if (!prompt) return;
     setVideoLoading(true);
@@ -335,42 +395,125 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
     }
   };
 
+  const handleDownloadVideoMp4 = async () => {
+    if (!activeVideoJob?.videoUrl) return;
+    try {
+      const sourceUrl = videoBlobUrl || activeVideoJob.videoUrl;
+      let href = sourceUrl;
+      let revokeAfter = false;
+      if (!sourceUrl.startsWith('blob:') && !sourceUrl.startsWith('data:')) {
+        const res = await fetchWithAuth(sourceUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        href = URL.createObjectURL(blob);
+        revokeAfter = true;
+      }
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = `${activeVideoJob.jobId || 'anny-video'}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      if (revokeAfter) URL.revokeObjectURL(href);
+    } catch (err: any) {
+      setVideoPlaybackError(err?.message || 'Unable to download MP4 video.');
+    }
+  };
+
   const handleGenerateMusic = async () => {
+    if (musicLoading) return;
     if (!musicPrompt.trim()) return;
     setMusicLoading(true);
     setMusicResult(null);
+    setAudioPlaybackError(null);
     try {
       const response = await fetchWithAuth('/api/creative/audio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: musicPrompt.trim(), fullTrack: musicFullTrack }),
+        body: JSON.stringify({
+          prompt: musicPrompt.trim(),
+          type: musicType,
+          fullTrack: musicFullTrack,
+        }),
       });
-      const data = await response.json();
-      setMusicResult(data);
-      if (data.success && data.audioUrl) {
+      const data: CreativeAudioResult = await response.json().catch(() => ({} as any));
+      const normalized = normalizeAudioSource(data);
+      const mergedResult: CreativeAudioResult = {
+        ...data,
+        audioUrl: normalized.valid ? normalized.src : data.audioUrl,
+        url: normalized.valid ? normalized.src : data.url,
+      };
+      setMusicResult(mergedResult);
+      if (mergedResult.success && mergedResult.audioUrl) {
         const project = creativeArtifactStore.ensureProject('King Ken Studios');
         creativeArtifactStore.saveArtifact({
-          id: `art_aud_${Date.now().toString(36)}`,
+          id: mergedResult.artifactId || `art_aud_${Date.now().toString(36)}`,
           projectId: project.id,
           studio: 'music',
           domain: 'AUDIO',
-          category: 'MUSIC_GENERATION',
-          title: musicPrompt.slice(0, 60),
+          category:
+            musicType === 'BEAT'
+              ? 'AUDIO_BEAT'
+              : musicType === 'SFX'
+                ? 'AUDIO_SFX'
+                : musicType === 'VOICE'
+                  ? 'AUDIO_VOICE_TTS'
+                  : 'MUSIC_GENERATION',
+          title: `[${musicType}] ${musicPrompt.slice(0, 56)}`,
           prompt: musicPrompt,
-          provider: data.provider,
-          model: data.model,
-          format: data.mimeType?.includes('wav') ? 'wav' : 'mp3',
-          mimeType: data.mimeType || 'audio/mpeg',
-          url: data.audioUrl,
+          provider: mergedResult.provider || 'local-pcm-audio-synth',
+          model: mergedResult.model || 'pcm-wav',
+          format: mergedResult.format || (mergedResult.mimeType?.includes('wav') ? 'wav' : 'mp3'),
+          mimeType: mergedResult.mimeType || 'audio/wav',
+          url: mergedResult.audioUrl,
           revisionNumber: 1,
           createdAt: new Date().toISOString(),
-          metadata: { lyrics: data.lyrics },
+          metadata: {
+            lyrics: mergedResult.lyrics,
+            audioType: musicType,
+            durationSeconds: mergedResult.durationSeconds,
+          },
         });
       }
     } catch (err: any) {
-      setMusicResult({ error: err?.message || 'Music generation failed.' });
+      setMusicResult({
+        success: false,
+        audioType: musicType,
+        provider: 'client',
+        model: 'none',
+        audioUrl: '',
+        mimeType: 'audio/wav',
+        byteLength: 0,
+        error: err?.message || 'Audio generation failed.',
+      });
     } finally {
       setMusicLoading(false);
+    }
+  };
+
+  const handleDownloadAudio = async () => {
+    const src = musicResult?.audioUrl || musicResult?.url;
+    if (!src) return;
+    try {
+      let href = src;
+      let revokeAfter = false;
+      if (!src.startsWith('data:') && !src.startsWith('blob:')) {
+        const res = await fetchWithAuth(src);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        href = URL.createObjectURL(blob);
+        revokeAfter = true;
+      }
+      const ext = musicResult?.format || (musicResult?.mimeType?.includes('wav') ? 'wav' : 'mp3');
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = `${(musicType || 'audio').toLowerCase()}-${Date.now()}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      if (revokeAfter) URL.revokeObjectURL(href);
+    } catch (err: any) {
+      setAudioPlaybackError(err?.message || 'Unable to download audio file.');
     }
   };
 
@@ -888,22 +1031,33 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
                     {/* Verified Playable Video Player */}
                     {activeVideoJob.status === 'COMPLETED' && activeVideoJob.playableValidated && activeVideoJob.videoUrl && (
                       <div className="space-y-3">
-                        <video
-                          controls
-                          playsInline
-                          src={activeVideoJob.videoUrl}
-                          className="w-full max-h-[380px] rounded-xl bg-black border border-white/10"
-                        />
+                        {videoPlaybackError ? (
+                          <div className="rounded-xl bg-rose-500/10 border border-rose-500/30 p-3 text-xs text-rose-200">
+                            Video playback failed: {videoPlaybackError}
+                          </div>
+                        ) : videoBlobUrl ? (
+                          <video
+                            controls
+                            playsInline
+                            src={videoBlobUrl}
+                            onError={() => setVideoPlaybackError('Browser video decoder failed to load MP4 stream.')}
+                            className="w-full max-h-[380px] rounded-xl bg-black border border-white/10"
+                          />
+                        ) : (
+                          <div className="w-full h-48 rounded-xl bg-black border border-white/10 flex items-center justify-center text-xs text-slate-400">
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading verified MP4 stream...
+                          </div>
+                        )}
                         <div className="flex items-center justify-between text-xs text-slate-400">
                           <span>Provider: {activeVideoJob.provider} ({activeVideoJob.model})</span>
-                          <a
-                            href={activeVideoJob.videoUrl}
-                            download={`${activeVideoJob.jobId}.mp4`}
-                            className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white font-semibold flex items-center gap-1.5"
+                          <button
+                            type="button"
+                            onClick={handleDownloadVideoMp4}
+                            className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white font-semibold flex items-center gap-1.5 cursor-pointer"
                           >
                             <Download className="w-3.5 h-3.5" />
                             Download MP4
-                          </a>
+                          </button>
                         </div>
                       </div>
                     )}
@@ -952,13 +1106,13 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
             </div>
           )}
 
-          {/* ==================== 3. MUSIC STUDIO ==================== */}
+          {/* ==================== 3. MUSIC & AUDIO STUDIO ==================== */}
           {activeTab === 'music' && (
             <div className="rounded-2xl border border-white/10 bg-[#070b1e] p-6 space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-sm font-bold text-white flex items-center gap-2">
                   <Music className="w-4 h-4 text-purple-400" />
-                  King Ken Music Studio (Lyria 3 Integration)
+                  King Ken Audio &amp; Music Studio (Local PCM-WAV + Lyria / Cloud Voice)
                 </h2>
                 <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
                   <input
@@ -966,13 +1120,38 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
                     checked={musicFullTrack}
                     onChange={(e) => setMusicFullTrack(e.target.checked)}
                   />
-                  <span>Full Track (Lyria 3 Pro)</span>
+                  <span>Extended / Full Track</span>
                 </label>
               </div>
+
+              <div className="flex flex-wrap gap-2">
+                {(['MUSIC', 'INSTRUMENTAL', 'BEAT', 'SFX', 'VOICE'] as AudioGenerationType[]).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setMusicType(t)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                      musicType === t
+                        ? 'bg-purple-500/25 border-purple-400 text-purple-200'
+                        : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {t === 'SFX' ? 'Sound FX' : t === 'VOICE' ? 'Voice TTS' : t.charAt(0) + t.slice(1).toLowerCase()}
+                  </button>
+                ))}
+              </div>
+
               <textarea
                 rows={3}
                 value={musicPrompt}
                 onChange={(e) => setMusicPrompt(e.target.value)}
+                placeholder={
+                  musicType === 'SFX'
+                    ? 'e.g., Cinematic thunder clap with rain ambience, or neon laser blast...'
+                    : musicType === 'VOICE'
+                      ? 'Enter exact text to narrate via Gemini Voice TTS...'
+                      : 'Describe genre, mood, BPM (e.g., 118 bpm afrobeats synth melody and crisp snare)...'
+                }
                 className="w-full rounded-xl bg-black/40 border border-white/15 p-3 text-sm text-white"
               />
               <button
@@ -982,21 +1161,54 @@ export const KingKenStudiosView: React.FC<KingKenStudiosViewProps> = ({
                 className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-500 to-fuchsia-500 text-white font-bold text-sm flex items-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 {musicLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Music className="w-4 h-4" />}
-                <span>{musicLoading ? 'Synthesizing Audio...' : 'Generate Studio Track'}</span>
+                <span>
+                  {musicLoading
+                    ? 'Synthesizing Audio...'
+                    : `Generate ${musicType === 'SFX' ? 'Sound Effect' : musicType === 'VOICE' ? 'Voice Audio' : 'Studio Track'}`}
+                </span>
               </button>
 
-              {musicResult?.audioUrl && (
+              {musicResult?.success && musicResult?.audioUrl && (
                 <div className="rounded-xl bg-black/40 border border-emerald-500/30 p-4 space-y-3">
-                  <audio controls src={musicResult.audioUrl} className="w-full" />
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300">
+                    <span>
+                      Provider: <strong className="text-emerald-300">{musicResult.provider}</strong> ({musicResult.model})
+                      {musicResult.durationSeconds ? ` · ${musicResult.durationSeconds}s` : ''}
+                      {musicResult.mimeType ? ` · ${musicResult.mimeType}` : ''}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleDownloadAudio}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 font-semibold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download {(musicResult.format || 'WAV').toUpperCase()}
+                    </button>
+                  </div>
+                  {audioPlaybackError ? (
+                    <div className="rounded-lg bg-rose-500/15 border border-rose-500/30 p-2.5 text-xs text-rose-200">
+                      Audio playback failed: {audioPlaybackError}
+                    </div>
+                  ) : (
+                    <audio
+                      controls
+                      src={musicResult.audioUrl}
+                      onError={() => setAudioPlaybackError('Browser failed to decode generated audio stream.')}
+                      className="w-full"
+                    />
+                  )}
                   {musicResult.lyrics && (
                     <pre className="text-xs text-slate-300 whitespace-pre-wrap font-sans">{musicResult.lyrics}</pre>
                   )}
                 </div>
               )}
 
-              {musicResult?.error && (
+              {musicResult && !musicResult.success && musicResult.error && (
                 <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-4 text-xs text-amber-200 space-y-1">
-                  <div className="font-semibold">{musicResult.error}</div>
+                  <div className="font-semibold">
+                    {musicResult.error}
+                    {musicResult.errorCode ? ` (${musicResult.errorCode})` : ''}
+                  </div>
                   {musicResult.recoveryGuidance && <div>{musicResult.recoveryGuidance}</div>}
                 </div>
               )}

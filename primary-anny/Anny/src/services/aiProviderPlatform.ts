@@ -163,7 +163,17 @@ export class AIProviderPlatform {
   private healthMap: Map<AIProviderId, ProviderHealth> = new Map();
 
   private constructor() {
-    this.refreshHealthChecks();
+    if (typeof window === 'undefined' && process.env.NODE_ENV !== 'test') {
+      const cfg = envConfigService.getConfig();
+      const anyConfigured = Boolean(
+        cfg.geminiApiKey || cfg.groqApiKey || cfg.deepseekApiKey || cfg.openaiApiKey ||
+        cfg.anthropicApiKey || cfg.openrouterApiKey || cfg.xaiApiKey || cfg.mistralApiKey ||
+        cfg.togetherApiKey || cfg.fireworksApiKey
+      );
+      if (anyConfigured) {
+        void this.refreshHealthChecks();
+      }
+    }
   }
 
   public static getInstance(): AIProviderPlatform {
@@ -490,7 +500,10 @@ export class AIProviderPlatform {
             }
           );
 
-          const content = response.data.choices[0]?.message?.content || '';
+          const content = response.data.choices?.[0]?.message?.content;
+          if (!content || !String(content).trim()) {
+            throw new Error(`Groq returned an empty response for model ${modelName}.`);
+          }
           const latencyMs = Date.now() - startTime;
           const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(effectiveMessages), content, modelName);
 
@@ -523,7 +536,10 @@ export class AIProviderPlatform {
             }
           );
 
-          const content = response.data.choices[0]?.message?.content || '';
+          const content = response.data.choices?.[0]?.message?.content;
+          if (!content || !String(content).trim()) {
+            throw new Error(`DeepSeek returned an empty response for model ${modelName}.`);
+          }
           const latencyMs = Date.now() - startTime;
           const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(effectiveMessages), content, modelName);
 
@@ -714,7 +730,10 @@ export class AIProviderPlatform {
             }
           );
 
-          const content = response.data.choices[0]?.message?.content || '';
+          const content = response.data.choices?.[0]?.message?.content;
+          if (!content || !String(content).trim()) {
+            throw new Error(`OpenAI returned an empty response for model ${modelName}.`);
+          }
           const latencyMs = Date.now() - startTime;
           const { tokens, costUsd } = this.estimateTokensAndCost(JSON.stringify(effectiveMessages), content, modelName);
 
@@ -870,34 +889,53 @@ export class AIProviderPlatform {
 
   // Image Generation — delegates to authoritative CreativeGenerationService
   // (Dedicated Logo Vector Pipeline + Gemini/OpenAI/Local SD + Quality Validation; zero silent Pollinations fallback)
-  public async imageGeneration(options: ImageGenOptions): Promise<ImageGenResult> {
+  public async imageGeneration(options: ImageGenOptions): Promise<ImageGenResult & { url?: string; mimeType?: string }> {
     const { creativeGenerationService } = await import('./creativeGenerationService');
+    const { normalizeImageSource } = await import('../creative/mediaNormalization');
     const result = await creativeGenerationService.generateCreativeImage({
       prompt: options.prompt,
       aspectRatio: options.aspectRatio || '1:1',
     });
 
-    if (!result.success || !result.primaryImageUrl) {
-      throw new Error(result.error || 'No configured image generation provider succeeded.');
+    const normalized = normalizeImageSource({
+      imageUrl: result.imageUrl,
+      primaryImageUrl: result.primaryImageUrl,
+      url: result.url,
+      base64: result.base64,
+      mimeType: result.primaryMimeType,
+    });
+
+    if (!result.success || !normalized.valid || !normalized.src || result.quality?.valid === false) {
+      throw new Error(result.error || normalized.error || 'No configured image generation provider succeeded.');
     }
 
-    const base64Match = result.primaryImageUrl.match(/^data:[^;]+;base64,([\s\S]+)$/);
     return {
-      imageUrl: result.primaryImageUrl,
-      base64: base64Match?.[1],
+      imageUrl: normalized.src,
+      url: normalized.src,
+      base64: normalized.base64,
+      mimeType: normalized.mimeType,
       provider: (result.provider === 'gemini-image' ? 'gemini' : result.provider === 'openai-image' ? 'openai' : 'local') as AIProviderId,
       model: result.model,
     };
   }
 
   // Video Generation — delegates to authoritative CreativeGenerationService (gemini-omni-1.2-flash Interactions API)
-  public async videoGeneration(options: { prompt: string; durationSeconds?: number; aspectRatio?: '16:9' | '9:16' }): Promise<{ videoUrl: string; provider: string; model: string; status: string; jobId: string; script?: string; storyboard?: any[]; error?: string }> {
+  public async videoGeneration(options: { prompt: string; durationSeconds?: number; aspectRatio?: '16:9' | '9:16' }): Promise<{ videoUrl: string; provider: string; model: string; status: string; jobId: string; script?: string; storyboard?: any[]; error?: string; errorCode?: string }> {
     const { creativeGenerationService } = await import('./creativeGenerationService');
-    const job = await creativeGenerationService.startVideoJob({
+    let job = await creativeGenerationService.startVideoJob({
       prompt: options.prompt,
       durationSeconds: options.durationSeconds || 8,
       aspectRatio: options.aspectRatio || '16:9',
     });
+
+    // If an active render job was queued/started, poll up to 30s for completion so callers receive either playable media or honest terminal/in-progress status
+    const deadline = Date.now() + 30000;
+    while ((job.status === 'GENERATING' || job.status === 'PROCESSING' || job.status === 'VALIDATING' || job.status === 'QUEUED') && Date.now() < deadline) {
+      await sleep(300);
+      const latest = creativeGenerationService.getVideoJob(job.jobId);
+      if (!latest) break;
+      job = latest;
+    }
 
     return {
       jobId: job.jobId,
@@ -908,19 +946,28 @@ export class AIProviderPlatform {
       script: job.productionPlan?.narrationScript,
       storyboard: job.productionPlan?.shots,
       error: job.error,
+      errorCode: job.errorCode || (job.status === 'PROVIDER_UNCONFIGURED' ? 'VIDEO_RENDERER_NOT_CONFIGURED' : undefined),
     };
   }
 
-  // Audio/Music Generation Bridge — delegates to Lyria 3 when configured, honest unconfigured state otherwise
-  public async audioGeneration(options: { prompt: string; type: 'MUSIC' | 'VOICE' | 'SFX' }): Promise<{ audioUrl: string; provider: string; model: string; lyrics?: string; error?: string }> {
+  // Audio/Music/Beat/SFX/Voice Generation Bridge
+  public async audioGeneration(options: { prompt: string; type?: 'MUSIC' | 'INSTRUMENTAL' | 'BEAT' | 'SFX' | 'VOICE'; mode?: 'auto' | 'cloud' | 'offline' }): Promise<{ audioUrl: string; url?: string; mimeType?: string; byteLength?: number; provider: string; model: string; lyrics?: string; error?: string; errorCode?: string }> {
     const { creativeGenerationService } = await import('./creativeGenerationService');
-    const res = await creativeGenerationService.generateCreativeAudio({ prompt: options.prompt });
+    const res = await creativeGenerationService.generateCreativeAudio({
+      prompt: options.prompt,
+      type: options.type || 'MUSIC',
+      mode: options.mode || 'auto',
+    });
     return {
       audioUrl: res.audioUrl || '',
+      url: res.url || res.audioUrl || '',
+      mimeType: res.mimeType,
+      byteLength: res.byteLength,
       provider: res.provider,
       model: res.model,
       lyrics: res.lyrics,
       error: res.error,
+      errorCode: res.errorCode,
     };
   }
 

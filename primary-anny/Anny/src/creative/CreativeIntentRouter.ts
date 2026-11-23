@@ -521,21 +521,31 @@ export function classifyCreativeIntent(
     };
   }
 
-  // 2. Music / Audio generation check (King Ken Studios Music Studio)
+  // 2. Music / Audio / Beat / SFX / Voice TTS generation check (Studio & Chat)
+  const hasAudioCreationVerb = /\b(generate|create|compose|make|produce|synthesize|speak|narrate|voice|say|play|design)\b/i.test(lower);
+  const hasMusicOrSoundNoun =
+    /\b(song|track|beat|drum beat|afrobeat|lo-?fi beat|instrumental|soundtrack|music|jingle|audio track|theme music|sound effect|sound effects|sfx|foley|audio clip|voiceover|voice over|tts|text[- ]to[- ]speech)\b/i.test(lower);
   if (
-    /\b(generate|create|compose|make|produce)\b/i.test(lower) &&
-    /\b(song|track|beat|instrumental|soundtrack|music|jingle|audio track|theme music)\b/i.test(lower) &&
-    !/\b(music video|website|app|album cover|logo|poster)\b/i.test(lower)
+    (hasAudioCreationVerb && hasMusicOrSoundNoun && !/\b(music video|website|web app|app|album cover|logo|poster)\b/i.test(lower)) ||
+    /^(tts|speak|narrate|voiceover)\s*[:\-]/i.test(lower)
   ) {
+    let audioCategory: CreativeIntentClassification['category'] = 'MUSIC_GENERATION';
+    if (/\b(sound effect|sound effects|sfx|foley)\b/i.test(lower)) {
+      audioCategory = 'AUDIO_SFX';
+    } else if (/\b(voiceover|voice over|tts|text[- ]to[- ]speech|narrate|speak)\b/i.test(lower)) {
+      audioCategory = 'AUDIO_VOICE_TTS';
+    } else if (/\b(drum beat|lo-?fi beat|trap beat|hip[- ]?hop beat|beats?)\b/i.test(lower) || (/\bafrobeat\b/i.test(lower) && !/\b(instrumental|song|music|soundtrack|track)\b/i.test(lower))) {
+      audioCategory = 'AUDIO_BEAT';
+    }
     return {
       domain: 'AUDIO',
-      category: 'MUSIC_GENERATION',
-      confidence: 0.91,
+      category: audioCategory,
+      confidence: 0.92,
       isRevision: false,
       aspectRatio: '1:1',
       requiresReferenceImage: false,
       requiresReferenceVideo: false,
-      reasoning: 'Detected music/audio composition request for Music Studio.',
+      reasoning: `Detected ${audioCategory} request for Audio/Music generation.`,
       preservedOriginalPrompt,
     };
   }

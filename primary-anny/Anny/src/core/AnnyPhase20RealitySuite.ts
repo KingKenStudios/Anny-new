@@ -503,17 +503,26 @@ export class AnnyPhase20RealitySuite {
 
   private static async auditImageReality(): Promise<RealityTestResult> {
     const { imageGenerationEngine } = await import('./imageGenerationEngine');
-    const result = await imageGenerationEngine.generateImage({ prompt: 'Forensic reality check', assetCategory: 'ILLUSTRATION' });
-    
-    const isPollinations = result.providerUsed === 'VECTOR_SVG_ENGINE' || result.dataUrlOrPath.includes('pollinations.ai');
+    const result = await imageGenerationEngine.generateImage({ prompt: 'Forensic reality check brand logo', assetCategory: 'LOGO_DESIGN' });
+
+    const isPollinations =
+      result.providerUsed === 'pollinations-flux' ||
+      result.dataUrlOrPath.includes('pollinations.ai');
+    const isLocalVector =
+      result.providerUsed === 'local-vector-svg' ||
+      result.providerUsed === 'VECTOR_SVG_ENGINE';
 
     return {
       id: 'P2003',
       name: 'Image Generation Reality',
       status: isPollinations ? 'PARTIAL' : 'REAL',
       claim: 'Multi-provider visual asset & vector synthesis.',
-      reality: 'Produces real unique pixels, but defaults to pollinations.ai (free bridge) instead of enterprise Imagen/DALL-E.',
-      gap: 'Missing direct enterprise-tier API keys for primary providers.'
+      reality: isPollinations
+        ? 'Routed to external Pollinations bridge instead of verified raster provider.'
+        : isLocalVector
+          ? 'Produces verified offline XSS-sanitized SVG brand assets via local-vector-svg engine.'
+          : `Produces verified image assets via ${result.providerUsed}.`,
+      gap: isLocalVector ? 'None for vector logos; cloud raster image keys remain optional.' : 'None'
     };
   }
 

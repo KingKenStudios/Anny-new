@@ -65,11 +65,16 @@ export type ApplicationIntentCategory =
   | 'LANDING_PAGE'
   | 'ADMIN_PANEL';
 
+export type AudioGenerationType = 'MUSIC' | 'INSTRUMENTAL' | 'BEAT' | 'SFX' | 'VOICE';
+
 export type CreativeCategory =
   | ImageIntentCategory
   | VideoIntentCategory
   | ApplicationIntentCategory
   | 'MUSIC_GENERATION'
+  | 'AUDIO_BEAT'
+  | 'AUDIO_SFX'
+  | 'AUDIO_VOICE_TTS'
   | 'GENERAL_CHAT';
 
 export type LogoType =
@@ -240,7 +245,11 @@ export interface CreativeImageResult {
   classification: CreativeIntentClassification;
   enhancedPrompt: EnhancedPromptResult;
   primaryImageUrl: string;
+  imageUrl?: string;
+  url?: string;
+  base64?: string;
   primaryMimeType: string;
+  mimeType?: string;
   primaryFormat: 'svg' | 'png' | 'jpeg' | 'webp';
   provider: string;
   model: string;
@@ -253,6 +262,28 @@ export interface CreativeImageResult {
   revisionNumber: number;
   parentArtifactId?: string;
   error?: string;
+  errorCode?: string;
+  recoveryGuidance?: string;
+}
+
+export interface CreativeAudioResult {
+  success: boolean;
+  audioType: AudioGenerationType;
+  type?: AudioGenerationType;
+  provider: string;
+  model: string;
+  audioUrl: string;
+  url?: string;
+  assetKey?: string;
+  artifactId?: string;
+  format?: string;
+  mimeType: string;
+  byteLength: number;
+  durationSeconds?: number;
+  lyrics?: string;
+  metadata?: Record<string, any>;
+  error?: string;
+  errorCode?: string;
   recoveryGuidance?: string;
 }
 
@@ -326,6 +357,7 @@ export interface VideoJobRecord {
   parentJobId?: string;
   productionPlan?: VideoProductionPlan;
   error?: string;
+  errorCode?: string;
   recoveryGuidance?: string;
 }
 

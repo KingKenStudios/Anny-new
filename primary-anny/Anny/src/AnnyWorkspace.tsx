@@ -83,7 +83,9 @@ import {
   AlertCircle,
   Sun,
   Moon,
+  Music,
 } from 'lucide-react';
+import JSZip from 'jszip';
 
 import logoImg from './assets/logo.png';
 
@@ -98,9 +100,225 @@ import { AnnyDebugIntelligencePanel } from './components/AnnyDebugIntelligencePa
 import { AnnyIntelligenceWorkspacePanel } from './components/workspace/AnnyIntelligenceWorkspacePanel';
 import { classifyCreativeIntent } from './creative/CreativeIntentRouter';
 import { creativeArtifactStore } from './creative/CreativeArtifactStore';
-import type { CreativeImageResult, VideoJobRecord } from './creative/types';
+import { normalizeAudioSource, normalizeImageSource } from './creative/mediaNormalization';
+import type { AudioGenerationType, CreativeAudioResult, CreativeImageResult, VideoJobRecord } from './creative/types';
 import { Activity } from 'lucide-react';
 import { ShieldAlert, Fingerprint } from 'lucide-react';
+
+const MODEL_LABEL_MAP: Record<string, string> = {
+  auto: 'Auto (Best Route)',
+  'auto-router': 'Auto (Best Route)',
+  'gemini-4-hydrogen': 'Gemini 4 Hydrogen',
+  'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
+  'ollama-local': 'Ollama Local (GGUF)',
+  ollama: 'Ollama Local (GGUF)',
+  'deepseek-coder': 'DeepSeek Coder / R1',
+};
+
+const resolveStoredModelId = (propEngine?: any): string => {
+  if (typeof propEngine === 'string' && propEngine.trim()) {
+    return propEngine.trim();
+  }
+  try {
+    const raw = safeStorage.getItem('anny_settings_v1');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.defaultModel === 'string' && parsed.defaultModel.trim()) {
+        if (/gemini-(1\.5|2\.)/i.test(parsed.defaultModel)) return 'gemini-4-hydrogen';
+        return parsed.defaultModel.trim();
+      }
+    }
+  } catch {}
+  return 'auto';
+};
+
+const triggerAuthenticatedMediaDownload = async (
+  url: string,
+  filename: string,
+  onError?: (msg: string) => void
+) => {
+  try {
+    let href = url;
+    let revokeAfter = false;
+    if (!url.startsWith('data:') && !url.startsWith('blob:')) {
+      const res = await fetchWithAuth(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      href = URL.createObjectURL(blob);
+      revokeAfter = true;
+    }
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    if (revokeAfter) URL.revokeObjectURL(href);
+  } catch (err: any) {
+    onError?.(err?.message || 'Unable to download media file.');
+  }
+};
+
+const VerifiedVideoCard: React.FC<{ job: VideoJobRecord }> = ({ job }) => {
+  const [blobSrc, setBlobSrc] = useState<string | null>(null);
+  const [playErr, setPlayErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let revoked = false;
+    let objUrl: string | null = null;
+    setPlayErr(null);
+
+    if (job.status === 'COMPLETED' && job.playableValidated && job.videoUrl) {
+      if (job.videoUrl.startsWith('data:') || job.videoUrl.startsWith('blob:')) {
+        setBlobSrc(job.videoUrl);
+      } else {
+        setBlobSrc(null);
+        void (async () => {
+          try {
+            const res = await fetchWithAuth(job.videoUrl!);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            if (revoked) return;
+            objUrl = URL.createObjectURL(blob);
+            setBlobSrc(objUrl);
+          } catch (err: any) {
+            if (!revoked) setPlayErr(err?.message || 'Failed to fetch verified MP4 stream.');
+          }
+        })();
+      }
+    }
+    return () => {
+      revoked = true;
+      if (objUrl) URL.revokeObjectURL(objUrl);
+    };
+  }, [job.jobId, job.status, job.videoUrl]);
+
+  return (
+    <div className="w-full mt-3 rounded-2xl border border-cyan-500/30 bg-[#06091e] p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-bold text-white">
+          {job.productionPlan?.title || 'Video Production'}
+        </span>
+        <span className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-white/10 text-cyan-300">
+          {job.status}
+        </span>
+      </div>
+
+      {job.status === 'COMPLETED' && job.playableValidated && job.videoUrl && (
+        <div className="space-y-2">
+          {playErr ? (
+            <div className="rounded-xl bg-rose-500/15 border border-rose-500/30 p-2.5 text-xs text-rose-200">
+              {playErr}
+            </div>
+          ) : blobSrc ? (
+            <video
+              controls
+              playsInline
+              src={blobSrc}
+              onError={() => setPlayErr('Browser video decoder failed to load MP4 stream.')}
+              className="w-full max-h-[380px] rounded-xl bg-black border border-white/10"
+            />
+          ) : (
+            <div className="w-full h-36 rounded-xl bg-black border border-white/10 flex items-center justify-center text-xs text-slate-400">
+              Loading verified MP4 stream...
+            </div>
+          )}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() =>
+                void triggerAuthenticatedMediaDownload(
+                  blobSrc || job.videoUrl!,
+                  `${job.jobId || 'anny-video'}.mp4`,
+                  (m) => setPlayErr(m)
+                )
+              }
+              className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Download MP4
+            </button>
+          </div>
+        </div>
+      )}
+
+      {job.productionPlan?.shots && job.productionPlan.shots.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
+            Directorial Shot List ({job.aspectRatio} · {job.durationSeconds}s)
+          </div>
+          {job.productionPlan.shots.map((shot) => (
+            <div key={shot.shotNumber} className="rounded-lg bg-black/40 border border-white/10 p-2.5 text-[11px] text-slate-200">
+              <span className="font-bold text-cyan-300">Shot {shot.shotNumber} ({shot.durationSeconds}s):</span> {shot.visualDescription}
+              <div className="text-[10px] text-slate-400 mt-0.5">
+                Camera: {shot.cameraMovement} · Audio: {shot.audioCue}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const VerifiedAudioCard: React.FC<{ audio: CreativeAudioResult }> = ({ audio }) => {
+  const [audioErr, setAudioErr] = useState<string | null>(null);
+  const src = audio.audioUrl || audio.url || '';
+  const ext = audio.format || (audio.mimeType?.includes('wav') ? 'wav' : 'mp3');
+
+  return (
+    <div className="w-full mt-3 rounded-2xl border border-purple-500/30 bg-[#06091e] p-4 space-y-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-xs font-bold text-white">
+          <Music className="w-4 h-4 text-purple-400" />
+          <span>{audio.type || 'AUDIO'} Output</span>
+        </div>
+        <span className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-white/10 text-purple-200">
+          {audio.provider} · {ext.toUpperCase()}
+          {audio.durationSeconds ? ` · ${audio.durationSeconds}s` : ''}
+        </span>
+      </div>
+
+      {src && !audioErr ? (
+        <audio
+          controls
+          src={src}
+          onError={() => setAudioErr('Browser failed to decode generated audio stream.')}
+          className="w-full"
+        />
+      ) : audioErr ? (
+        <div className="rounded-lg bg-rose-500/15 border border-rose-500/30 p-2 text-xs text-rose-200">
+          {audioErr}
+        </div>
+      ) : null}
+
+      {src && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() =>
+              void triggerAuthenticatedMediaDownload(
+                src,
+                `anny-${(audio.type || 'audio').toLowerCase()}-${Date.now()}.${ext}`,
+                (m) => setAudioErr(m)
+              )
+            }
+            className="px-3 py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/40 text-purple-100 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download {ext.toUpperCase()}
+          </button>
+        </div>
+      )}
+
+      {audio.lyrics && (
+        <pre className="text-[11px] text-slate-300 whitespace-pre-wrap font-sans bg-black/30 rounded-lg p-2.5 border border-white/5">
+          {audio.lyrics}
+        </pre>
+      )}
+    </div>
+  );
+};
 
 interface AnnyWorkspaceProps {
   user?: any;
@@ -170,8 +388,11 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
   const [prompt, setPrompt] = useState(initialPrompt || '');
   const [activeMode, setActiveMode] = useState('builder');
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const [selectedModelId, setSelectedModelId] = useState<string>('auto');
-  const [activeModel, setActiveModel] = useState('Auto (Best Route)');
+  const [selectedModelId, setSelectedModelId] = useState<string>(() => resolveStoredModelId(selectedNeuralEngine));
+  const [activeModel, setActiveModel] = useState<string>(() => {
+    const initialId = resolveStoredModelId(selectedNeuralEngine);
+    return MODEL_LABEL_MAP[initialId] || initialId;
+  });
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isVoiceActive, setIsVoiceActive] = useState<boolean>(() => safeStorage.getItem('anny_auto_speak') === 'true');
@@ -179,6 +400,14 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     safeStorage.getItem('anny_theme') === 'light' ? 'light' : 'dark'
   );
   const [currentTime, setCurrentTime] = useState('08:14 PM');
+
+  useEffect(() => {
+    if (typeof selectedNeuralEngine === 'string' && selectedNeuralEngine.trim()) {
+      const id = selectedNeuralEngine.trim();
+      setSelectedModelId(id);
+      setActiveModel(MODEL_LABEL_MAP[id] || id);
+    }
+  }, [selectedNeuralEngine]);
 
   useEffect(() => {
     safeStorage.setItem('anny_theme', themeMode);
@@ -718,6 +947,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         }
       >;
       generatedVideo?: VideoJobRecord;
+      generatedAudio?: CreativeAudioResult;
     }>
   >([]);
   const [generatingSessions, setGeneratingSessions] = useState<Set<string>>(new Set());
@@ -1226,15 +1456,16 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
 
     const isImageRequest = creativeIntent.domain === 'IMAGE';
     const isVideoRequest = creativeIntent.domain === 'VIDEO';
+    const isAudioRequest = creativeIntent.domain === 'AUDIO';
     const isGreeting = /^(hello|hi|hey|how are you|what'?s up|yo|morning|evening|afternoon|test|ping)\b/i.test(lowerQuery) && lowerQuery.length < 50;
 
     const contextContinuation = /^(continue|keep going|go on|proceed|do it|do that|yes|okay|ok|then|now|next)\b/i.test(lowerQuery)
       || /\b(the app|the website|the project|the code|the backend|the frontend|the page|the component|the preview|the build|it|that|this|the current project)\b/i.test(lowerQuery);
     const explicitTopicShift = /^(change topic|different topic|unrelated|forget that|instead|separate question|another question|something else)\b/i.test(lowerQuery);
     const directQuestion = /^(what|why|how|can you explain|tell me|advise|should i|do you think|would you|could you)\b/i.test(lowerQuery);
-    const projectModification = vfsHasCode && !isImageRequest && !isVideoRequest && (/\b(fix|repair|change|modify|update|edit|add|remove|delete|rename|refactor|improve|make|continue|finish|complete|connect|implement)\b/i.test(lowerQuery) || contextContinuation);
-    const isNewBuild = (creativeIntent.domain === 'APPLICATION' || (/^(build|create|generate|develop|construct|scaffold|design)\b/i.test(lowerQuery) && !contextContinuation)) && !isImageRequest && !isVideoRequest;
-    const isBuildRequest = !isImageRequest && !isVideoRequest && !isGreeting && !explicitTopicShift && !directQuestion && (creativeIntent.domain === 'APPLICATION' || isNewBuild || projectModification || (isAppWebsiteOr3DRequest(query) && /\b(build|create|generate|develop|make)\b/i.test(lowerQuery)));
+    const projectModification = vfsHasCode && !isImageRequest && !isVideoRequest && !isAudioRequest && (/\b(fix|repair|change|modify|update|edit|add|remove|delete|rename|refactor|improve|make|continue|finish|complete|connect|implement)\b/i.test(lowerQuery) || contextContinuation);
+    const isNewBuild = (creativeIntent.domain === 'APPLICATION' || (/^(build|create|generate|develop|construct|scaffold|design)\b/i.test(lowerQuery) && !contextContinuation)) && !isImageRequest && !isVideoRequest && !isAudioRequest;
+    const isBuildRequest = !isImageRequest && !isVideoRequest && !isAudioRequest && !isGreeting && !explicitTopicShift && !directQuestion && (creativeIntent.domain === 'APPLICATION' || isNewBuild || projectModification || (isAppWebsiteOr3DRequest(query) && /\b(build|create|generate|develop|make)\b/i.test(lowerQuery)));
 
     // 1. REAL IMAGE & DEDICATED LOGO GENERATION WORKFLOW
     if (isImageRequest) {
@@ -1262,6 +1493,9 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       if (onUpdateMessages) onUpdateMessages(historyWithBot);
 
       try {
+        const abortController = new AbortController();
+        activeAbortRef.current = abortController;
+
         const referenceImages = currentAttached
           .filter((f: any) => (f.type || '').startsWith('image/') && f.data)
           .slice(0, 6)
@@ -1283,6 +1517,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         const imageResponse = await fetchWithAuth('/api/creative/image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: abortController.signal,
           body: JSON.stringify({
             prompt: query, // NEVER strip "logo" or category intent!
             aspectRatio: creativeIntent.aspectRatio,
@@ -1295,11 +1530,13 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         });
 
         const generated: CreativeImageResult = await imageResponse.json().catch(() => ({} as any));
-        if (!imageResponse.ok || !generated.success || !generated.primaryImageUrl || !generated.quality?.valid) {
-          const reason = generated?.error || `Image generation failed (${imageResponse.status})`;
+        const normalizedPrimary = normalizeImageSource(generated);
+        if (!imageResponse.ok || !generated.success || !normalizedPrimary.valid || generated.quality?.valid === false) {
+          const reason = generated?.error || normalizedPrimary.error || `Image generation failed (${imageResponse.status})`;
           const guidance = generated?.recoveryGuidance ? ` ${generated.recoveryGuidance}` : '';
           throw new Error(`${reason}${guidance}`);
         }
+        generated.primaryImageUrl = normalizedPrimary.src;
 
         const project = creativeArtifactStore.ensureProject(generated.logoBundle?.plan.brandName || 'King Ken Studios');
         creativeArtifactStore.saveArtifact({
@@ -1389,6 +1626,10 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => prevMsgs.map(m => m.id === botMsgId ? finalMsg : m));
         if (safeStorage.getItem('anny_auto_speak') !== 'false') annyVoiceService.speakConversation(finalMsg.content);
       } catch (error: any) {
+        if (error?.name === 'AbortError') {
+          setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? { ...msg, isGeneratingImage: false, content: 'Image generation stopped.' } : msg));
+          return;
+        }
         if (submittedDraft) {
           setPrompt((curr) => resolveDraftAfterFailedSend(curr, submittedDraft));
         }
@@ -1397,6 +1638,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? failedMsg : msg));
         if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => prevMsgs.map(m => m.id === botMsgId ? failedMsg : m));
       } finally {
+        activeAbortRef.current = null;
         setIsGenerating(false);
         isSubmittingRef.current = false;
       }
@@ -1421,6 +1663,9 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       if (onUpdateMessages) onUpdateMessages(historyWithBot);
 
       try {
+        const abortController = new AbortController();
+        activeAbortRef.current = abortController;
+
         const referenceImages = currentAttached
           .filter((f: any) => (f.type || '').startsWith('image/') && f.data)
           .slice(0, 6)
@@ -1429,6 +1674,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         const videoRes = await fetchWithAuth('/api/creative/video/jobs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: abortController.signal,
           body: JSON.stringify({
             prompt: query,
             category: creativeIntent.category,
@@ -1449,10 +1695,24 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         // Poll real backend job status until terminal (max ~4 min)
         let attempts = 0;
         while (['QUEUED', 'PLANNING', 'GENERATING', 'VALIDATING'].includes(job.status) && attempts < 90) {
+          if (abortController.signal.aborted) {
+            void fetchWithAuth(`/api/creative/video/jobs/${encodeURIComponent(job.jobId)}/cancel`, { method: 'POST' }).catch(() => {});
+            const abortErr = new Error('Video generation cancelled by user.');
+            abortErr.name = 'AbortError';
+            throw abortErr;
+          }
           setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? { ...msg, imageProgress: Math.max(25, job.progressPct || 40), imageStage: job.stageMessage } : msg));
           await new Promise(resolve => setTimeout(resolve, 2500));
+          if (abortController.signal.aborted) {
+            void fetchWithAuth(`/api/creative/video/jobs/${encodeURIComponent(job.jobId)}/cancel`, { method: 'POST' }).catch(() => {});
+            const abortErr = new Error('Video generation cancelled by user.');
+            abortErr.name = 'AbortError';
+            throw abortErr;
+          }
           attempts++;
-          const pollRes = await fetchWithAuth(`/api/creative/video/jobs/${encodeURIComponent(job.jobId)}`);
+          const pollRes = await fetchWithAuth(`/api/creative/video/jobs/${encodeURIComponent(job.jobId)}`, {
+            signal: abortController.signal,
+          });
           if (pollRes.ok) {
             job = await pollRes.json();
           }
@@ -1500,6 +1760,10 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? finalMsg : msg));
         if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => prevMsgs.map(m => m.id === botMsgId ? finalMsg : m));
       } catch (error: any) {
+        if (error?.name === 'AbortError') {
+          setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? { ...msg, isGeneratingImage: false, content: 'Video generation stopped.' } : msg));
+          return;
+        }
         if (submittedDraft) {
           setPrompt((curr) => resolveDraftAfterFailedSend(curr, submittedDraft));
         }
@@ -1508,6 +1772,110 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
         setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? failedMsg : msg));
         if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => prevMsgs.map(m => m.id === botMsgId ? failedMsg : m));
       } finally {
+        activeAbortRef.current = null;
+        setIsGenerating(false);
+        isSubmittingRef.current = false;
+      }
+      return;
+    }
+
+    // 3. REAL AUDIO, MUSIC, BEAT, SFX & VOICE TTS WORKFLOW
+    if (isAudioRequest) {
+      const botMsgId = (Date.now() + 1).toString();
+      const audioType: AudioGenerationType =
+        creativeIntent.category === 'AUDIO_BEAT'
+          ? 'BEAT'
+          : creativeIntent.category === 'AUDIO_SFX'
+            ? 'SFX'
+            : creativeIntent.category === 'AUDIO_VOICE_TTS'
+              ? 'VOICE'
+              : /\binstrumental\b/i.test(query)
+                ? 'INSTRUMENTAL'
+                : 'MUSIC';
+
+      const initialBotMsg = {
+        id: botMsgId,
+        role: 'assistant' as const,
+        content: `Synthesizing verified ${audioType.toLowerCase()} audio...`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isGeneratingImage: true,
+        imagePrompt: query,
+        imageProgress: 35,
+        imageStage: audioType === 'VOICE' ? 'Requesting Voice TTS renderer...' : 'Synthesizing 16-bit PCM WAV / audio stream...',
+      };
+      const historyWithBot = [...updatedHistory, initialBotMsg];
+      setChatHistory(historyWithBot);
+      if (onUpdateMessages) onUpdateMessages(historyWithBot);
+
+      try {
+        const abortController = new AbortController();
+        activeAbortRef.current = abortController;
+
+        const audioRes = await fetchWithAuth('/api/creative/audio', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: abortController.signal,
+          body: JSON.stringify({ prompt: query, type: audioType }),
+        });
+
+        const generatedAudio: CreativeAudioResult = await audioRes.json().catch(() => ({} as any));
+        const normalizedAudio = normalizeAudioSource(generatedAudio);
+        if (!audioRes.ok || !generatedAudio.success || !normalizedAudio.valid) {
+          const reason = generatedAudio?.error || normalizedAudio.error || `Audio generation failed (HTTP ${audioRes.status})`;
+          const guidance = generatedAudio?.recoveryGuidance ? ` ${generatedAudio.recoveryGuidance}` : '';
+          throw new Error(`${reason}${guidance}`);
+        }
+        generatedAudio.audioUrl = normalizedAudio.src;
+        generatedAudio.url = normalizedAudio.src;
+
+        const project = creativeArtifactStore.ensureProject('King Ken Studios');
+        creativeArtifactStore.saveArtifact({
+          id: generatedAudio.artifactId || `art_aud_${Date.now().toString(36)}`,
+          projectId: project.id,
+          studio: 'music',
+          domain: 'AUDIO',
+          category: creativeIntent.category,
+          title: `[${audioType}] ${query.slice(0, 56)}`,
+          prompt: query,
+          provider: generatedAudio.provider,
+          model: generatedAudio.model,
+          format: generatedAudio.format || 'wav',
+          mimeType: generatedAudio.mimeType || 'audio/wav',
+          url: normalizedAudio.src,
+          revisionNumber: 1,
+          createdAt: new Date().toISOString(),
+          metadata: {
+            audioType,
+            durationSeconds: generatedAudio.durationSeconds,
+            byteLength: generatedAudio.byteLength,
+          },
+        });
+
+        const summaryText = `Your verified ${audioType.toLowerCase()} audio track (${(generatedAudio.format || 'wav').toUpperCase()}${generatedAudio.durationSeconds ? `, ${generatedAudio.durationSeconds}s` : ''}) is ready via ${generatedAudio.provider}.`;
+        const finalMsg = {
+          id: botMsgId,
+          role: 'assistant' as const,
+          content: formatNaturalConversation(summaryText, { preserveStructured: false }),
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isGeneratingImage: false,
+          generatedAudio,
+        };
+        setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? finalMsg : msg));
+        if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => prevMsgs.map(m => m.id === botMsgId ? finalMsg : m));
+      } catch (error: any) {
+        if (error?.name === 'AbortError') {
+          setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? { ...msg, isGeneratingImage: false, content: 'Audio generation stopped.' } : msg));
+          return;
+        }
+        if (submittedDraft) {
+          setPrompt((curr) => resolveDraftAfterFailedSend(curr, submittedDraft));
+        }
+        const errorText = `I could not generate audio for this request. ${error?.message || 'Audio renderer unavailable.'}`;
+        const failedMsg = { id: botMsgId, role: 'assistant' as const, content: formatNaturalConversation(errorText), timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), isGeneratingImage: false };
+        setChatHistory(prev => prev.map(msg => msg.id === botMsgId ? failedMsg : msg));
+        if (onUpdateMessages) onUpdateMessages((prevMsgs: any[]) => prevMsgs.map(m => m.id === botMsgId ? failedMsg : m));
+      } finally {
+        activeAbortRef.current = null;
         setIsGenerating(false);
         isSubmittingRef.current = false;
       }
@@ -1905,8 +2273,31 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                   <span className="text-[10px] text-emerald-400 font-normal">• Online</span>
                 </div>
                 <div className="flex items-center gap-2 text-slate-400">
-                  <Volume2 className="w-3.5 h-3.5 hover:text-white cursor-pointer" />
-                  <Copy className="w-3.5 h-3.5 hover:text-white cursor-pointer" />
+                  <button
+                    type="button"
+                    onClick={toggleVoice}
+                    title={isVoiceActive ? 'Mute voice output' : 'Enable voice output'}
+                    className={`p-1 rounded hover:bg-white/10 transition-colors cursor-pointer ${isVoiceActive ? 'text-cyan-400' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    {isVoiceActive ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const list = messages.length > 0 ? messages : chatHistory;
+                      const latestBot = [...list].reverse().find((m: any) => m.role === 'assistant' && m.content);
+                      if (latestBot?.content) {
+                        void navigator.clipboard.writeText(latestBot.content);
+                        showNotice('Latest assistant response copied to clipboard.', 'success');
+                      } else {
+                        showNotice('No assistant response to copy yet.', 'info');
+                      }
+                    }}
+                    title="Copy latest assistant response"
+                    className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
 
@@ -2000,7 +2391,37 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                           ))}
                         </div>
                       )}
-                      
+                      {msg.generatedImages && msg.generatedImages.length > 0 && (
+                        <div className="w-full mt-2.5">
+                          <GeneratedImageGallery
+                            images={msg.generatedImages.map((img: any, idx: number) => ({
+                              id: img.id || `${msg.id}_split_img_${idx}`,
+                              label: img.label || (msg.generatedImages!.length > 1 ? `Option ${idx + 1}` : undefined),
+                              url: img.url,
+                              downloadUrl: img.downloadUrl,
+                              mimeType: img.mimeType,
+                              format: img.format,
+                              width: img.width,
+                              height: img.height,
+                              provider: img.provider,
+                              model: img.model,
+                              prompt: img.prompt || msg.content,
+                              category: img.category,
+                              createdAt: img.createdAt,
+                              revisionNumber: img.revisionNumber,
+                              originalImageUrl: img.originalImageUrl,
+                            }))}
+                            selectedImageId={selectedImageForEdit?.id}
+                            onSelectForEdit={(img) => setSelectedImageForEdit(img)}
+                            onRegenerate={(p) => handleSend(p)}
+                            compact
+                          />
+                        </div>
+                      )}
+
+                      {msg.generatedVideo && <VerifiedVideoCard job={msg.generatedVideo} />}
+                      {msg.generatedAudio && <VerifiedAudioCard audio={msg.generatedAudio} />}
+
                       {/* Action Icons for Split View */}
                       <div className={`flex items-center gap-3 mt-3 pt-2 border-t border-white/5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         {msg.role === 'user' ? (
@@ -2208,9 +2629,9 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                     </div>
                     {[
                       { id: 'auto', label: 'Auto (Best Route)', desc: 'Smart local & cloud routing' },
-                      { id: 'gemini-4-hydrogen', label: 'ANNY Core (Pro)', desc: 'Deep architecture & vision' },
-                      { id: 'gemini-3.1-flash-lite', label: 'ANNY Fast (Lite)', desc: 'Low-latency coding & chat' },
-                      { id: 'ollama', label: 'Local Sovereign (Ollama)', desc: 'Offline-capable local model' },
+                      { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen', desc: 'Deep architecture & vision' },
+                      { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite', desc: 'Low-latency coding & chat' },
+                      { id: 'ollama-local', label: 'Local Sovereign (Ollama)', desc: 'Offline-capable local model' },
                     ].map((m) => (
                       <button
                         key={m.id}
@@ -2218,6 +2639,12 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                         onClick={() => {
                           setSelectedModelId(m.id);
                           setActiveModel(m.label);
+                          setSelectedNeuralEngine?.(m.id);
+                          try {
+                            const raw = safeStorage.getItem('anny_settings_v1');
+                            const parsed = raw ? JSON.parse(raw) : {};
+                            safeStorage.setItem('anny_settings_v1', JSON.stringify({ ...parsed, defaultModel: m.id }));
+                          } catch {}
                           setActivePopover('none');
                           showNotice(`Active model switched to ${m.label}`, 'info');
                         }}
@@ -2384,11 +2811,50 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
 
                 {/* Right Action Buttons */}
                 <div className="flex items-center gap-2">
-                  <button className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReloadKey((k) => k + 1);
+                      showNotice('Live preview refreshed.', 'info');
+                    }}
+                    title="Refresh live preview"
+                    className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 cursor-pointer"
+                  >
                     <RefreshCw className="w-3.5 h-3.5" />
                   </button>
 
-                  <button className="px-3 py-1 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white font-semibold text-xs shadow-md hover:brightness-110 flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const files = Object.entries(vfsFiles);
+                      if (files.length === 0) {
+                        showNotice('Generate a project first before exporting a deployment bundle.', 'warning');
+                        return;
+                      }
+                      try {
+                        const zip = new JSZip();
+                        for (const [filePath, fileContent] of files) {
+                          const cleanPath = filePath.replace(/^\/+/, '');
+                          if (cleanPath) zip.file(cleanPath, String(fileContent ?? ''));
+                        }
+                        const blob = await zip.generateAsync({ type: 'blob' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        const slug = (activeProj?.id || 'anny-project').replace(/[^a-zA-Z0-9._-]/g, '_');
+                        a.href = url;
+                        a.download = `${slug}-deploy-bundle.zip`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        showNotice(`Exported ${files.length} workspace files as ${slug}-deploy-bundle.zip`, 'success');
+                      } catch (err: any) {
+                        showNotice(err?.message || 'Unable to package workspace ZIP bundle.', 'error');
+                      }
+                    }}
+                    title="Export deployable project bundle (.zip)"
+                    className="px-3 py-1 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white font-semibold text-xs shadow-md hover:brightness-110 flex items-center gap-1 cursor-pointer"
+                  >
                     <span>Deploy</span>
                     <ChevronDown className="w-3 h-3" />
                   </button>
@@ -3003,55 +3469,10 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
                         )}
 
                         {/* Verified Video Player / Directorial Storyboard Rendering */}
-                        {msg.generatedVideo && (
-                          <div className="w-full mt-3 rounded-2xl border border-cyan-500/30 bg-[#06091e] p-4 space-y-3">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs font-bold text-white">
-                                {msg.generatedVideo.productionPlan?.title || 'Video Production'}
-                              </span>
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-white/10 text-cyan-300">
-                                {msg.generatedVideo.status}
-                              </span>
-                            </div>
+                        {msg.generatedVideo && <VerifiedVideoCard job={msg.generatedVideo} />}
 
-                            {msg.generatedVideo.status === 'COMPLETED' && msg.generatedVideo.playableValidated && msg.generatedVideo.videoUrl && (
-                              <div className="space-y-2">
-                                <video
-                                  controls
-                                  playsInline
-                                  src={msg.generatedVideo.videoUrl}
-                                  className="w-full max-h-[380px] rounded-xl bg-black border border-white/10"
-                                />
-                                <div className="flex justify-end">
-                                  <a
-                                    href={msg.generatedVideo.videoUrl}
-                                    download={`${msg.generatedVideo.jobId}.mp4`}
-                                    className="px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 text-xs font-semibold flex items-center gap-1.5"
-                                  >
-                                    <Download className="w-3.5 h-3.5" />
-                                    Download MP4
-                                  </a>
-                                </div>
-                              </div>
-                            )}
-
-                            {msg.generatedVideo.productionPlan?.shots && msg.generatedVideo.productionPlan.shots.length > 0 && (
-                              <div className="space-y-1.5">
-                                <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
-                                  Directorial Shot List ({msg.generatedVideo.aspectRatio} · {msg.generatedVideo.durationSeconds}s)
-                                </div>
-                                {msg.generatedVideo.productionPlan.shots.map((shot) => (
-                                  <div key={shot.shotNumber} className="rounded-lg bg-black/40 border border-white/10 p-2.5 text-[11px] text-slate-200">
-                                    <span className="font-bold text-cyan-300">Shot {shot.shotNumber} ({shot.durationSeconds}s):</span> {shot.visualDescription}
-                                    <div className="text-[10px] text-slate-400 mt-0.5">
-                                      Camera: {shot.cameraMovement} · Audio: {shot.audioCue}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
+                        {/* Verified Music / Beat / SFX / Voice Audio Rendering */}
+                        {msg.generatedAudio && <VerifiedAudioCard audio={msg.generatedAudio} />}
 
                         {/* Action Icons */}
                         <div className={`flex items-center gap-3 mt-3 pt-2 border-t border-white/5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>

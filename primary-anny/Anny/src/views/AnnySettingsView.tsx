@@ -89,7 +89,11 @@ export const AnnySettingsView: React.FC<AnnySettingsViewProps> = ({
       const raw = safeStorage.getItem(SETTINGS_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        return { ...DEFAULT_SETTINGS, ...parsed };
+        const merged = { ...DEFAULT_SETTINGS, ...parsed };
+        if (typeof merged.defaultModel === 'string' && /gemini-(1\.5|2\.)/i.test(merged.defaultModel)) {
+          merged.defaultModel = 'gemini-4-hydrogen';
+        }
+        return merged;
       }
     } catch {
       // Fallback cleanly to defaults
@@ -243,8 +247,7 @@ export const AnnySettingsView: React.FC<AnnySettingsViewProps> = ({
                 className="w-full bg-[#090d28] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-cyan-500/50 cursor-pointer"
               >
                 <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (Default Routed)</option>
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                <option value="gemini-2.5-pro">Gemini 2.5 Pro (Complex Reasoning)</option>
+                <option value="gemini-4-hydrogen">Gemini 4 Hydrogen (Complex Reasoning)</option>
                 <option value="ollama-local">Ollama Local GGUF (Offline Core)</option>
                 <option value="auto-router">ANNY Adaptive Model Router</option>
               </select>

@@ -280,7 +280,7 @@ export class AnnyPhase25RealitySuite {
       executionId: `exec_test_${Date.now()}`,
       timestamp: new Date().toISOString(),
       provider: 'GEMINI_OR_LOCAL',
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.1-flash-lite',
       verificationMethod: 'LIVE_INVOCATION',
       confidence: 1.0
     });

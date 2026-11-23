@@ -436,40 +436,32 @@ export class ImageWorker {
     const startTime = Date.now();
     const routeDecision = enterpriseModelRouter.selectRoute({ taskCategory: 'image_generation' });
 
-    try {
-      const imgRes = await aiProviderPlatform.imageGeneration({
-        prompt: assetPrompt,
-        aspectRatio: '1:1'
-      });
+    const imgRes = await aiProviderPlatform.imageGeneration({
+      prompt: assetPrompt,
+      aspectRatio: '1:1'
+    });
 
-      const latencyMs = Date.now() - startTime;
-      const imageUrl = imgRes.imageUrl || imgRes.base64;
-      const assetPath = `/public/assets/logo_${taskId.slice(0, 8)}.png`;
-
-      return {
-        taskId,
-        assetPath,
-        imageUrl,
-        provider: imgRes.provider || routeDecision.selectedProvider,
-        model: imgRes.model || routeDecision.selectedModel,
-        latencyMs
-      };
-    } catch (_err: any) {
-      const latencyMs = Date.now() - startTime;
-      const width = 1024;
-      const height = 1024;
-      const seed = Math.floor(Math.random() * 1000000);
-      const fallbackUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(assetPrompt)}?width=${width}&height=${height}&nologo=true&seed=${seed}`;
-
-      return {
-        taskId,
-        assetPath: `/public/assets/logo_${taskId.slice(0, 8)}.png`,
-        imageUrl: fallbackUrl,
-        provider: 'pollinations-flux',
-        model: 'flux-1.1-pro',
-        latencyMs
-      };
+    const { normalizeImageSource } = await import('../creative/mediaNormalization');
+    const normalized = normalizeImageSource({
+      imageUrl: imgRes.imageUrl,
+      base64: imgRes.base64,
+    });
+    if (!normalized.valid || !normalized.src) {
+      throw new Error(normalized.error || 'ImageWorker failed to receive a valid generated image payload.');
     }
+
+    const latencyMs = Date.now() - startTime;
+    const ext = normalized.mimeType === 'image/svg+xml' ? 'svg' : 'png';
+    const assetPath = `/public/assets/logo_${taskId.slice(0, 8)}.${ext}`;
+
+    return {
+      taskId,
+      assetPath,
+      imageUrl: normalized.src,
+      provider: imgRes.provider || routeDecision.selectedProvider,
+      model: imgRes.model || routeDecision.selectedModel,
+      latencyMs
+    };
   }
 }
 

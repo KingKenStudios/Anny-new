@@ -524,3 +524,108 @@ export function validateVideoAsset(bytes: Uint8Array): {
     error: 'Video binary failed MP4/WebM container structure validation.',
   };
 }
+
+/**
+ * Validates raw audio bytes (RIFF/WAV, MP3/ID3, OGG, FLAC) so empty or HTML error pages
+ * are never accepted or saved as playable audio assets.
+ */
+export function validateAudioAsset(
+  bytes: Uint8Array,
+  declaredMimeType?: string
+): {
+  valid: boolean;
+  mimeType: string;
+  format: 'wav' | 'mp3' | 'ogg' | 'flac' | 'unknown';
+  byteLength: number;
+  durationSeconds?: number;
+  error?: string;
+} {
+  if (!bytes || bytes.length < 16) {
+    return {
+      valid: false,
+      mimeType: declaredMimeType || 'application/octet-stream',
+      format: 'unknown',
+      byteLength: bytes?.length || 0,
+      error: 'Audio payload is empty or too small to contain valid audio.',
+    };
+  }
+
+  const headText = bytesToUtf8(bytes.slice(0, Math.min(bytes.length, 256))).trimStart();
+  if (/^<!doctype\s+html|^<html[\s>]|^\s*\{[\s\S]*"error"/i.test(headText)) {
+    return {
+      valid: false,
+      mimeType: 'text/html',
+      format: 'unknown',
+      byteLength: bytes.length,
+      error: 'Audio endpoint returned HTML or JSON error payload instead of audio bytes.',
+    };
+  }
+
+  // RIFF / WAVE container check
+  const riff = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+  const wave = String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]);
+  if (riff === 'RIFF' && wave === 'WAVE' && bytes.length >= 44) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const byteRate = view.getUint32(28, true);
+    const dataLen = Math.max(0, bytes.length - 44);
+    const durationSeconds = byteRate > 0 ? Number((dataLen / byteRate).toFixed(2)) : undefined;
+    if (dataLen === 0) {
+      return {
+        valid: false,
+        mimeType: 'audio/wav',
+        format: 'wav',
+        byteLength: bytes.length,
+        error: 'WAV container has header only and 0 bytes of PCM audio samples.',
+      };
+    }
+    return {
+      valid: true,
+      mimeType: 'audio/wav',
+      format: 'wav',
+      byteLength: bytes.length,
+      durationSeconds,
+    };
+  }
+
+  // MP3 (ID3 tag or MPEG ADTS syncword)
+  if (
+    (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) ||
+    (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)
+  ) {
+    return {
+      valid: true,
+      mimeType: 'audio/mpeg',
+      format: 'mp3',
+      byteLength: bytes.length,
+    };
+  }
+
+  // Ogg / Opus
+  if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
+    return {
+      valid: true,
+      mimeType: 'audio/ogg',
+      format: 'ogg',
+      byteLength: bytes.length,
+    };
+  }
+
+  // FLAC
+  if (bytes[0] === 0x66 && bytes[1] === 0x4c && bytes[2] === 0x61 && bytes[3] === 0x43) {
+    return {
+      valid: true,
+      mimeType: 'audio/flac',
+      format: 'flac',
+      byteLength: bytes.length,
+    };
+  }
+
+  return {
+    valid: false,
+    mimeType: declaredMimeType || 'application/octet-stream',
+    format: 'unknown',
+    byteLength: bytes.length,
+    error: 'Unrecognized audio format (failed WAV, MP3, OGG, and FLAC header checks).',
+  };
+}
+

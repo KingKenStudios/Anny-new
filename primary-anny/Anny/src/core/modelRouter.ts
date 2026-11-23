@@ -239,14 +239,21 @@ export class ModelRouter {
     }
 
     if (regProv) {
-      if (regProv.healthStatus === 'DISCONNECTED' || regProv.healthStatus === 'UNAVAILABLE' || regProv.healthStatus === 'OFFLINE') {
-        // Except for gemini when browser proxy is active and not offline
+      if (
+        regProv.healthStatus === 'DISCONNECTED' ||
+        regProv.healthStatus === 'UNAVAILABLE' ||
+        regProv.healthStatus === 'INVALID_CREDENTIALS' ||
+        regProv.healthStatus === 'NO_CREDENTIALS' ||
+        regProv.healthStatus === 'OFFLINE'
+      ) {
+        // On the browser client, Gemini proxies through /api/brain/think unless OFFLINE_ONLY was requested;
+        // on the server, NEVER claim Gemini is available when credentials are missing.
         if (provider === 'gemini' && typeof window !== 'undefined') return true;
         return false;
       }
     }
 
-    if (provider === 'pollinations-flux') return true;
+    if (provider === 'pollinations-flux') return regProv ? regProv.isOnline : false;
     if (provider === 'gemini') return Boolean(config.geminiApiKey || typeof window !== 'undefined');
     if (provider === 'groq') return Boolean(config.groqApiKey);
     if (provider === 'deepseek') return Boolean(config.deepseekApiKey);
@@ -459,9 +466,13 @@ export class ModelRouter {
       };
     }
 
-    // High-availability default fallback (only if configured)
+    // High-availability default fallback (only if configured and not excluded)
     const config = envConfigService.getConfig();
-    const hasGemini = Boolean(config.geminiApiKey || (typeof window !== 'undefined'));
+    const geminiProv = providerRegistryService.getProvider('gemini');
+    const hasGemini = Boolean(
+      config.geminiApiKey ||
+      (typeof window !== 'undefined' && geminiProv?.healthStatus !== 'OFFLINE')
+    );
 
     if (hasGemini && !strategy.preferOffline && strategy.excludeProvider !== 'gemini') {
       return {

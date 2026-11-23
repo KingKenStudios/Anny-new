@@ -144,10 +144,10 @@ export class ProviderRegistryService {
         authenticationMethod: 'API_KEY',
         availableModels: ['gemini-4-hydrogen', 'gemini-3.1-flash-lite', 'gemini-3.1-flash-lite-image'],
         capabilities: ['GENERAL', 'REASONING', 'PLANNING', 'CODING', 'DEBUGGING', 'VISION', 'TESTING', 'EVALUATION', 'FAST_RESPONSE', 'SECURITY', 'SCADA'],
-        isOnline: true,
-        healthStatus: 'CONNECTED',
+        isOnline: false,
+        healthStatus: 'NO_CREDENTIALS',
         priority: 1,
-        latencyMs: 140,
+        latencyMs: 0,
         contextWindow: 2000000,
         supportsStreaming: true,
         supportsVision: true,
@@ -288,10 +288,10 @@ export class ProviderRegistryService {
         authenticationMethod: 'NONE',
         availableModels: ['flux-1.1-pro'],
         capabilities: ['IMAGE_GENERATION'],
-        isOnline: true,
-        healthStatus: 'CONNECTED',
+        isOnline: false,
+        healthStatus: 'UNAVAILABLE',
         priority: 8,
-        latencyMs: 1100,
+        latencyMs: 0,
         contextWindow: 4000,
         supportsStreaming: false,
         supportsVision: false,
@@ -598,7 +598,8 @@ export class ProviderRegistryService {
         if (!prov) return;
 
         if (!task.key) {
-          prov.healthStatus = 'UNAVAILABLE';
+          prov.healthStatus = 'NO_CREDENTIALS';
+          prov.isOnline = false;
           prov.lastError = 'API key missing';
           return;
         }
@@ -607,15 +608,31 @@ export class ProviderRegistryService {
         try {
           await task.testFn();
           prov.healthStatus = 'CONNECTED';
+          prov.isOnline = true;
           prov.latencyMs = Date.now() - start;
           prov.lastSuccess = new Date().toISOString();
+          prov.lastError = undefined;
         } catch (err: any) {
-          prov.healthStatus = 'DISCONNECTED';
+          const status = err.response?.status;
+          prov.healthStatus = status === 401 || status === 403 ? 'INVALID_CREDENTIALS' : 'DISCONNECTED';
+          prov.isOnline = false;
           prov.lastFailure = new Date().toISOString();
-          prov.lastError = err.response?.status ? `HTTP ${err.response.status}` : err.message;
+          prov.lastError = status ? `HTTP ${status}` : err.message;
         }
       })
     );
+
+    const pollProv = this.providerRegistry.get('pollinations-flux');
+    if (pollProv) {
+      if (this.getExecutionMode() === 'OFFLINE_ONLY') {
+        pollProv.healthStatus = 'OFFLINE';
+        pollProv.isOnline = false;
+        pollProv.lastError = 'Disabled in OFFLINE_ONLY mode';
+      } else {
+        pollProv.healthStatus = 'AVAILABLE' as any;
+        pollProv.isOnline = true;
+      }
+    }
 
     return {
       providers: this.getProviderRegistry(),

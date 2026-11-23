@@ -140,12 +140,16 @@ export const AnnyApp: React.FC<AnnyAppProps> = (props) => {
       }
       setInternalTab('chats');
       if (onSelectSubTab) onSelectSubTab('chats');
+      if (setView) setView('home');
       return;
     }
 
     setInternalTab(tab);
     if (onSelectSubTab) {
       onSelectSubTab(tab);
+    }
+    if (setView) {
+      setView(tab === 'chats' || tab === 'anny' ? 'home' : tab);
     }
     // When changing tabs, reset editor active state
     setIsProfessionalEditorActive(false);

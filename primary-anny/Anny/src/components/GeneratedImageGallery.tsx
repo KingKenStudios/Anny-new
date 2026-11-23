@@ -10,6 +10,7 @@ import {
   RotateCw,
 } from 'lucide-react';
 import { downloadVerifiedImage } from '../creative/imageDownloadService';
+import { normalizeImageSource } from '../creative/mediaNormalization';
 import { fetchWithAuth } from '../lib/apiUtils';
 import { ImageLightboxViewer, type LightboxImageItem } from './ImageLightboxViewer';
 
@@ -34,6 +35,7 @@ export const GeneratedImageGallery: React.FC<GeneratedImageGalleryProps> = ({
   const [cardStatus, setCardStatus] = useState<
     Record<string, { ok: boolean; message: string; fallbackUrl?: string; filename?: string }>
   >({});
+  const [loadStates, setLoadStates] = useState<Record<string, 'loading' | 'loaded' | 'error'>>({});
 
   if (!images || images.length === 0) return null;
 
@@ -93,6 +95,10 @@ export const GeneratedImageGallery: React.FC<GeneratedImageGalleryProps> = ({
 
       <div className={`grid ${gridClass} gap-3`}>
         {images.map((item, idx) => {
+          const itemKey = item.id || `img_${idx}`;
+          const normalized = normalizeImageSource({ url: item.url, mimeType: item.mimeType });
+          const resolvedUrl = normalized.valid ? normalized.src : item.url;
+          const loadState = loadStates[itemKey] || (normalized.valid ? 'loading' : 'error');
           const ext = (
             item.format ||
             (item.mimeType === 'image/svg+xml'
@@ -110,7 +116,7 @@ export const GeneratedImageGallery: React.FC<GeneratedImageGalleryProps> = ({
 
           return (
             <div
-              key={item.id || idx}
+              key={itemKey}
               className={`group rounded-2xl overflow-hidden border bg-[#06091e] transition-all flex flex-col ${
                 isSelected
                   ? 'border-cyan-400 ring-1 ring-cyan-400/40'
@@ -130,12 +136,28 @@ export const GeneratedImageGallery: React.FC<GeneratedImageGalleryProps> = ({
                 }`}
                 title="Click to open large lightbox viewer"
               >
-                <img
-                  src={item.url}
-                  alt={item.label || item.prompt}
-                  loading="lazy"
-                  className="max-w-full max-h-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
-                />
+                {loadState === 'error' ? (
+                  <div className="flex flex-col items-center justify-center gap-2 p-6 text-center text-rose-300">
+                    <AlertCircle className="w-6 h-6 text-rose-400" />
+                    <span className="text-xs font-semibold">Image failed to load in browser</span>
+                    <span className="text-[10px] text-slate-400 max-w-xs">
+                      The image payload could not be decoded cleanly. Try regenerating or opening raw source.
+                    </span>
+                  </div>
+                ) : (
+                  <img
+                    src={resolvedUrl}
+                    alt={item.label || item.prompt}
+                    loading="lazy"
+                    onLoad={() =>
+                      setLoadStates((prev) => ({ ...prev, [itemKey]: 'loaded' }))
+                    }
+                    onError={() =>
+                      setLoadStates((prev) => ({ ...prev, [itemKey]: 'error' }))
+                    }
+                    className="max-w-full max-h-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
+                  />
+                )}
                 <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-lg bg-black/80 border border-white/15 text-[10px] font-mono font-bold text-cyan-200 backdrop-blur-sm">
                   {item.label || `Option ${idx + 1}`}
                 </span>
@@ -165,8 +187,8 @@ export const GeneratedImageGallery: React.FC<GeneratedImageGalleryProps> = ({
 
                     <button
                       type="button"
-                      disabled={downloadingId === item.id}
-                      onClick={(e) => handleDownloadSingle(item, idx, e)}
+                      disabled={downloadingId === item.id || (loadState === 'error' && !item.downloadUrl)}
+                      onClick={(e) => handleDownloadSingle({ ...item, url: resolvedUrl }, idx, e)}
                       className="px-2.5 py-1.5 rounded-lg bg-cyan-400 hover:bg-cyan-300 disabled:opacity-60 text-slate-950 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition"
                       title={`Download ${ext}`}
                     >

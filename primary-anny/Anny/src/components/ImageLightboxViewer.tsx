@@ -162,6 +162,8 @@ export const ImageLightboxViewer: React.FC<ImageLightboxViewerProps> = ({
   const [downloadFeedback, setDownloadFeedback] = useState<PreparedImageDownload | null>(null);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  const [imageLoadError, setImageLoadError] = useState(false);
+  const [originalLoadError, setOriginalLoadError] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const touchStartXRef = useRef<number | null>(null);
 
@@ -176,10 +178,18 @@ export const ImageLightboxViewer: React.FC<ImageLightboxViewerProps> = ({
       );
       setDownloadFeedback(null);
       setNaturalSize(null);
+      setImageLoadError(false);
+      setOriginalLoadError(false);
     }
   }, [isOpen, initialIndex, images.length]);
 
   const current = images[viewerState.currentIndex] || images[0];
+
+  useEffect(() => {
+    setImageLoadError(false);
+    setOriginalLoadError(false);
+    setNaturalSize(null);
+  }, [viewerState.currentIndex, current?.url]);
 
   const handleClose = useCallback(() => {
     if (typeof document !== 'undefined' && document.fullscreenElement) {
@@ -478,11 +488,20 @@ export const ImageLightboxViewer: React.FC<ImageLightboxViewerProps> = ({
                 </button>
               </div>
               <div className="flex items-center justify-center bg-black rounded-xl overflow-hidden min-h-[260px] max-h-[68vh]">
-                <img
-                  src={current.originalImageUrl}
-                  alt="Original image"
-                  className="max-w-full max-h-[68vh] object-contain"
-                />
+                {originalLoadError ? (
+                  <div className="flex flex-col items-center justify-center gap-2 p-6 text-rose-300 text-xs text-center">
+                    <AlertCircle className="w-6 h-6 text-rose-400" />
+                    <span>Original image failed to load in browser.</span>
+                  </div>
+                ) : (
+                  <img
+                    src={current.originalImageUrl}
+                    alt="Original image"
+                    onLoad={() => setOriginalLoadError(false)}
+                    onError={() => setOriginalLoadError(true)}
+                    className="max-w-full max-h-[68vh] object-contain"
+                  />
+                )}
               </div>
             </div>
             <div className="rounded-2xl border border-cyan-400/35 bg-[#070b1a] p-3 flex flex-col gap-2">
@@ -499,11 +518,20 @@ export const ImageLightboxViewer: React.FC<ImageLightboxViewerProps> = ({
                 </button>
               </div>
               <div className="flex items-center justify-center bg-black rounded-xl overflow-hidden min-h-[260px] max-h-[68vh]">
-                <img
-                  src={current.url}
-                  alt={current.prompt}
-                  className="max-w-full max-h-[68vh] object-contain"
-                />
+                {imageLoadError ? (
+                  <div className="flex flex-col items-center justify-center gap-2 p-6 text-rose-300 text-xs text-center">
+                    <AlertCircle className="w-6 h-6 text-rose-400" />
+                    <span>Revised image failed to load in browser.</span>
+                  </div>
+                ) : (
+                  <img
+                    src={current.url}
+                    alt={current.prompt}
+                    onLoad={() => setImageLoadError(false)}
+                    onError={() => setImageLoadError(true)}
+                    className="max-w-full max-h-[68vh] object-contain"
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -512,25 +540,37 @@ export const ImageLightboxViewer: React.FC<ImageLightboxViewerProps> = ({
             className="flex items-center justify-center max-w-full max-h-full"
             onClick={(e) => e.stopPropagation()}
           >
-            <img
-              src={current.url}
-              alt={current.prompt}
-              onLoad={(e) => {
-                const el = e.currentTarget;
-                if (el.naturalWidth && el.naturalHeight) {
-                  setNaturalSize({ width: el.naturalWidth, height: el.naturalHeight });
-                }
-              }}
-              style={{
-                transform: `scale(${viewerState.zoom})`,
-                transformOrigin: 'center center',
-              }}
-              className={`rounded-xl shadow-2xl transition-transform duration-150 object-contain ${
-                viewerState.fitMode === 'fit'
-                  ? 'max-w-[92vw] max-h-[74vh]'
-                  : 'max-w-none max-h-none'
-              }`}
-            />
+            {imageLoadError ? (
+              <div className="rounded-2xl border border-rose-500/40 bg-[#0b0f22] p-8 flex flex-col items-center justify-center gap-2 text-center text-rose-200 max-w-md">
+                <AlertCircle className="w-8 h-8 text-rose-400" />
+                <span className="text-sm font-bold">Image failed to render in viewer</span>
+                <span className="text-xs text-slate-400">
+                  The browser could not decode this image payload. Use Download to inspect or regenerate the asset.
+                </span>
+              </div>
+            ) : (
+              <img
+                src={current.url}
+                alt={current.prompt}
+                onLoad={(e) => {
+                  setImageLoadError(false);
+                  const el = e.currentTarget;
+                  if (el.naturalWidth && el.naturalHeight) {
+                    setNaturalSize({ width: el.naturalWidth, height: el.naturalHeight });
+                  }
+                }}
+                onError={() => setImageLoadError(true)}
+                style={{
+                  transform: `scale(${viewerState.zoom})`,
+                  transformOrigin: 'center center',
+                }}
+                className={`rounded-xl shadow-2xl transition-transform duration-150 object-contain ${
+                  viewerState.fitMode === 'fit'
+                    ? 'max-w-[92vw] max-h-[74vh]'
+                    : 'max-w-none max-h-none'
+                }`}
+              />
+            )}
           </div>
         )}
       </div>

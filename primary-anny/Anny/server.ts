@@ -2131,26 +2131,70 @@ async function startServer() {
     return res.send(Buffer.from(media.bytes));
   });
 
-  app.post("/api/creative/audio", requireAuth(), async (req, res) => {
+  app.post("/api/creative/audio", requireAuth(), async (req: AuthenticatedRequest, res) => {
     const body = req.body || {};
     const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
     if (!prompt || prompt.length > 2000) {
       return res.status(400).json({ success: false, error: 'A valid music/audio prompt is required.' });
     }
+    const rawType = typeof body.type === 'string' ? body.type.trim().toUpperCase() : 'MUSIC';
+    const audioType =
+      rawType === 'INSTRUMENTAL' || rawType === 'BEAT' || rawType === 'SFX' || rawType === 'VOICE'
+        ? rawType
+        : 'MUSIC';
     const execPolicy = providerRegistryService.getExecutionPolicy();
-    if (execPolicy.mode === 'OFFLINE_ONLY') {
+    if (execPolicy.mode === 'OFFLINE_ONLY' && audioType === 'VOICE') {
       return res.status(503).json({
         success: false,
         provider: 'offline',
         model: 'none',
-        error: 'Cloud audio generation is disabled while ANNY is in OFFLINE_ONLY mode.',
+        errorCode: 'AUDIO_RENDERER_NOT_CONFIGURED',
+        error: 'Cloud Voice TTS generation is disabled while ANNY is in OFFLINE_ONLY mode.',
       });
     }
+    const ownerUserId = req.authUser?.uid || req.user?.userId || req.user?.id || 'anonymous';
+    const ownerOrgId = req.authUser?.companyId || 'personal';
+    const requestedMode =
+      execPolicy.mode === 'OFFLINE_ONLY'
+        ? 'offline'
+        : body.mode === 'cloud' || body.mode === 'offline' || body.mode === 'auto'
+          ? body.mode
+          : 'auto';
+
     const result = await creativeGenerationService.generateCreativeAudio({
       prompt,
+      type: audioType,
       fullTrack: Boolean(body.fullTrack),
+      mode: requestedMode,
+      voiceName: typeof body.voiceName === 'string' ? body.voiceName.trim() : undefined,
+      ownerUserId,
+      ownerOrgId,
     });
     return res.status(result.success ? 200 : 503).json(result);
+  });
+
+  app.get("/api/creative/audio/asset/:assetKey", requireAuth(), (req: AuthenticatedRequest, res) => {
+    const assetKey = String(req.params.assetKey || '').trim();
+    if (!/^[a-zA-Z0-9_-]{4,128}$/.test(assetKey)) {
+      return res.status(400).json({ success: false, error: 'Invalid audio asset identifier.' });
+    }
+    const requester = {
+      userId: req.authUser?.uid || req.user?.userId || req.user?.id,
+      orgId: req.authUser?.companyId || 'personal',
+      isAdmin: req.authUser?.isAdmin === true || req.user?.isAdmin === true,
+    };
+    const asset = creativeGenerationService.getAudioAsset(assetKey, requester);
+    if (!asset) {
+      return res.status(404).json({ success: false, error: 'Audio asset not found or access denied.' });
+    }
+    res.setHeader('Content-Type', asset.mimeType);
+    res.setHeader('Content-Length', String(asset.bytes.byteLength));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    const safeFilename = asset.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const disposition = req.query.download === '1' ? 'attachment' : 'inline';
+    res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+    return res.status(200).send(Buffer.from(asset.bytes));
   });
 
   app.post("/api/router/image", requireAuth(), async (req, res) => {
@@ -2169,6 +2213,7 @@ async function startServer() {
       if (!result.success) {
         return res.status(503).json({
           error: result.error || 'IMAGE_PROVIDER_UNAVAILABLE',
+          errorCode: result.errorCode || 'IMAGE_GENERATION_FAILED',
           recoveryGuidance: result.recoveryGuidance,
           classification: result.classification,
         });
@@ -2181,6 +2226,7 @@ async function startServer() {
     } catch (err: any) {
       return res.status(503).json({
         error: 'IMAGE_PROVIDER_UNAVAILABLE',
+        errorCode: 'IMAGE_GENERATION_FAILED',
         message: err?.message || 'No configured image generation provider succeeded.'
       });
     }
@@ -2948,15 +2994,43 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
       if (groqKey) {
         try {
           console.log(`[Neural Router] Trying Groq fallback with llama-3.3-70b-versatile...`);
+          const groqFallbackMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+            { role: "system", content: enhancedSystemPrompt }
+          ];
+          if (Array.isArray(history)) {
+            for (const h of history) {
+              const role = h.role === 'model' || h.role === 'assistant' ? 'assistant' : 'user';
+              const text = h.parts?.[0]?.text || h.content || '';
+              if (typeof text === 'string' && text.trim()) {
+                if (groqFallbackMessages.length > 1 && groqFallbackMessages[groqFallbackMessages.length - 1].role === role) {
+                  groqFallbackMessages[groqFallbackMessages.length - 1].content += '\n' + text;
+                } else {
+                  groqFallbackMessages.push({ role, content: text });
+                }
+              }
+            }
+          }
+          if (groqFallbackMessages.length > 1 && groqFallbackMessages[groqFallbackMessages.length - 1].role === 'user') {
+            groqFallbackMessages.pop();
+          }
+          const hasInlineImages = Array.isArray(userParts) && userParts.some((p: any) => Boolean(p?.inlineData));
+          const finalPromptText = hasInlineImages
+            ? `[Note: Attached images cannot be inspected directly by Groq text-only fallback.]\n${String(prompt || '')}`
+            : String(prompt || '');
+          groqFallbackMessages.push({ role: "user", content: finalPromptText });
+
           const groqRes = await axios.post("https://api.groq.com/openai/v1/chat/completions", {
             model: "llama-3.3-70b-versatile",
-            messages: [{ role: "system", content: enhancedSystemPrompt }, { role: "user", content: prompt }],
+            messages: groqFallbackMessages,
             temperature: temperature || 0.7
           }, {
             headers: { Authorization: `Bearer ${groqKey}` },
             timeout: 20000
           });
-          let content = groqRes.data.choices[0].message.content;
+          let content = groqRes.data?.choices?.[0]?.message?.content;
+          if (typeof content !== 'string' || !content.trim()) {
+            throw new Error('Groq fallback returned an empty completion.');
+          }
           content = content.replace(/\b(Llama|Meta|Groq|OpenAI|GPT|Mistral|Zephyr|Phi|Google|Gemini)\b/gi, "ANNY");
           return { response: content, source: "groq-fallback", model: "llama-3.3-70b-versatile" };
         } catch (groqErr: any) {
@@ -3036,7 +3110,10 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
             timeout: 25000
           });
           
-          let content = response.data.choices[0].message.content;
+          let content = response.data?.choices?.[0]?.message?.content;
+          if (typeof content !== 'string' || !content.trim()) {
+            throw new Error('Groq returned an empty completion.');
+          }
           content = content.replace(/\b(Llama|Meta|Groq|OpenAI|GPT|Mistral|Zephyr|Phi|Google|Gemini)\b/gi, "ANNY");
 
           return res.json({ response: formatNaturalConversation(content), source: "groq", model: groqModel });

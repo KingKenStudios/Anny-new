@@ -43,9 +43,32 @@ export interface AnnyProps {
   initialPrompt?: string;
 }
 
+const VIEW_TO_SUBTAB_MAP: Record<string, string> = {
+  settings: 'settings',
+  agents: 'ai-agents',
+  cybersecurity: 'watchdog',
+  watchdog: 'watchdog',
+  'media-arch-studio': 'media-arch-studio',
+  studios: 'creative-studio',
+  'creative-studio': 'creative-studio',
+  models: 'models',
+  dashboard: 'engineering-safety',
+  database: 'projects',
+  projects: 'projects',
+  deployment: 'integrations',
+  integrations: 'integrations',
+  terminal: 'tools',
+  tools: 'tools',
+  code_editor: 'chats',
+  workspace: 'chats',
+  home: 'chats',
+  main: 'chats',
+};
+
 export default function Anny(props: AnnyProps) {
   const userEmail = props.user?.email || 'admin@anny.ai';
   const userName = props.user?.displayName || 'ANNY Operative';
+  const mappedSubTab = props.view ? (VIEW_TO_SUBTAB_MAP[props.view] || 'chats') : 'anny';
 
   return (
     <div className="w-full h-full bg-[#030511] text-white overflow-hidden flex flex-col">
@@ -54,6 +77,7 @@ export default function Anny(props: AnnyProps) {
         userId={props.user?.uid}
         userEmail={userEmail}
         userName={userName}
+        activeSubTab={mappedSubTab}
         chatHistory={props.chatHistory}
         setCurrentChatId={props.setCurrentChatId}
         currentChatId={props.currentChatId}
