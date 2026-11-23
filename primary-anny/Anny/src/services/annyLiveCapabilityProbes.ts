@@ -8,6 +8,7 @@ import { databaseMonitor } from './databaseMonitor';
 import { providerRegistryService } from './providerRegistryService';
 import { minioStorageService } from './minioStorage';
 import { rabbitWorkerService } from './rabbitWorkerService';
+import { qdrantPlatform } from './qdrantPlatform';
 import type { OllamaDiscoveryResult } from './ollamaService';
 
 function statusResult(status: string, latencyMs: number, detail: string) {
@@ -82,7 +83,11 @@ export async function runAnnyLiveCapabilityProbes(
       : rabbit.error || `RabbitMQ status: ${rabbit.status}`
   }));
 
-  // QdrantPlatform currently reports SIMULATED even when a URL is configured.
-  // Do not promote it to healthy until a real remote health endpoint is implemented.
-  await capabilityManager.verify('service_qdrant');
+  const qdrant = await qdrantPlatform.checkHealth();
+  await capabilityManager.verify('service_qdrant', () => ({
+    healthy: qdrant.status === 'CONNECTED',
+    connected: qdrant.status === 'CONNECTED',
+    latencyMs: qdrant.latencyMs,
+    detail: qdrant.detail
+  }));
 }
