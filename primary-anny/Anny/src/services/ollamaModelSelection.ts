@@ -34,3 +34,9 @@ export function resolveOllamaModel(
 export function isInstalledOllamaModel(modelName: string, discoveredModels: string[]): boolean {
   return Array.isArray(discoveredModels) && discoveredModels.includes(modelName);
 }
+
+export function isOllamaVisionModel(modelName: string): boolean {
+  const name = String(modelName || '').toLowerCase();
+  return name.includes('vision') || name.includes('llava') ||
+    name.includes('minicpm-v') || name.includes('moondream') || name.includes('-vl');
+}
