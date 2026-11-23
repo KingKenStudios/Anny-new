@@ -6,6 +6,7 @@
  * full offline & self-hosted durability across restarts.
  */
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
