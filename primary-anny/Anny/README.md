@@ -97,3 +97,15 @@ Preview capability credentials are derived with HMAC-SHA-256 from the preview id
 ### Project deletion durability
 
 The local project store now records deletion tombstones in `.anny-data/projects.json`. A deleted project ID is excluded when the store is reloaded, preventing an old cached project snapshot from reappearing after a restart. When PostgreSQL is configured, its successful reads remain authoritative; if a PostgreSQL delete cannot be confirmed, the API reports the failure while the local tombstone prevents an offline cache from exposing the stale copy.
+
+
+## Verified offline Ollama inference
+
+ANNY discovers the active Ollama endpoint from `OLLAMA_BASE_URL` and local loopback candidates, verifies installed models, and runs a real inference probe before reporting the local provider as healthy. Chat requests use the endpoint that was actually discovered rather than assuming the environment URL is populated.
+
+- If no model is explicitly selected, ANNY chooses the first installed local model.
+- Explicit model names must match an installed model; an unavailable tag is not silently replaced by a different model.
+- Local chat supports text, image payloads, JSON response format, and Ollama function-tool declarations.
+- CPU-based local inference has a longer default request timeout to accommodate first-load model initialization.
+- Explicitly selecting Ollama or enabling offline-only mode never silently falls back to a cloud provider.
+- A local inference failure invalidates the cached discovery so the next request can re-probe the endpoint.
