@@ -65,110 +65,75 @@ export interface IPreviewProvider {
  * Local Node.js Runtime Provider
  * Executes Node/Vite applications directly within the Cloud Run container runtime on port 3000.
  */
+/**
+ * Local Node runtime placeholder. Node exists in this host, but this adapter
+ * does not mount a VFS project, spawn a child process, or bind a port.
+ */
 export class LocalNodeRuntimeProvider implements IRuntimeProvider {
   public readonly id = 'provider_local_node';
-  public readonly name = 'Local Node.js Runtime';
+  public readonly name = 'Local Node.js Runtime (Not Implemented)';
   public readonly version = '20.11.0';
-  private logs: Map<string, string[]> = new Map();
 
   public async isAvailable(): Promise<boolean> {
-    // Verified local node process environment
-    return typeof process !== 'undefined' && true;
+    return false;
   }
 
   public async execute(options: ExecutionOptions): Promise<ExecutionResult> {
-    const projectLogs: string[] = [
-      `[${new Date().toLocaleTimeString()}] [LOCAL NODE] Spawning Node.js process for project ${options.projectId}`,
-      `[${new Date().toLocaleTimeString()}] [LOCAL NODE] Host: 0.0.0.0 | Port: ${options.port || 3000}`,
-      `[${new Date().toLocaleTimeString()}] [LOCAL NODE] Binding Vite dev server middleware...`,
-      `[${new Date().toLocaleTimeString()}] [LOCAL NODE] Server listening & ready for requests.`
-    ];
-
-    this.logs.set(options.projectId, projectLogs);
-
-    // Update capability manager
-    capabilityManager.updateStatus(this.id, {
-      status: 'active',
-      isConnected: true,
-      lastVerified: new Date().toLocaleTimeString()
-    });
-
     return {
-      success: true,
+      success: false,
       providerId: this.id,
       providerName: this.name,
-      processId: `node_pid_${Math.floor(Math.random() * 89999 + 10000)}`,
-      port: options.port || 3000,
-      logs: projectLogs,
-      timestamp: new Date().toLocaleTimeString()
+      logs: [
+        `[LOCAL NODE] Runtime execution for project ${options.projectId} is not implemented.`,
+        '[LOCAL NODE] No process was spawned and no port was opened.'
+      ],
+      errorMessage: 'REAL_RUNTIME_UNAVAILABLE: This adapter is a placeholder; it does not launch project processes.',
+      timestamp: new Date().toISOString()
     };
   }
 
-  public async stop(projectId: string): Promise<boolean> {
-    const logs = this.logs.get(projectId) || [];
-    logs.push(`[${new Date().toLocaleTimeString()}] [LOCAL NODE] Gracefully terminated process.`);
-    this.logs.set(projectId, logs);
-    return true;
+  public async stop(_projectId: string): Promise<boolean> {
+    return false;
   }
 
-  public getLogs(projectId: string): string[] {
-    return this.logs.get(projectId) || [];
+  public getLogs(_projectId: string): string[] {
+    return [];
   }
 }
 
 /**
- * Sandpack Browser Runtime Provider
- * In-browser transpilation and execution fallback.
+ * Browser runtime placeholder. This is not a WebContainer/Sandpack compiler;
+ * actual isolated VFS preview is handled by the standalone preview runner.
  */
 export class SandpackRuntimeProvider implements IRuntimeProvider {
   public readonly id = 'provider_sandpack';
-  public readonly name = 'Sandpack Browser Engine';
+  public readonly name = 'Browser Runtime (Not Implemented)';
   public readonly version = '2.6.0';
-  private logs: Map<string, string[]> = new Map();
 
   public async isAvailable(): Promise<boolean> {
-    return typeof window !== 'undefined';
+    return false;
   }
 
   public async execute(options: ExecutionOptions): Promise<ExecutionResult> {
-    const projectLogs: string[] = [
-      `[${new Date().toLocaleTimeString()}] [SANDPACK] Initializing browser-side WebContainer bundler...`,
-      `[${new Date().toLocaleTimeString()}] [SANDPACK] Mounting virtual files into browser memory...`,
-      `[${new Date().toLocaleTimeString()}] [SANDPACK] In-browser React/Vite transpilation complete.`
-    ];
-
-    this.logs.set(options.projectId, projectLogs);
-
-    capabilityManager.updateStatus(this.id, {
-      status: 'active',
-      isConnected: true,
-      lastVerified: new Date().toLocaleTimeString()
-    });
-
     return {
-      success: true,
+      success: false,
       providerId: this.id,
       providerName: this.name,
-      processId: `sandpack_worker_${Date.now()}`,
-      port: 3000,
-      logs: projectLogs,
-      timestamp: new Date().toLocaleTimeString()
+      logs: [`[BROWSER RUNTIME] No real WebContainer/Sandpack runtime is attached for ${options.projectId}.`],
+      errorMessage: 'REAL_RUNTIME_UNAVAILABLE: Use the separate isolated VFS preview pipeline; this adapter does not bundle or execute projects.',
+      timestamp: new Date().toISOString()
     };
   }
 
-  public async stop(projectId: string): Promise<boolean> {
-    return true;
+  public async stop(_projectId: string): Promise<boolean> {
+    return false;
   }
 
-  public getLogs(projectId: string): string[] {
-    return this.logs.get(projectId) || [];
+  public getLogs(_projectId: string): string[] {
+    return [];
   }
 }
 
-/**
- * Docker Runtime Provider
- * Containerized execution environment.
- */
 export class DockerRuntimeProvider implements IRuntimeProvider {
   public readonly id = 'provider_docker';
   public readonly name = 'Docker Container Engine';
