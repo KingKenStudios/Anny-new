@@ -7,7 +7,7 @@
 
 import { VirtualFileSystem, VFSFileNode } from './virtualFileSystem';
 import { WorkspaceManager, CompilationResult } from './workspaceManager';
-import { runtimePlatform, ExecutionLogEntry } from './runtimeExecutionPlatform';
+import { ExecutionLogEntry } from './runtimeExecutionPlatform';
 import { runtimeBridge } from './runtimeBridge';
 import { CanonicalExecutionContext } from './CanonicalExecutionContext';
 import { vfsTransactionManager } from './vfsTransactionManager';
@@ -69,6 +69,20 @@ export interface SystemHealthReport {
   limitations: string[];
   lastTestTime: string;
   repairCount: number;
+}
+
+export function classifyEABPVerification(
+  structureCheckPassed: boolean,
+  runtimeSucceeded: boolean,
+  previewVerified: boolean
+): Pick<EABPBuildResult, 'testPassRatePct' | 'healthScore' | 'verificationLevel' | 'runtimeStatus' | 'deploymentStatus'> {
+  return {
+    testPassRatePct: null,
+    healthScore: null,
+    verificationLevel: structureCheckPassed ? 'STRUCTURE_CHECK_ONLY' : 'FAILED',
+    runtimeStatus: runtimeSucceeded && previewVerified ? 'VERIFIED' : runtimeSucceeded ? 'SIMULATED' : 'UNAVAILABLE',
+    deploymentStatus: 'PLAN_ONLY'
+  };
 }
 
 export interface EABPBuildResult {
@@ -297,6 +311,7 @@ export class EnterpriseAutonomousBuilderPlatform {
     };
 
     systemBus.publish('BuildStarted', 'EnterpriseAutonomousBuilder', { prompt, stage: 'Intent' });
+    let activeTransactionId: string | undefined;
 
     const emitStage = (stage: string, msg: string) => {
       onProgress(stage, msg);
@@ -326,7 +341,10 @@ export class EnterpriseAutonomousBuilderPlatform {
       const wsManager = WorkspaceManager.getInstance();
       const projectId = `eabp_${Date.now()}`;
       const projectName = prompt.length > 25 ? prompt.substring(0, 25) + '...' : prompt;
-      const vfs = wsManager.switchWorkspace(projectId, projectName, techStack.frontend.toLowerCase());
+      const organizationId = context?.organizationId || 'global';
+      const sessionId = context?.sessionId || `eabp_session_${projectId}`;
+      const vfs = wsManager.switchWorkspace(projectId, projectName, organizationId, 'fullstack');
+      activeTransactionId = await vfsTransactionManager.begin(projectId, sessionId, organizationId);
 
       // Delegate source generation to the same canonical real-project synthesizer
       // used by Normal ANNY. This prevents the enterprise builder from creating a
@@ -337,8 +355,7 @@ export class EnterpriseAutonomousBuilderPlatform {
         updateExisting: false
       });
       for (const [filePath, content] of Object.entries(synthesis.files)) {
-        if (context && context.transactionId) vfsTransactionManager.writeFile(context.transactionId, filePath, content);
-        else vfsTransactionManager.initializeProjectFile(filePath, content);
+        vfsTransactionManager.writeFile(activeTransactionId, filePath, content);
       }
       const allFiles = vfs.getAllFiles();
 
@@ -346,17 +363,17 @@ export class EnterpriseAutonomousBuilderPlatform {
       nodeFiles.status = 'completed';
 
       // Stage 5: Compilation AST & Syntax Validation
-      emitStage('Compilation', 'Running AST syntax parser and TypeScript transpilation check...');
+      emitStage('Structure Check', 'Running lightweight bracket-structure validation (not a compiler or test suite)...');
       let compilation = wsManager.compileWorkspace();
-      const nodeComp = addGraphNode('Compilation', 'AST Syntax Validation', compilation.success ? `Compilation passed in ${compilation.buildTimeMs}ms` : `Found ${compilation.errors.length} syntax issues`);
+      const nodeComp = addGraphNode('Compilation', 'Lightweight Structure Check', compilation.success ? `Structure check passed in ${compilation.buildTimeMs}ms; no compiler/tests executed.` : `Found ${compilation.errors.length} structure issue(s).`);
 
       // Stage 6: Autonomous Repair Loop
       if (!compilation.success) {
         nodeComp.status = 'failed';
         this.notify();
 
-        emitStage('Repair', 'Triggering Autonomous Repair Engine...');
-        const nodeRepair = addGraphNode('Repair', 'Self-Healing Repair Loop', 'Fixing syntax errors automatically...');
+        emitStage('Repair', 'Attempting a limited bracket-structure repair heuristic...');
+        const nodeRepair = addGraphNode('Repair', 'Structure Repair Heuristic', 'Only simple bracket issues are considered; this is not a general self-healing engine.');
 
         // Auto-repair files
         compilation.errors.forEach(err => {
@@ -364,54 +381,48 @@ export class EnterpriseAutonomousBuilderPlatform {
             let content = vfs.readFile(err.file);
             if (err.message.includes('Unclosed') || err.message.includes('Unmatched')) {
               content += '\n// Auto-repair patch applied by EABP\n';
-              if (context && context.transactionId) {
-                vfsTransactionManager.writeFile(context.transactionId, err.file, content);
-              } else {
-                vfsTransactionManager.initializeProjectFile(err.file, content);
-              }
+              vfsTransactionManager.writeFile(activeTransactionId, err.file, content);
             }
           }
         });
 
         compilation = wsManager.compileWorkspace();
         nodeRepair.status = compilation.success ? 'completed' : 'failed';
-        nodeRepair.details = compilation.success ? 'All syntax errors repaired successfully.' : 'Unresolved syntax issues remaining.';
+        nodeRepair.details = compilation.success ? 'Lightweight bracket-structure check passed after the limited repair heuristic; no compiler/tests executed.' : 'Structure issues remain; no general repair was performed.';
         this.notify();
       } else {
         nodeComp.status = 'completed';
         this.notify();
       }
 
-      // Stage 7: Runtime Launch & Preview
-      emitStage('Preview', 'Initializing Runtime Bridge & selecting runtime provider...');
-      runtimePlatform.startProject(projectId, projectName, vfs);
+      // Stage 7: Runtime availability & preview route
+      emitStage('Runtime', 'Checking for an actual runtime provider and selecting a preview route...');
       const bridgeExec = await runtimeBridge.executeProject({
         projectId,
         port: 3000
       });
       const previewConfig = runtimeBridge.selectPreviewProvider(techStack.frontend.toLowerCase(), projectId, 3000);
+      const runtimeVerified = bridgeExec.success && previewConfig.isLive;
 
       const nodeRuntime = addGraphNode(
         'Preview',
         `Runtime Provider: ${bridgeExec.providerName}`,
-        bridgeExec.success
-          ? `Dev Server active via ${previewConfig.providerName} at ${previewConfig.activeUrl}`
-          : `Execution issue: ${bridgeExec.errorMessage}`
+        runtimeVerified
+          ? `Runtime verified via ${previewConfig.providerName} at ${previewConfig.activeUrl}`
+          : bridgeExec.success
+            ? `Provider returned success but preview is not independently verified. Route: ${previewConfig.providerName}; ${previewConfig.activeUrl || 'no live URL'}`
+            : `Runtime unavailable: ${bridgeExec.errorMessage || 'No verified runtime provider'}; preview route ${previewConfig.providerName} is unverified.``
       );
-      nodeRuntime.status = bridgeExec.success ? 'completed' : 'failed';
+      nodeRuntime.status = runtimeVerified ? 'completed' : 'failed';
       this.notify();
 
       // Stage 8: Deployment Spec Generation
-      emitStage('Deployment', 'Generating Docker Compose & Cloud Run deployment manifests...');
-      const nodeDeploy = addGraphNode('Deployment', 'Container & Cloud Spec Generation', 'Dockerfile & Cloud Run YAML generated and registered.');
+      emitStage('Deployment Planning', 'Selecting a deployment target; no deployment manifests or cloud resources will be created...');
+      const nodeDeploy = addGraphNode('Deployment', 'Deployment Plan Only', `Target selected: ${techStack.containerization}. Manifests were not generated and nothing was deployed.`);
       nodeDeploy.status = 'completed';
       this.notify();
 
-      const errorsCount = compilation?.errors?.length || 0;
-      const warningsCount = compilation?.warnings?.length || 0;
-      const testPassRatePct = compilation.success ? 100 : Math.max(0, 100 - errorsCount * 20);
-      const healthScore = Math.max(0, 100 - (errorsCount * 15 + warningsCount * 5));
-
+      const verification = classifyEABPVerification(compilation.success, bridgeExec.success, runtimeVerified);
       const buildResult: EABPBuildResult = {
         projectId,
         projectName,
@@ -421,16 +432,29 @@ export class EnterpriseAutonomousBuilderPlatform {
         graph: this.currentGraph,
         generatedFilesCount: allFiles.length,
         compilationResult: compilation,
-        testPassRatePct,
-        healthScore,
+        ...verification,
         deploymentTarget: techStack.containerization,
-        liveUrl: bridgeExec.success ? (previewConfig.activeUrl || '') : ''
+        liveUrl: runtimeVerified ? (previewConfig.activeUrl || '') : ''
       };
 
-      onProgress('Completed', 'Enterprise Autonomous Builder Pipeline finished successfully!');
-      systemBus.publish('BuildCompleted', 'EnterpriseAutonomousBuilder', { projectId, fileCount: allFiles.length });
+      await vfsTransactionManager.commit(activeTransactionId);
+      activeTransactionId = undefined;
+      onProgress('Completed', 'Project source synthesis and lightweight structure validation completed. Tests, real runtime, and deployment remain unverified.');
+      systemBus.publish('BuildCompleted', 'EnterpriseAutonomousBuilder', {
+        projectId,
+        fileCount: allFiles.length,
+        verificationLevel: buildResult.verificationLevel,
+        runtimeStatus: buildResult.runtimeStatus,
+        testsExecuted: false,
+        deploymentStatus: buildResult.deploymentStatus
+      });
       return buildResult;
     } catch (err: any) {
+      if (activeTransactionId) {
+        try { await vfsTransactionManager.rollback(activeTransactionId); } catch (rollbackError) {
+          console.error('[EABP] Transaction rollback failed:', rollbackError);
+        }
+      }
       this.currentGraph.forEach(node => {
         if (node.status === 'in_progress') node.status = 'failed';
       });
