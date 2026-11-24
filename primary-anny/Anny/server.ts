@@ -3113,7 +3113,8 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
   });
 
   app.get("/api/modly/status/:id", requireAuth(), async (req, res) => {
-    const { id } = req.params;
+    const id = normalizeExpressRouteParam(req.params.id);
+    if (!id) return res.status(400).json({ error: "JOB_ID_REQUIRED" });
     const engine = (req.query.engine as string) || "local";
     const modlyKey = process.env.MODLY_API_KEY || process.env.MESHY_API_KEY;
 
