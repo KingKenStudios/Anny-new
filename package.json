@@ -15,7 +15,7 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test primary-anny/Anny/src/services/*.test.ts primary-anny/Anny/src/vision/*.test.ts primary-anny/Anny/src/creative/*.test.ts",
+    "test": "tsx --test primary-anny/Anny/src/services/*.test.ts primary-anny/Anny/src/vision/*.test.ts primary-anny/Anny/src/creative/*.test.ts primary-anny/Anny/src/core/*.test.ts",
     "test:creative": "tsx --test primary-anny/Anny/src/creative/*.test.ts",
     "test:vision": "tsx --test primary-anny/Anny/src/vision/*.test.ts",
     "test:storage": "tsx --test primary-anny/Anny/src/services/minioStorage.test.ts",
