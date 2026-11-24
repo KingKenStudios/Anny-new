@@ -42,7 +42,7 @@ function keywords(text: string): string[] {
 
 export class AnnyLearningMemory {
   private static instance: AnnyLearningMemory;
-  private constructor() {}
+  constructor(private readonly resolvePostgres: typeof getServerPostgresPlatform = getServerPostgresPlatform) {}
 
   static getInstance(): AnnyLearningMemory {
     if (!this.instance) this.instance = new AnnyLearningMemory();
@@ -50,12 +50,12 @@ export class AnnyLearningMemory {
   }
 
   /** Record private interaction memory. Never promoted to global automatically. */
-  async recordPrivate(input: Omit<LearningRecord, 'id' | 'scope' | 'createdAt' | 'updatedAt'>): Promise<void> {
-    if (!input.ownerUserId || input.ownerUserId === 'anonymous') return;
+  async recordPrivate(input: Omit<LearningRecord, 'id' | 'scope' | 'createdAt' | 'updatedAt'>): Promise<boolean> {
+    if (!input.ownerUserId || input.ownerUserId === 'anonymous') return false;
     const content = clean(input.content);
-    if (!content) return;
-    const pg = await getServerPostgresPlatform();
-    if (!pg) return;
+    if (!content) return false;
+    const pg = await this.resolvePostgres();
+    if (!pg) return false;
     await pg.insert('memory_items', {
       owner_user_id: input.ownerUserId,
       session_id: clean(input.sessionId, 160) || 'default_session',
@@ -67,6 +67,7 @@ export class AnnyLearningMemory {
       importance: Math.max(0, Math.min(1, input.importance)),
       source: input.source
     } as any);
+    return true;
   }
 
   /** Record a de-identified global pattern. Never pass raw user text here. */
@@ -99,14 +100,8 @@ export class AnnyLearningMemory {
     const terms = keywords(prompt);
     const pg = await getServerPostgresPlatform();
     if (!pg) return [];
-    const rows = await pg.query<any>('memory_items');
-    const candidates = rows.filter((r: any) => {
-      const owner = r.owner_user_id ?? r.ownerUserId;
-      if (owner !== userId) return false;
-      const scope = r.scope ?? 'private';
-      if (scope !== 'private') return false;
-      return true;
-    });
+    // Scope is enforced in the database query itself, not after a global row scan.
+    const candidates = await pg.queryMemoryItems(userId, 'private', 500);
 
     return candidates
       .map((r: any) => {
@@ -128,9 +123,9 @@ export class AnnyLearningMemory {
     const terms = keywords(prompt);
     const pg = await getServerPostgresPlatform();
     if (!pg) return [];
-    const rows = await pg.query<any>('memory_items');
+    // Global patterns are explicitly scoped; private records are never fetched here.
+    const rows = await pg.queryMemoryItems('global', 'global', 250);
     return rows
-      .filter((r: any) => (r.scope ?? 'private') === 'global' && (r.owner_user_id ?? r.ownerUserId) === 'global')
       .map((r: any) => {
         const content = typeof r.content === 'string' ? r.content : JSON.stringify(r.content ?? '');
         const haystack = `${content} ${r.topic ?? ''}`.toLowerCase();
@@ -168,9 +163,9 @@ export class AnnyLearningMemory {
     success: boolean;
     feedback?: string;
     source?: 'chat' | 'build' | 'api' | 'feedback' | 'system';
-  }): Promise<void> {
+  }): Promise<boolean> {
     const result = `${clean(input.taskType, 120)} outcome: ${input.success ? 'successful' : 'failed'}`;
-    await this.recordPrivate({
+    const privateSaved = await this.recordPrivate({
       ownerUserId: input.userId,
       sessionId: input.sessionId,
       projectId: input.projectId,
@@ -181,10 +176,15 @@ export class AnnyLearningMemory {
       source: input.source || 'system'
     });
 
-    // Only the generic pattern crosses users; no prompt, identity, file content or private feedback.
-    await this.recordGlobalPattern(`${clean(input.taskType, 100)} execution ${input.success ? 'succeeded' : 'failed'}`, {
-      type: 'pattern', source: input.source || 'system', topic: input.taskType, importance: input.success ? 0.35 : 0.5
-    });
+    // Global learning is optional and de-identified; it must not mask a confirmed private write.
+    try {
+      await this.recordGlobalPattern(`${clean(input.taskType, 100)} execution ${input.success ? 'succeeded' : 'failed'}`, {
+        type: 'pattern', source: input.source || 'system', topic: input.taskType, importance: input.success ? 0.35 : 0.5
+      });
+    } catch (error: any) {
+      console.warn('[ANNY Learning] global pattern write skipped:', error?.message || error);
+    }
+    return privateSaved;
   }
 
   /** Record a manual rule/memory explicitly added by the user and return its stored record. */
