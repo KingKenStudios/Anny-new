@@ -6,8 +6,8 @@
  * 2. GLOBAL: de-identified behavioral/engineering patterns. Raw private prompts are never
  *    copied into the global scope. Only compact, non-sensitive patterns and outcomes are kept.
  *
- * PostgreSQL is the durable store when configured. The service is non-blocking and fails soft
- * so learning can never prevent a normal chat response.
+ * PostgreSQL is the durable store when configured. Kernel callers await write acknowledgements
+ * for truthful status reporting, while isolating persistence failures from the user response.
  */
 import { getServerPostgresPlatform } from '../services/postgresBridge';
 
@@ -79,7 +79,7 @@ export class AnnyLearningMemory {
   } = {}): Promise<void> {
     const content = clean(pattern, 500);
     if (!content) return;
-    const pg = await getServerPostgresPlatform();
+    const pg = await this.resolvePostgres();
     if (!pg) return;
     await pg.insert('memory_items', {
       owner_user_id: 'global',
@@ -98,7 +98,7 @@ export class AnnyLearningMemory {
   async retrieveUserContext(userId: string, prompt: string, projectId?: string): Promise<LearningRecord[]> {
     if (!userId || userId === 'anonymous') return [];
     const terms = keywords(prompt);
-    const pg = await getServerPostgresPlatform();
+    const pg = await this.resolvePostgres();
     if (!pg) return [];
     // Scope is enforced in the database query itself, not after a global row scan.
     const candidates = await pg.queryMemoryItems(userId, 'private', 500);
@@ -121,7 +121,7 @@ export class AnnyLearningMemory {
   /** Retrieve global de-identified patterns without exposing another user's private memory. */
   async retrieveGlobalContext(prompt: string): Promise<LearningRecord[]> {
     const terms = keywords(prompt);
-    const pg = await getServerPostgresPlatform();
+    const pg = await this.resolvePostgres();
     if (!pg) return [];
     // Global patterns are explicitly scoped; private records are never fetched here.
     const rows = await pg.queryMemoryItems('global', 'global', 250);
@@ -192,7 +192,7 @@ export class AnnyLearningMemory {
     if (!userId || userId === 'anonymous') return null;
     const cleaned = clean(content);
     if (!cleaned) return null;
-    const pg = await getServerPostgresPlatform();
+    const pg = await this.resolvePostgres();
     if (!pg) return null;
     const inserted = await pg.insert('memory_items', {
       owner_user_id: userId,
@@ -211,7 +211,7 @@ export class AnnyLearningMemory {
   /** Delete an owned private memory entry cleanly. */
   async deletePrivateMemory(userId: string, id: string): Promise<boolean> {
     if (!userId || userId === 'anonymous' || !id) return false;
-    const pg = await getServerPostgresPlatform();
+    const pg = await this.resolvePostgres();
     if (!pg) return false;
     const row = await pg.findById<any>('memory_items', id);
     if (!row) return false;
