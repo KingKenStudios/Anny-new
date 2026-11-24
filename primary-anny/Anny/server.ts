@@ -44,6 +44,7 @@ import { auditService } from './src/services/auditService.ts';
 import { rabbitWorkerService } from './src/services/rabbitWorkerService.ts';
 import { redisRateLimiter } from './src/middleware/rateLimiter.ts';
 import { validateDocumentBatch, extractSafeTextForRag, MAX_DOCUMENT_FILE_BYTES, MAX_RAG_TEXT_BYTES, validateRagSearchQuery, normalizeRagSearchLimit, sanitizeDownloadFilename } from './src/services/uploadPolicy.ts';
+import { normalizeExpressRouteParam } from './src/services/expressRouteParam.ts';
 import { databaseMonitor } from './src/services/databaseMonitor.ts';
 import { annyEcosystemService } from './src/services/annyEcosystemService.ts';
 import { akinwumiCore } from './src/core/akinwumiCore.ts';
@@ -1833,7 +1834,8 @@ async function startServer() {
     try {
       const uid = req.authUser!.uid;
       const isAdmin = req.authUser!.isAdmin;
-      const { id } = req.params;
+      const id = normalizeExpressRouteParam(req.params.id);
+      if (!id) return res.status(400).json({ success: false, error: 'SESSION_ID_REQUIRED' });
 
       const byPk = await postgresPlatform.findById<any>('conversations', id);
       const matches = byPk
@@ -2079,7 +2081,8 @@ async function startServer() {
   });
 
   app.post(["/api/v1/anny/enterprises/:companyId/capability-pack", "/api/anny/enterprises/:companyId/capability-pack"], requireAuth({ allowApiKey: true, requiredScope: 'capability:execute' }), async (req: AuthenticatedRequest, res) => {
-    const { companyId } = req.params;
+    const companyId = normalizeExpressRouteParam(req.params.companyId);
+    if (!companyId) return res.status(400).json({ success: false, error: 'COMPANY_ID_REQUIRED' });
     const { packName, action, params } = req.body || {};
     try {
       const result = await annyEcosystemService.executeCapabilityPackAction({
@@ -2455,7 +2458,9 @@ async function startServer() {
 
   app.get("/api/documents/file/:id", requireAuth(), (req: AuthenticatedRequest, res) => {
     pruneExpiredDocuments();
-    const doc = uploadedDocumentsStore.get(req.params.id);
+    const documentId = normalizeExpressRouteParam(req.params.id);
+    if (!documentId) return res.status(400).json({ error: "DOCUMENT_ID_REQUIRED" });
+    const doc = uploadedDocumentsStore.get(documentId);
     if (!doc) {
       return res.status(404).json({ error: "Document file not found" });
     }
@@ -4989,7 +4994,8 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
   });
 
   app.get("/api/modly/status/:id", requireAuth(), async (req, res) => {
-    const { id } = req.params;
+    const id = normalizeExpressRouteParam(req.params.id);
+    if (!id) return res.status(400).json({ error: "JOB_ID_REQUIRED" });
     const engine = (req.query.engine as string) || "local";
     const modlyKey = process.env.MODLY_API_KEY || process.env.MESHY_API_KEY;
 
