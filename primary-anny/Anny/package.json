@@ -11,7 +11,7 @@
     "lint": "tsc --noEmit",
     "modly:setup": "cd modly-main/api && python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt",
     "modly:start": "cd modly-main/api && . .venv/bin/activate && python3 -m uvicorn main:app --host 127.0.0.1 --port 8765",
-    "test": "tsx --test src/services/*.test.ts src/vision/*.test.ts src/creative/*.test.ts"
+    "test": "tsx --test src/services/*.test.ts src/vision/*.test.ts src/creative/*.test.ts src/core/*.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1175.0",
