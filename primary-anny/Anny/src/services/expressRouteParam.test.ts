@@ -1,17 +1,10 @@
-import { describe, expect, test } from 'bun:test';
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
 import { normalizeExpressRouteParam } from './expressRouteParam';
 
-describe('normalizeExpressRouteParam', () => {
-  test('preserves string params', () => {
-    expect(normalizeExpressRouteParam('project-123')).toBe('project-123');
-  });
-
-  test('selects the first route param from an array', () => {
-    expect(normalizeExpressRouteParam(['company-1', 'company-2'])).toBe('company-1');
-  });
-
-  test('returns empty for missing or empty array params', () => {
-    expect(normalizeExpressRouteParam(undefined)).toBe('');
-    expect(normalizeExpressRouteParam([])).toBe('');
-  });
+test('normalizes Express route params from strings, arrays, and missing values', () => {
+  assert.equal(normalizeExpressRouteParam('project-123'), 'project-123');
+  assert.equal(normalizeExpressRouteParam(['company-1', 'company-2']), 'company-1');
+  assert.equal(normalizeExpressRouteParam(undefined), '');
+  assert.equal(normalizeExpressRouteParam([]), '');
 });
