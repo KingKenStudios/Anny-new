@@ -645,9 +645,7 @@ export class AnnyCognitiveKernel {
       // STAGE 8.5: CONTINUOUS LEARNING
       stages.push('CONTINUOUS_LEARNING');
       if (learningUserId !== 'anonymous') {
-        const learningSource = input.requestType === 'build'
-          ? 'build'
-          : input.requestType === 'image_generation' ? 'api' : 'chat';
+        const learningSource = input.requestType === 'build' ? 'build' : 'chat';
         const memoryWrites = await Promise.allSettled([
           annyLearningMemory.recordPrivate({
             ownerUserId: learningUserId, sessionId, projectId, type: 'interaction',
