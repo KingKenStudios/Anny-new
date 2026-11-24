@@ -514,7 +514,7 @@ export class PostgresPlatform {
           updatedAt: row.updated_at
         }));
       } catch (err: any) {
-        throw new Error(\`POSTGRES_READ_FAILED: scoped memory retrieval failed: \${err.message}\`);
+        throw new Error(`POSTGRES_READ_FAILED: scoped memory retrieval failed: ${err.message}`);
       }
     }
 
