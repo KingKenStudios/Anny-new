@@ -75,13 +75,24 @@ test('physical actuator controls fail closed without trusted LOTO plus override 
   assert.equal(system.verifyExecution('actuator', 'u', 'OPERATOR', params, {
     grantedPermissions: permissions
   }).allowed, false);
-  assert.equal(system.verifyExecution('actuator', 'u', 'OPERATOR', params, {
+  const lotoOnly = system.verifyExecution('actuator', 'u', 'OPERATOR', params, {
     grantedPermissions: permissions,
     isLotoAuthorized: true
-  }).allowed, true);
+  });
+  assert.equal(lotoOnly.allowed, false);
+  assert.equal(lotoOnly.status, 'REQUIRES_CONFIRMATION');
+
+  const confirmed = system.verifyExecution('actuator', 'u', 'OPERATOR', params, {
+    grantedPermissions: permissions,
+    isLotoAuthorized: true,
+    userConfirmed: true
+  });
+  assert.equal(confirmed.allowed, true);
+
   assert.equal(system.verifyExecution('actuator', 'u', 'OPERATOR', params, {
     grantedPermissions: ['robotics:motion'],
-    isLotoAuthorized: true
+    isLotoAuthorized: true,
+    userConfirmed: true
   }).allowed, false);
 });
 
