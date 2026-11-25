@@ -12,6 +12,7 @@ import dotenv from "dotenv";
 import axios from "axios";
 import * as cheerio from "cheerio";
 import { GoogleGenAI } from "@google/genai";
+import { normalizeExpressRouteParam } from './src/services/expressRouteParam.ts';
 import { attachLiveVisionGateway } from './src/services/liveVisionGateway.ts';
 import { creativeGenerationService } from './src/services/creativeGenerationService.ts';
 import { materializeWebsiteMediaAssets } from './src/creative/websiteMediaAssetPipeline.ts';
@@ -973,11 +974,13 @@ async function startServer() {
   app.delete("/api/v1/anny/memory/:id", requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
       const { annyLearningMemory } = await import('./src/core/AnnyLearningMemory.ts');
-      const deleted = await annyLearningMemory.deletePrivateMemory(req.authUser!.uid, req.params.id);
+      const memoryId = normalizeExpressRouteParam(req.params.id).trim();
+      if (!memoryId) return res.status(400).json({ success: false, error: 'Memory ID is required.' });
+      const deleted = await annyLearningMemory.deletePrivateMemory(req.authUser!.uid, memoryId);
       if (!deleted) {
         return res.status(404).json({ success: false, error: 'Memory item not found or not owned by current user.' });
       }
-      res.json({ success: true, deletedId: req.params.id });
+      res.json({ success: true, deletedId: memoryId });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message || 'Memory deletion failed' });
     }
@@ -1045,7 +1048,7 @@ async function startServer() {
   };
 
   app.get("/api/anny/pipeline/status/:execId", requireAuth(), (req: AuthenticatedRequest, res) => {
-    const execId = String(req.params.execId || '').trim();
+    const execId = normalizeExpressRouteParam(req.params.execId).trim();
     const record = livePipelineProgressMap.get(execId);
     if (!record) {
       return res.status(404).json({ success: false, error: 'PIPELINE_EXEC_NOT_FOUND' });
@@ -1467,7 +1470,7 @@ async function startServer() {
     try {
       const uid = req.authUser!.uid;
       const isAdmin = req.authUser!.isAdmin;
-      const rawId = String(req.params.projectId || '').trim();
+      const rawId = normalizeExpressRouteParam(req.params.projectId).trim();
       if (!isValidProjectId(rawId)) {
         return res.status(400).json({ success: false, error: 'INVALID_PROJECT_ID' });
       }
@@ -1541,7 +1544,7 @@ async function startServer() {
     try {
       const uid = req.authUser!.uid;
       const isAdmin = req.authUser!.isAdmin;
-      const cleanId = String(req.params.projectId || '').trim();
+      const cleanId = normalizeExpressRouteParam(req.params.projectId).trim();
       if (!isValidProjectId(cleanId)) {
         return res.status(400).json({ success: false, error: 'INVALID_PROJECT_ID' });
       }
@@ -1564,7 +1567,7 @@ async function startServer() {
     try {
       const uid = req.authUser!.uid;
       const isAdmin = req.authUser!.isAdmin;
-      const cleanId = String(req.params.projectId || '').trim();
+      const cleanId = normalizeExpressRouteParam(req.params.projectId).trim();
       if (!isValidProjectId(cleanId)) {
         return res.status(400).json({ success: false, error: 'INVALID_PROJECT_ID' });
       }
@@ -1583,7 +1586,7 @@ async function startServer() {
     try {
       const uid = req.authUser!.uid;
       const isAdmin = req.authUser!.isAdmin;
-      const rawProjectId = String(req.params.projectId || '').trim();
+      const rawProjectId = normalizeExpressRouteParam(req.params.projectId).trim();
       if (!/^[a-zA-Z0-9_-]{1,128}$/.test(rawProjectId)) {
         return res.status(400).json({ authorized: false, error: 'INVALID_PROJECT_ID' });
       }
@@ -1684,7 +1687,7 @@ async function startServer() {
   app.get("/api/preview/sessions/:previewId/status", requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
       const session = await previewRuntimeService.getPreviewSessionStatus(
-        String(req.params.previewId || ''),
+        normalizeExpressRouteParam(req.params.previewId),
         req.authUser!.uid,
         req.authUser!.isAdmin
       );
@@ -1704,7 +1707,7 @@ async function startServer() {
   app.post("/api/preview/sessions/:previewId/refresh", requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
       const existing = await previewRuntimeService.getPreviewSessionStatus(
-        String(req.params.previewId || ''),
+        normalizeExpressRouteParam(req.params.previewId),
         req.authUser!.uid,
         req.authUser!.isAdmin
       );
@@ -1729,7 +1732,7 @@ async function startServer() {
   app.post("/api/preview/sessions/:previewId/stop", requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
       const stopped = await previewRuntimeService.stopPreviewSession(
-        String(req.params.previewId || ''),
+        normalizeExpressRouteParam(req.params.previewId),
         req.authUser!.uid,
         req.authUser!.isAdmin
       );
@@ -1748,7 +1751,7 @@ async function startServer() {
 
   app.get("/api/preview/sessions/:previewId/app", async (req, res) => {
     try {
-      const previewId = String(req.params.previewId || '');
+      const previewId = normalizeExpressRouteParam(req.params.previewId);
       const token = String(req.query.token || '');
       const { html } = await previewRuntimeService.serveIsolatedPreviewHtml(previewId, token);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -1833,7 +1836,8 @@ async function startServer() {
     try {
       const uid = req.authUser!.uid;
       const isAdmin = req.authUser!.isAdmin;
-      const { id } = req.params;
+      const id = normalizeExpressRouteParam(req.params.id).trim();
+      if (!id) return res.status(400).json({ success: false, error: 'Session ID is required.' });
 
       const byPk = await postgresPlatform.findById<any>('conversations', id);
       const matches = byPk
@@ -1873,7 +1877,7 @@ async function startServer() {
   app.get("/api/anny/sessions/:sessionId/voice-notes", requireAuth(), (req: AuthenticatedRequest, res) => {
     try {
       const notes = voiceNoteService.listSessionVoiceNotes(
-        String(req.params.sessionId || ''),
+        normalizeExpressRouteParam(req.params.sessionId),
         req.authUser!.uid,
         req.authUser!.isAdmin
       );
@@ -1940,7 +1944,7 @@ async function startServer() {
 
   app.post("/api/anny/voice-notes/:noteId/transcribe", requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
-      const noteId = String(req.params.noteId || '');
+      const noteId = normalizeExpressRouteParam(req.params.noteId);
       if (!isValidVoiceNoteId(noteId)) {
         return res.status(400).json({ success: false, error: 'INVALID_VOICE_NOTE_ID' });
       }
@@ -1995,7 +1999,7 @@ async function startServer() {
 
   app.patch("/api/anny/voice-notes/:noteId", requireAuth(), (req: AuthenticatedRequest, res) => {
     try {
-      const noteId = String(req.params.noteId || '');
+      const noteId = normalizeExpressRouteParam(req.params.noteId);
       if (!isValidVoiceNoteId(noteId)) {
         return res.status(400).json({ success: false, error: 'INVALID_VOICE_NOTE_ID' });
       }
@@ -2015,7 +2019,7 @@ async function startServer() {
 
   app.get("/api/anny/voice-notes/:noteId/audio", (req: AuthenticatedRequest, res) => {
     try {
-      const noteId = String(req.params.noteId || '');
+      const noteId = normalizeExpressRouteParam(req.params.noteId);
       if (!isValidVoiceNoteId(noteId)) {
         return res.status(400).json({ success: false, error: 'INVALID_VOICE_NOTE_ID' });
       }
@@ -2045,7 +2049,7 @@ async function startServer() {
 
   app.delete("/api/anny/voice-notes/:noteId", requireAuth(), (req: AuthenticatedRequest, res) => {
     try {
-      const noteId = String(req.params.noteId || '');
+      const noteId = normalizeExpressRouteParam(req.params.noteId);
       if (!isValidVoiceNoteId(noteId)) {
         return res.status(400).json({ success: false, error: 'INVALID_VOICE_NOTE_ID' });
       }
@@ -2079,7 +2083,8 @@ async function startServer() {
   });
 
   app.post(["/api/v1/anny/enterprises/:companyId/capability-pack", "/api/anny/enterprises/:companyId/capability-pack"], requireAuth({ allowApiKey: true, requiredScope: 'capability:execute' }), async (req: AuthenticatedRequest, res) => {
-    const { companyId } = req.params;
+    const companyId = normalizeExpressRouteParam(req.params.companyId).trim();
+    if (!companyId) return res.status(400).json({ error: 'Company ID is required.' });
     const { packName, action, params } = req.body || {};
     try {
       const result = await annyEcosystemService.executeCapabilityPackAction({
@@ -2455,7 +2460,9 @@ async function startServer() {
 
   app.get("/api/documents/file/:id", requireAuth(), (req: AuthenticatedRequest, res) => {
     pruneExpiredDocuments();
-    const doc = uploadedDocumentsStore.get(req.params.id);
+    const documentId = normalizeExpressRouteParam(req.params.id).trim();
+    if (!documentId) return res.status(400).json({ error: 'Document ID is required.' });
+    const doc = uploadedDocumentsStore.get(documentId);
     if (!doc) {
       return res.status(404).json({ error: "Document file not found" });
     }
@@ -2829,7 +2836,7 @@ async function startServer() {
   });
 
   app.get("/api/creative/image/asset/:assetKey", requireAuth(), (req: AuthenticatedRequest, res) => {
-    const assetKey = String(req.params.assetKey || '').trim();
+    const assetKey = normalizeExpressRouteParam(req.params.assetKey).trim();
     if (!/^[a-zA-Z0-9_-]{4,128}$/.test(assetKey)) {
       return res.status(400).json({ success: false, error: 'Invalid image asset identifier.' });
     }
@@ -2928,7 +2935,7 @@ async function startServer() {
   });
 
   app.get("/api/creative/video/jobs/:jobId", requireAuth(), (req: AuthenticatedRequest, res) => {
-    const jobId = String(req.params.jobId || '');
+    const jobId = normalizeExpressRouteParam(req.params.jobId);
     const requester = {
       userId: req.authUser?.uid || req.user?.userId || req.user?.id,
       orgId: req.authUser?.companyId || 'personal',
@@ -2942,7 +2949,7 @@ async function startServer() {
   });
 
   app.post("/api/creative/video/jobs/:jobId/cancel", requireAuth(), (req: AuthenticatedRequest, res) => {
-    const jobId = String(req.params.jobId || '');
+    const jobId = normalizeExpressRouteParam(req.params.jobId);
     const requester = {
       userId: req.authUser?.uid || req.user?.userId || req.user?.id,
       orgId: req.authUser?.companyId || 'personal',
@@ -2956,7 +2963,7 @@ async function startServer() {
   });
 
   app.get("/api/creative/video/jobs/:jobId/media", requireAuth(), (req: AuthenticatedRequest, res) => {
-    const jobId = String(req.params.jobId || '');
+    const jobId = normalizeExpressRouteParam(req.params.jobId);
     const requester = {
       userId: req.authUser?.uid || req.user?.userId || req.user?.id,
       orgId: req.authUser?.companyId || 'personal',
@@ -3017,7 +3024,7 @@ async function startServer() {
   });
 
   app.get("/api/creative/audio/asset/:assetKey", requireAuth(), (req: AuthenticatedRequest, res) => {
-    const assetKey = String(req.params.assetKey || '').trim();
+    const assetKey = normalizeExpressRouteParam(req.params.assetKey).trim();
     if (!/^[a-zA-Z0-9_-]{4,128}$/.test(assetKey)) {
       return res.status(400).json({ success: false, error: 'Invalid audio asset identifier.' });
     }
@@ -4989,7 +4996,8 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
   });
 
   app.get("/api/modly/status/:id", requireAuth(), async (req, res) => {
-    const { id } = req.params;
+    const id = normalizeExpressRouteParam(req.params.id).trim();
+    if (!id) return res.status(400).json({ error: 'Model job ID is required.' });
     const engine = (req.query.engine as string) || "local";
     const modlyKey = process.env.MODLY_API_KEY || process.env.MESHY_API_KEY;
 
