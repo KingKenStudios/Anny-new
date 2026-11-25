@@ -316,7 +316,7 @@ export class AnnyCognitiveKernel {
       verificationStatus: remediationApplied ? 'REPAIRED' : 'FAILED',
       latencyMs: 0,
       distinctModelsExecuted: modelsUsed.length,
-      memoryUpdated: true
+      memoryUpdated: false
     };
   }
 
@@ -331,6 +331,7 @@ export class AnnyCognitiveKernel {
     const organizationId = input.organizationId || 'default_org';
     const execId = input.execId || 'exec_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 5);
     const stages: string[] = [];
+    let memoryUpdated = false;
 
     // --- PHASE 23: SOVEREIGN REALITY EXECUTION FABRIC ---
     
@@ -644,20 +645,22 @@ export class AnnyCognitiveKernel {
       // STAGE 8.5: CONTINUOUS LEARNING
       stages.push('CONTINUOUS_LEARNING');
       if (learningUserId !== 'anonymous') {
-        void annyLearningMemory.recordPrivate({
-          ownerUserId: learningUserId, sessionId, projectId, type: 'interaction',
-          content: prompt, topic: intentModel.goal, importance: 0.45,
-          source: input.requestType === 'build' ? 'build' : 'chat'
-        }).catch(err => console.warn('[ANNY Learning] private interaction skipped:', err?.message || err));
-        void annyLearningMemory.recordPrivate({
-          ownerUserId: learningUserId, sessionId, projectId, type: 'outcome',
-          content: `ANNY response: ${finalOutput}`, topic: intentModel.goal, importance: 0.35,
-          source: input.requestType === 'build' ? 'build' : 'chat'
-        }).catch(err => console.warn('[ANNY Learning] private response memory skipped:', err?.message || err));
-        void annyLearningMemory.learnOutcome({
-          userId: learningUserId, sessionId, projectId, taskType: intentModel.taskType,
-          success: true, source: input.requestType === 'build' ? 'build' : 'chat'
-        }).catch(err => console.warn('[ANNY Learning] outcome skipped:', err?.message || err));
+        const learningSource = input.requestType === 'build' ? 'build' : 'chat';
+        const memoryWrites = await Promise.allSettled([
+          annyLearningMemory.recordPrivate({
+            ownerUserId: learningUserId, sessionId, projectId, type: 'interaction',
+            content: prompt, topic: intentModel.goal, importance: 0.45,
+            source: learningSource
+          }),
+          annyLearningMemory.learnOutcome({
+            userId: learningUserId, sessionId, projectId, taskType: intentModel.taskType,
+            success: true, source: learningSource
+          })
+        ]);
+        memoryUpdated = memoryWrites.some(result => result.status === 'fulfilled' && result.value === true);
+        memoryWrites.filter(result => result.status === 'rejected').forEach(result => {
+          console.warn('[ANNY Learning] memory write skipped:', result.reason);
+        });
       }
 
       // STAGE 9: VERIFICATION
@@ -705,7 +708,7 @@ export class AnnyCognitiveKernel {
         executionStages: stages,
         artifactIds: artifacts.map(a => a.id || a.url),
         verificationResult: verificationStatus,
-        memoryUpdated: true,
+        memoryUpdated,
         finalStatus: 'SUCCESS',
         latencyMs: Date.now() - startTime
       };
@@ -718,7 +721,7 @@ export class AnnyCognitiveKernel {
         latencyMs: Date.now() - startTime,
         artifacts,
         intentModel,
-        memoryUpdated: true,
+        memoryUpdated,
         ...(groundingSources.length > 0 ? { groundingSources } : {})
       } as any;
 

@@ -475,6 +475,64 @@ export class PostgresPlatform {
     return table.get(id) as T;
   }
 
+  /**
+   * Retrieve memory rows by exact owner and scope before ranking them.
+   * This prevents unrelated users' rows from being loaded into the application
+   * and avoids the generic 100-row window hiding older memories.
+   */
+  public async queryMemoryItems(
+    ownerUserId: string,
+    scope: 'private' | 'global',
+    limit: number = 100
+  ): Promise<DatabaseRecord[]> {
+    const owner = String(ownerUserId || '').trim();
+    if (!owner || (scope === 'global' && owner !== 'global') || (scope === 'private' && owner === 'global')) {
+      return [];
+    }
+    const safeLimit = Math.max(1, Math.min(500, Math.floor(Number(limit) || 100)));
+
+    if (this.pool) {
+      try {
+        const res = await this.pool.query(
+          'SELECT * FROM memory_items WHERE owner_user_id = $1 AND scope = $2 ORDER BY importance DESC, created_at DESC LIMIT $3',
+          [owner, scope, safeLimit]
+        );
+        return res.rows.map(row => ({
+          id: row.id,
+          owner_user_id: row.owner_user_id,
+          session_id: row.session_id,
+          project_id: row.project_id,
+          scope: row.scope,
+          type: row.type,
+          content: row.content,
+          topic: row.topic,
+          importance: row.importance,
+          source: row.source,
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at
+        }));
+      } catch (err: any) {
+        throw new Error(`POSTGRES_READ_FAILED: scoped memory retrieval failed: ${err.message}`);
+      }
+    }
+
+    if (requiresDurablePersistence()) {
+      throw new Error('POSTGRES_NOT_CONFIGURED: durable scoped memory retrieval is required.');
+    }
+
+    const table = this.inMemoryTables.get('memory_items');
+    if (!table) return [];
+    return (Array.from(table.values()) as DatabaseRecord[])
+      .filter(row => row.owner_user_id === owner && row.scope === scope)
+      .sort((a, b) =>
+        Number(b.importance ?? 0) - Number(a.importance ?? 0) ||
+        String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))
+      )
+      .slice(0, safeLimit);
+  }
+
   public async query<T extends DatabaseRecord>(tableName: string, filterFn?: (item: T) => boolean): Promise<T[]> {
     if (this.pool) {
       if (tableName === 'studio_records') {

@@ -19,7 +19,7 @@ test('subsystem registry avoids claiming unverified runtime and security impleme
   assert.equal(security!.health, 'degraded');
   assert.equal(security!.status, 'standby');
   assert.match(security!.capabilities.join(' '), /Not a complete prompt-injection defense/i);
-  assert.doesNotMatch(security!.capabilities.join(' '), /Biometric Verification/i);
+  assert.match(security!.capabilities.join(' '), /No biometric authentication capability/i);
 
   const builder = integrationRegistry.getById('subsystem_eabp');
   assert.ok(builder);
