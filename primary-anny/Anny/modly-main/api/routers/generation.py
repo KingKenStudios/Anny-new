@@ -137,6 +137,12 @@ async def _run_generation(job_id: str, image_bytes: bytes, params: dict, collect
             if model_id:
                 generator_registry.switch_model(model_id)
             await _run_generation_locked(job_id, image_bytes, params, collection)
+        except Exception as exc:
+            job = _jobs.get(job_id)
+            if job and job_id not in _cancelled:
+                job.status = "error"
+                job.error = f"Generation setup failed: {exc}"
+                _completed_at[job_id] = time.monotonic()
         finally:
             if _active_job_id == job_id:
                 _active_job_id = None
