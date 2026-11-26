@@ -4931,16 +4931,27 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
   const MODLY_LOCAL_URL = process.env.MODLY_LOCAL_URL || "http://127.0.0.1:8765";
 
   app.get("/api/modly/health", async (_req, res) => {
+    const localRaster = creativeGenerationService.getCreativeProviders()
+      .find(provider => provider.id === 'local-sd-webui');
+    const rasterConfigured = Boolean(localRaster?.configured);
     try {
       const r = await axios.get(`${MODLY_LOCAL_URL}/health`, { timeout: 2000 }).catch(() =>
         axios.get(`${MODLY_LOCAL_URL}/docs`, { timeout: 2000 })
       );
-      res.json({ available: r.status < 400, engine: "local", url: MODLY_LOCAL_URL });
+      res.json({
+        available: r.status < 400,
+        engine: "local",
+        url: MODLY_LOCAL_URL,
+        localRasterConfigured: rasterConfigured,
+        localRasterStatus: rasterConfigured ? 'CONFIGURED_UNVERIFIED' : 'UNCONFIGURED',
+      });
     } catch {
       res.json({
         available: false,
         engine: "local",
         url: MODLY_LOCAL_URL,
+        localRasterConfigured: rasterConfigured,
+        localRasterStatus: rasterConfigured ? 'CONFIGURED_UNVERIFIED' : 'UNCONFIGURED',
         hint: "Local Modly 3D engine is not running. See README.md → '3D Model Generation' to start it (requires Python + GPU).",
       });
     }
