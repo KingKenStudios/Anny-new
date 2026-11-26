@@ -136,3 +136,6 @@ jobs:
           python-version: '3.12'
       - name: Compile Python API source files
         run: python -m compileall -q primary-anny/Anny/modly-main/api
+      - name: Run Modly generation-queue unit tests
+        working-directory: primary-anny/Anny/modly-main/api
+        run: python -m unittest discover -s tests -p 'test_*.py'
