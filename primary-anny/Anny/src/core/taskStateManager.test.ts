@@ -42,6 +42,20 @@ test('BuildCancelled with execution id only cancels the matching execution', () 
   taskStateManager.clearTask(b.sessionId);
 });
 
+test('BuildCancelled with task id only cancels the matching task', () => {
+  const a = createTask('cancel-task-a', 'exec-task-a');
+  const b = createTask('cancel-task-b', 'exec-task-b');
+  taskStateManager.updateStatus(a.sessionId, 'running');
+  taskStateManager.updateStatus(b.sessionId, 'running');
+
+  systemBus.publish('BuildCancelled', 'test', { taskId: a.id });
+
+  assert.equal(taskStateManager.getTask(a.sessionId)?.status, 'cancelled');
+  assert.equal(taskStateManager.getTask(b.sessionId)?.status, 'running');
+  taskStateManager.clearTask(a.sessionId);
+  taskStateManager.clearTask(b.sessionId);
+});
+
 test('refinement preserves pending steps and completed work', () => {
   const task = createTask('refinement-session', 'refinement-exec');
   taskStateManager.markStepCompleted(task.sessionId, 'step-a');
