@@ -36,7 +36,7 @@ export async function generate3DModelFromImage(
   image: File,
   options?: { modelId?: string; remesh?: 'quad' | 'triangle' | 'none'; enableTexture?: boolean }
 ): Promise<ModlyTask> {
-  if (!image || !image.type.startsWith('image/')) throw new Error('Select a valid image file for 3D reconstruction.');
+  if (!image || !['image/png', 'image/jpeg', 'image/webp'].includes(image.type)) throw new Error('Select a PNG, JPEG, or WebP image for 3D reconstruction.');
   if (image.size > 25 * 1024 * 1024) throw new Error('Image must be 25 MB or smaller.');
   const form = new FormData();
   form.append('image', image);
