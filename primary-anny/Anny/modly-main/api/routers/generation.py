@@ -105,12 +105,14 @@ async def cancel_job(job_id: str):
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(404, f"Job {job_id} not found")
+    # Terminal jobs cannot be cancelled; avoid retaining stale cancellation IDs.
+    if job.status not in ("pending", "running"):
+        return {"cancelled": False, "status": job.status}
     _cancelled.add(job_id)
     if job_id in _cancel_events:
         _cancel_events[job_id].set()
-    if job.status in ("pending", "running"):
-        job.status = "cancelled"
-        _completed_at[job_id] = time.monotonic()
+    job.status = "cancelled"
+    _completed_at[job_id] = time.monotonic()
     # Only terminate the subprocess if this job currently owns the generator.
     # Queued cancellation must never kill another job's active inference.
     if generation_queue.active_job_id == job_id:
