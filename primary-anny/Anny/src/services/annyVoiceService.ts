@@ -1,7 +1,7 @@
 import { safeStorage } from '../lib/storage';
 import { ANNY_VOICE_PROFILES, ANNY_VOICE_STORAGE_KEY, AnnyVoiceRole, DEFAULT_ANNY_VOICE_ROLE } from './annyVoiceRegistry';
 import { detectNigerianLanguage } from './nigerianLanguage/NigerianLanguageRouter';
-import { speakWithNigerianTTS } from './nigerianLanguage/NigerianTTSAdapter';
+import { speakWithNigerianTTS, stopNigerianTTS } from './nigerianLanguage/NigerianTTSAdapter';
 import { isValidNigerianDialectHint, type NigerianDialectHint, type NigerianLanguageCode } from './nigerianLanguage/types';
 
 export class AnnyVoiceService {
@@ -171,6 +171,7 @@ export class AnnyVoiceService {
 
   public stop(): void {
     this.speechGeneration += 1;
+    stopNigerianTTS();
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       window.dispatchEvent(new CustomEvent('anny:speech-end'));
