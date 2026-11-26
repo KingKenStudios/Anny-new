@@ -141,7 +141,13 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
               <div className="flex justify-between text-[10px] text-slate-500"><span>Be specific about form, materials and parts.</span><span>{prompt.length}/4000</span></div>
             </> : <>
               <label className="block text-sm font-medium text-slate-300">Reference image (PNG, JPEG or WebP)</label>
-              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => setUploadedImage(e.target.files?.[0] || null)} className="w-full rounded-xl border border-white/10 bg-[#050817] p-3 text-xs text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-cyan-500/20 file:px-3 file:py-2 file:text-cyan-200" />
+              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => {
+                const file = e.target.files?.[0] || null;
+                if (file && !file.type.startsWith('image/')) { setError('Select a valid image file.'); setUploadedImage(null); return; }
+                if (file && file.size > 25 * 1024 * 1024) { setError('Image must be 25 MB or smaller.'); setUploadedImage(null); return; }
+                setError(null);
+                setUploadedImage(file);
+              }} className="w-full rounded-xl border border-white/10 bg-[#050817] p-3 text-xs text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-cyan-500/20 file:px-3 file:py-2 file:text-cyan-200" />
               {imagePreview && <img src={imagePreview} alt="Selected 3D reconstruction reference" className="max-h-48 w-full rounded-xl border border-white/10 object-contain bg-black/20" />}
               {uploadedImage && <p className="text-[10px] text-slate-500">{uploadedImage.name} · {(uploadedImage.size / 1024 / 1024).toFixed(2)} MB</p>}
             </>}
