@@ -14,6 +14,7 @@ export async function speakWithNigerianTTS(request: NigerianSpeechRequest): Prom
         text: normalizeNigerianSpeechText(request.text, language),
         language,
         voiceRole: request.voiceRole,
+        ...(request.dialectHint ? { dialectHint: request.dialectHint } : {}),
       }),
     });
     if (!response.ok) return false;
