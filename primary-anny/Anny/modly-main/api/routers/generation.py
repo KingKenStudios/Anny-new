@@ -24,6 +24,10 @@ generation_queue = GenerationQueue()
 _JOB_TTL = 1800  # purge terminal jobs after 30 minutes
 
 
+def _is_cancellable_status(status: str) -> bool:
+    return status in ("pending", "running")
+
+
 def _purge_old_jobs() -> None:
     cutoff = time.monotonic() - _JOB_TTL
     stale = [jid for jid, t in _completed_at.items() if t < cutoff]
@@ -106,7 +110,7 @@ async def cancel_job(job_id: str):
     if not job:
         raise HTTPException(404, f"Job {job_id} not found")
     # Terminal jobs cannot be cancelled; avoid retaining stale cancellation IDs.
-    if job.status not in ("pending", "running"):
+    if not _is_cancellable_status(job.status):
         return {"cancelled": False, "status": job.status}
     _cancelled.add(job_id)
     if job_id in _cancel_events:
