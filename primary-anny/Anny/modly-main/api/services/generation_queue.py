@@ -3,6 +3,10 @@ import asyncio
 from typing import Awaitable, Callable
 
 
+def is_cancellable_status(status: str) -> bool:
+    return status in ("pending", "running")
+
+
 class GenerationQueue:
     """Serializes jobs and exposes the active owner for safe targeted cancellation."""
 
