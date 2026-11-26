@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Cpu, Cloud, Loader2, RefreshCw, AlertTriangle, CheckCircle2, Download, ExternalLink, Menu } from 'lucide-react';
-import { checkModlyHealth, generate3DModelFromText, generate3DModelFromTextLocal, pollModlyTask, type ModlyHealth, type ModlyTask } from '../services/modlyService';
+import { Box, Cpu, Cloud, Loader2, RefreshCw, AlertTriangle, CheckCircle2, Download, ExternalLink, Menu, StopCircle } from 'lucide-react';
+import { checkModlyHealth, cancelLocalModlyTask, generate3DModelFromText, generate3DModelFromTextLocal, pollModlyTask, type ModlyHealth, type ModlyTask } from '../services/modlyService';
 import Neural3DPreview from '../components/Neural3DPreview';
 
 type GenerationMode = 'local' | 'cloud';
@@ -14,6 +14,7 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
   const [healthLoading, setHealthLoading] = useState(true);
   const [task, setTask] = useState<ModlyTask | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refreshHealth = async () => {
@@ -69,6 +70,19 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
       setError(err instanceof Error ? err.message : '3D generation could not start.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const cancelTask = async () => {
+    if (!task?.id || task.engine !== 'local' || isCancelling) return;
+    setIsCancelling(true);
+    try {
+      const cancelled = await cancelLocalModlyTask(task.id);
+      if (cancelled) setTask(previous => previous ? { ...previous, status: 'cancelled', step: 'Cancelled by user' } : previous);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to cancel this generation job.');
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -130,6 +144,7 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
                 {task.referenceImageUrl && <a href={task.referenceImageUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-cyan-300 hover:text-white"><ExternalLink className="h-3 w-3" />Open reference image</a>}
                 {task.model_url && <div className="space-y-2"><Neural3DPreview url={task.model_url} title="Generated 3D Mesh" autoRotate /><a href={task.model_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-xs text-cyan-300 hover:bg-white/5"><Download className="h-3.5 w-3.5" />Download model</a></div>}
                 {!task.model_url && !isTerminal(task.status) && <div className="flex flex-col items-center justify-center py-16 text-slate-500"><Loader2 className="h-8 w-8 animate-spin text-cyan-400" /><p className="mt-3 text-sm">Model generation is running…</p></div>}
+                {active && task.engine === 'local' && <button onClick={() => void cancelTask()} disabled={isCancelling} className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-3 py-2 text-xs text-red-300 hover:bg-red-500/10 disabled:opacity-50"><StopCircle className="h-3.5 w-3.5" />{isCancelling ? 'Cancelling…' : 'Cancel local job'}</button>}
                 {task.status === 'succeeded' && !task.model_url && <div className="text-sm text-amber-300">The provider reports success but did not return a model URL.</div>}
               </div>
             ) : <div className="flex h-[400px] flex-col items-center justify-center text-center text-slate-500"><Box className="h-12 w-12 text-slate-700" /><p className="mt-3 text-sm">Your generated mesh will appear here.</p></div>}
