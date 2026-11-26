@@ -5039,7 +5039,7 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
     if (!localImageProvider?.configured || !localSdEndpoint) {
       return res.status(503).json({
         error: 'Local text-to-3D image stage is not configured.',
-        hint: 'Configure SD_WEBUI_URL to a localhost or private-network Stable Diffusion/ComfyUI-compatible raster generator. Public endpoints are rejected and no cloud fallback is used.',
+        hint: 'Configure SD_WEBUI_URL to a localhost or private-network Stable Diffusion WebUI-compatible raster API (launch it with API access enabled). Public endpoints are rejected and no cloud fallback is used.',
       });
     }
 
