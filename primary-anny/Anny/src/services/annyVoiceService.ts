@@ -2,14 +2,18 @@ import { safeStorage } from '../lib/storage';
 import { ANNY_VOICE_PROFILES, ANNY_VOICE_STORAGE_KEY, AnnyVoiceRole, DEFAULT_ANNY_VOICE_ROLE } from './annyVoiceRegistry';
 import { detectNigerianLanguage } from './nigerianLanguage/NigerianLanguageRouter';
 import { speakWithNigerianTTS } from './nigerianLanguage/NigerianTTSAdapter';
+import { isValidNigerianDialectHint, type NigerianDialectHint, type NigerianLanguageCode } from './nigerianLanguage/types';
 
 export class AnnyVoiceService {
   private static instance: AnnyVoiceService;
   private voices: SpeechSynthesisVoice[] = [];
   private activeRole: AnnyVoiceRole = DEFAULT_ANNY_VOICE_ROLE;
+  private dialectHints: Partial<Record<NigerianLanguageCode, NigerianDialectHint>> = {};
+  private readonly dialectStorageKey = 'anny_voice_dialect_hints';
 
   private constructor() {
     this.activeRole = this.getSavedRole();
+    this.dialectHints = this.getSavedDialectHints();
     this.refreshVoices();
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.addEventListener('voiceschanged', () => this.refreshVoices());
@@ -19,6 +23,21 @@ export class AnnyVoiceService {
   public static getInstance(): AnnyVoiceService {
     if (!this.instance) this.instance = new AnnyVoiceService();
     return this.instance;
+  }
+
+  private getSavedDialectHints(): Partial<Record<NigerianLanguageCode, NigerianDialectHint>> {
+    try {
+      const raw = safeStorage.getItem(this.dialectStorageKey);
+      const saved = raw ? JSON.parse(raw) : {};
+      const validated: Partial<Record<NigerianLanguageCode, NigerianDialectHint>> = {};
+      for (const language of ['yo', 'ha', 'ig', 'pcm', 'en-ng'] as NigerianLanguageCode[]) {
+        const hint = saved?.[language];
+        if (isValidNigerianDialectHint(language, hint)) validated[language] = hint;
+      }
+      return validated;
+    } catch {
+      return {};
+    }
   }
 
   private getSavedRole(): AnnyVoiceRole {
@@ -33,6 +52,15 @@ export class AnnyVoiceService {
   }
 
   public getVoiceProfiles() { return ANNY_VOICE_PROFILES; }
+  public getDialectHints(): Readonly<Partial<Record<NigerianLanguageCode, NigerianDialectHint>>> { return { ...this.dialectHints }; }
+  public setDialectHint(language: NigerianLanguageCode, hint: NigerianDialectHint | null): void {
+    if (hint !== null && !isValidNigerianDialectHint(language, hint)) {
+      throw new Error('Dialect hint must match the selected language.');
+    }
+    if (hint === null) delete this.dialectHints[language];
+    else this.dialectHints[language] = hint;
+    safeStorage.setItem(this.dialectStorageKey, JSON.stringify(this.dialectHints));
+  }
   public getSelectedRole(): AnnyVoiceRole { return this.activeRole; }
   public setSelectedRole(role: AnnyVoiceRole): void {
     this.activeRole = role;
@@ -83,9 +111,18 @@ export class AnnyVoiceService {
     if (useNativeRouter) {
       const detected = detectNigerianLanguage(cleanText);
       if (detected.language) {
-        const handled = await speakWithNigerianTTS({ text: cleanText, language: detected.language, voiceRole: role });
+        const dialectHint = this.dialectHints[detected.language];
+        const handled = await speakWithNigerianTTS({ text: cleanText, language: detected.language, voiceRole: role, dialectHint });
         if (handled) {
           if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('anny:speech-end'));
+          onEnd?.();
+          return;
+        }
+        if (dialectHint) {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('anny:speech-error', { detail: { reason: 'DIALECT_TTS_UNAVAILABLE', language: detected.language, dialectHint } }));
+            window.dispatchEvent(new CustomEvent('anny:speech-end'));
+          }
           onEnd?.();
           return;
         }
