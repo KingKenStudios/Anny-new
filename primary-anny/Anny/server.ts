@@ -3625,10 +3625,11 @@ async function startServer() {
           ...(dialectHint ? { dialectHint } : {})
         }, { responseType: 'arraybuffer', timeout: 60000 });
         const contentType = String(localResponse.headers?.['content-type'] || 'audio/wav');
-        if (localResponse.data?.byteLength) {
+        if (localResponse.data?.byteLength && contentType.toLowerCase().startsWith('audio/')) {
           res.set('Content-Type', contentType);
           return res.send(Buffer.from(localResponse.data));
         }
+        if (dialectHint) return res.status(502).json({ error: 'Local speech service returned no valid audio for the requested dialect.' });
       } catch (localError: any) {
         console.warn('[Sahara TTS] Local Nigerian TTS adapter unavailable:', localError?.message || localError);
         if (dialectHint) return res.status(503).json({ error: 'Local dialect-aware speech service failed; dialect fallback is disabled to avoid silently changing pronunciation.' });
