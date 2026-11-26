@@ -62,7 +62,8 @@ async def generate_from_image(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    generator_registry.switch_model(model_id)
+    # Model switching is deferred until the serialized generation runner owns the lock.
+    # Switching here would race with other requests before their jobs begin.
 
     # Parse model-specific params from JSON and merge with common fields
     try:
@@ -85,7 +86,7 @@ async def generate_from_image(
     _jobs[job_id] = job
     _cancel_events[job_id] = threading.Event()
 
-    background_tasks.add_task(_run_generation, job_id, image_bytes, full_params, collection)
+    background_tasks.add_task(_run_generation, job_id, image_bytes, full_params, collection, model_id)
 
     return {"job_id": job_id}
 
@@ -124,7 +125,7 @@ async def cancel_job(job_id: str):
     return {"cancelled": True}
 
 
-async def _run_generation(job_id: str, image_bytes: bytes, params: dict, collection: str = "Default") -> None:
+async def _run_generation(job_id: str, image_bytes: bytes, params: dict, collection: str = "Default", model_id: str | None = None) -> None:
     global _active_job_id
     # Modly's model registry and generator subprocess are shared. Serialize jobs so
     # concurrent requests cannot race model switches, output paths, or cancellation.
@@ -133,6 +134,8 @@ async def _run_generation(job_id: str, image_bytes: bytes, params: dict, collect
             return
         _active_job_id = job_id
         try:
+            if model_id:
+                generator_registry.switch_model(model_id)
             await _run_generation_locked(job_id, image_bytes, params, collection)
         finally:
             if _active_job_id == job_id:
