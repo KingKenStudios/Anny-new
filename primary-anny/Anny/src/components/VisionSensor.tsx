@@ -58,6 +58,8 @@ interface VisionSensorProps {
   isGuidanceActive?: boolean;
   isStealth?: boolean;
   isAnalyzing?: boolean;
+  /** Opening Vision starts the authorized camera immediately; set false only for explicit non-camera embeds. */
+  autoStart?: boolean;
 }
 
 export interface VisionSensorRef {
@@ -75,7 +77,7 @@ const MODE_LABELS: Record<VisionOperatingMode, string> = {
 };
 
 const VisionSensor = forwardRef<VisionSensorRef, VisionSensorProps>(
-  ({ onCapture, onAnalyze, onClose, onLiveTranscript, isAnalyzing = false }, ref) => {
+  ({ onCapture, onAnalyze, onClose, onLiveTranscript, isAnalyzing = false, autoStart = true }, ref) => {
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -100,15 +102,20 @@ const VisionSensor = forwardRef<VisionSensorRef, VisionSensorProps>(
     perceptionRef.current = perception;
 
     const lastTranscriptIdRef = useRef<string | null>(null);
+    const onLiveTranscriptRef = useRef(onLiveTranscript);
+    onLiveTranscriptRef.current = onLiveTranscript;
+    const autoStartAttemptedRef = useRef(false);
 
+    // Keep the subscription stable: parent rerenders (including chat typing) must
+    // never tear down an active camera session just because a callback changed.
     useEffect(() => {
       const unsubscribe = liveVisionController.subscribe((nextState) => {
         setPerception(nextState);
-        if (onLiveTranscript && nextState.recentTranscripts.length > 0) {
+        if (onLiveTranscriptRef.current && nextState.recentTranscripts.length > 0) {
           const latest = nextState.recentTranscripts[nextState.recentTranscripts.length - 1];
           if (latest.final && latest.id !== lastTranscriptIdRef.current) {
             lastTranscriptIdRef.current = latest.id;
-            onLiveTranscript(latest);
+            onLiveTranscriptRef.current(latest);
           }
         }
       });
@@ -120,11 +127,38 @@ const VisionSensor = forwardRef<VisionSensorRef, VisionSensorProps>(
         unsubscribe();
         liveVisionController.stop();
       };
-    }, [onLiveTranscript]);
+    }, []);
 
     useEffect(() => {
       liveVisionController.attachVideoElement(videoRef.current);
     }, [isMinimized, isExpanded]);
+
+    // Vision activation is the user's explicit opt-in. Start camera as soon as
+    // this panel mounts, rather than requiring a second "Start" interaction.
+    useEffect(() => {
+      if (!autoStart || autoStartAttemptedRef.current) return;
+      autoStartAttemptedRef.current = true;
+      let cancelled = false;
+      const activate = async () => {
+        setIsBusy(true);
+        setLocalError(null);
+        liveVisionController.attachVideoElement(videoRef.current);
+        const res = await liveVisionController.start({
+          source: 'camera',
+          resolution,
+          mode,
+          offline: offlineMode,
+        });
+        if (cancelled) return;
+        if (!res.ok && res.error) setLocalError(res.error);
+        else void liveVisionController.refreshDevices().then((list) => {
+          if (!cancelled) setDevices(list);
+        });
+        setIsBusy(false);
+      };
+      void activate();
+      return () => { cancelled = true; };
+    }, [autoStart]);
 
     // Synchronized overlay rendering loop (runs smoothly on rAF without blocking video)
     useEffect(() => {
