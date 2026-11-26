@@ -5113,6 +5113,10 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
       return res.status(400).json({ error: 'Invalid 3D job identifier.' });
     }
     try {
+      const current = await axios.get(`${MODLY_LOCAL_URL}/generate/status/${encodeURIComponent(jobId)}`, { timeout: 5000 });
+      if (!['pending', 'running'].includes(String(current.data?.status || ''))) {
+        return res.json({ cancelled: false, id: jobId, status: current.data?.status, engine: 'local' });
+      }
       const response = await axios.post(`${MODLY_LOCAL_URL}/generate/cancel/${encodeURIComponent(jobId)}`, {}, { timeout: 5000 });
       return res.json({ cancelled: Boolean(response.data?.cancelled), id: jobId, engine: 'local' });
     } catch (err: any) {
