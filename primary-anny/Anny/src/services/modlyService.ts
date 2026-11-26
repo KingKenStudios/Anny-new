@@ -3,7 +3,7 @@ import { fetchWithAuth } from '../lib/apiUtils';
 
 export interface ModlyTask {
   id: string;
-  status: 'pending' | 'processing' | 'succeeded' | 'failed';
+  status: 'pending' | 'processing' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   progress?: number;
   step?: string;
   model_url?: string;
