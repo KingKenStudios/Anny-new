@@ -35,7 +35,7 @@ npm run modly:start
 ```
 The API listens at `http://127.0.0.1:8765`; the main ANNY server proxies authenticated `/api/modly/*` requests.
 
-**Open the sidebar → 3D Generator:**
+**Open the sidebar → 3D Generator:** It supports direct PNG/JPEG/WebP image-to-mesh uploads as well as text prompts.
 - **Local / Offline:** for text prompts, ANNY first creates a reference raster with a locally hosted Stable Diffusion WebUI-compatible API (`SD_WEBUI_URL`, e.g. `http://127.0.0.1:7860`, launched with its API enabled), then sends that image to the local Modly mesh model. Both local models must be configured; this path does not fall back to cloud providers.
 - **Cloud:** text-to-3D uses Meshy only when `MESHY_API_KEY` or `MODLY_API_KEY` is configured on the server. Cloud generation may incur provider charges.
 - **Image-to-3D:** the existing local image-upload endpoint remains available through the Modly service.
