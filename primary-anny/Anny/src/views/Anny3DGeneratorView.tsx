@@ -108,8 +108,8 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
         <section className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-5">
           <div className="rounded-2xl border border-white/10 bg-[#080b22] p-5 space-y-4">
             <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => setMode('local')} className={`rounded-xl border p-3 text-left ${mode === 'local' ? 'border-cyan-400/50 bg-cyan-400/10' : 'border-white/10 bg-white/[0.02]'}><Cpu className="h-4 w-4 text-cyan-300" /><span className="block mt-2 text-sm font-semibold">Local / Offline</span><span className="block mt-1 text-[10px] text-slate-500">No cloud fallback</span></button>
-              <button onClick={() => setMode('cloud')} className={`rounded-xl border p-3 text-left ${mode === 'cloud' ? 'border-violet-400/50 bg-violet-400/10' : 'border-white/10 bg-white/[0.02]'}><Cloud className="h-4 w-4 text-violet-300" /><span className="block mt-2 text-sm font-semibold">Cloud</span><span className="block mt-1 text-[10px] text-slate-500">Meshy provider</span></button>
+              <button onClick={() => setMode('local')} className={`rounded-xl border p-3 text-left ${mode === 'local' ? 'border-cyan-400/50 bg-cyan-400/10' : 'border-white/10 bg-white/[0.02]'}`}><Cpu className="h-4 w-4 text-cyan-300" /><span className="block mt-2 text-sm font-semibold">Local / Offline</span><span className="block mt-1 text-[10px] text-slate-500">No cloud fallback</span></button>
+              <button onClick={() => setMode('cloud')} className={`rounded-xl border p-3 text-left ${mode === 'cloud' ? 'border-violet-400/50 bg-violet-400/10' : 'border-white/10 bg-white/[0.02]'}`}><Cloud className="h-4 w-4 text-violet-300" /><span className="block mt-2 text-sm font-semibold">Cloud</span><span className="block mt-1 text-[10px] text-slate-500">Meshy provider</span></button>
             </div>
 
             <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs">
