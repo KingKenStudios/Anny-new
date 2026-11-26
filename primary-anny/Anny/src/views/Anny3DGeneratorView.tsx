@@ -143,8 +143,8 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
               <label className="block text-sm font-medium text-slate-300">Reference image (PNG, JPEG or WebP)</label>
               <input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => {
                 const file = e.target.files?.[0] || null;
-                if (file && !['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) { setError('Select a PNG, JPEG, or WebP image.'); setUploadedImage(null); return; }
-                if (file && file.size > 25 * 1024 * 1024) { setError('Image must be 25 MB or smaller.'); setUploadedImage(null); return; }
+                if (file && !['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) { setError('Select a PNG, JPEG, or WebP image.'); setUploadedImage(null); e.currentTarget.value = ''; return; }
+                if (file && file.size > 25 * 1024 * 1024) { setError('Image must be 25 MB or smaller.'); setUploadedImage(null); e.currentTarget.value = ''; return; }
                 setError(null);
                 setUploadedImage(file);
               }} className="w-full rounded-xl border border-white/10 bg-[#050817] p-3 text-xs text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-cyan-500/20 file:px-3 file:py-2 file:text-cyan-200" />
