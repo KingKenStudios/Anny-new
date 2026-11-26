@@ -70,10 +70,14 @@ export async function generate3DModelFromTextLocal(prompt: string): Promise<Modl
 
 /** Generate a 3D model from a text prompt via a configured cloud provider (requires MESHY_API_KEY server-side). */
 export async function generate3DModelFromText(prompt: string): Promise<ModlyTask> {
+  const cleanPrompt = String(prompt || '').trim();
+  if (!cleanPrompt || cleanPrompt.length > 4000) {
+    throw new Error('Enter a text-to-3D prompt between 1 and 4000 characters.');
+  }
   const response = await fetchWithAuth('/api/modly/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt: cleanPrompt }),
   });
   if (!response.ok) {
     const error = await response.json();
