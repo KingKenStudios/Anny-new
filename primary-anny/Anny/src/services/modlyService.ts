@@ -49,7 +49,10 @@ export async function generate3DModelFromImage(
     const error = await response.json();
     throw new Error(error.hint || error.error || 'Modly 3D generation failed to start');
   }
-  return response.json();
+  const data = await response.json();
+  const id = String(data?.job_id || data?.id || '').trim();
+  if (!id) throw new Error('Local Modly returned no job identifier.');
+  return { id, status: 'pending', progress: 0, engine: 'local' };
 }
 
 /** Generate a mesh from text using only locally hosted image and 3D models. */
