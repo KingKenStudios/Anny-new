@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Cpu, Cloud, Loader2, RefreshCw, AlertTriangle, CheckCircle2, Download, ExternalLink } from 'lucide-react';
+import { Box, Cpu, Cloud, Loader2, RefreshCw, AlertTriangle, CheckCircle2, Download, ExternalLink, Menu } from 'lucide-react';
 import { checkModlyHealth, generate3DModelFromText, generate3DModelFromTextLocal, pollModlyTask, type ModlyHealth, type ModlyTask } from '../services/modlyService';
 import Neural3DPreview from '../components/Neural3DPreview';
 
@@ -83,7 +83,7 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
     <div className="h-full w-full overflow-y-auto bg-[#040612] text-slate-100 p-4 sm:p-6 lg:p-8">
       <div className="mx-auto max-w-6xl space-y-6">
         <header className="flex items-center gap-3">
-          {onToggleMobileMenu && <button onClick={onToggleMobileMenu} className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-300 hover:text-white" aria-label="Open menu"><Box className="h-5 w-5" /></button>}
+          {onToggleMobileMenu && <button onClick={onToggleMobileMenu} className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-300 hover:text-white" aria-label="Open menu"><Menu className="h-5 w-5" /></button>}
           <div>
             <div className="flex items-center gap-2 text-cyan-300"><Box className="h-5 w-5" /><span className="text-xs font-mono uppercase tracking-[0.2em]">ANNY 3D Fabrication</span></div>
             <h1 className="mt-1 text-2xl font-bold text-white">Text-to-3D Generator</h1>
