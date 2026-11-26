@@ -8,9 +8,9 @@ from services.generation_queue import is_cancellable_status
 class GenerationQueueTests(unittest.IsolatedAsyncioTestCase):
     def test_only_pending_and_running_jobs_are_cancellable(self):
         self.assertTrue(is_cancellable_status("pending"))
-        self.assertTrue(_is_cancellable_status("running"))
+        self.assertTrue(is_cancellable_status("running"))
         for terminal in ("done", "error", "cancelled"):
-            self.assertFalse(_is_cancellable_status(terminal))
+            self.assertFalse(is_cancellable_status(terminal))
 
     async def test_serializes_shared_model_jobs_and_clears_owner(self):
         queue = GenerationQueue()
