@@ -34,11 +34,21 @@ export class TaskStateManager {
   private tasksBySession: Map<string, CurrentCognitiveTask> = new Map();
 
   private constructor() {
-    systemBus.subscribe('BuildCancelled', () => {
+    systemBus.subscribe('BuildCancelled', (event) => {
+      const payload = event.payload || {};
+      const targetSessionId = typeof payload.sessionId === 'string' ? payload.sessionId : undefined;
+      const targetExecutionId = typeof payload.executionId === 'string' ? payload.executionId : undefined;
+      const targetTaskId = typeof payload.taskId === 'string' ? payload.taskId : undefined;
+      const isTargeted = Boolean(targetSessionId || targetExecutionId || targetTaskId);
+
       for (const [sessionId, task] of this.tasksBySession.entries()) {
-        if (task.status === 'analyzing' || task.status === 'running' || task.status === 'paused') {
-          this.cancelTask(sessionId);
-        }
+        const isActive = task.status === 'analyzing' || task.status === 'running' || task.status === 'paused';
+        const matchesTarget = !isTargeted || (
+          (!targetSessionId || task.sessionId === targetSessionId) &&
+          (!targetExecutionId || task.executionId === targetExecutionId) &&
+          (!targetTaskId || task.id === targetTaskId)
+        );
+        if (isActive && matchesTarget) this.cancelTask(sessionId);
       }
     });
   }
@@ -102,7 +112,9 @@ export class TaskStateManager {
       existing.updatedAt = Date.now();
 
       if (planSteps.length > 0) {
-        existing.pendingSteps = planSteps;
+        existing.activePlan = Array.from(new Set([...existing.activePlan, ...planSteps]));
+        existing.pendingSteps = Array.from(new Set([...existing.pendingSteps, ...planSteps]))
+          .filter(step => !existing.completedSteps.includes(step) && !existing.failedSteps.includes(step));
       }
 
       this.tasksBySession.set(sessionId, existing);
@@ -183,6 +195,7 @@ export class TaskStateManager {
     if (!task.failedSteps.includes(stepName)) {
       task.failedSteps.push(stepName);
     }
+    task.pendingSteps = task.pendingSteps.filter(step => step !== stepName);
     task.status = 'failed';
     task.currentOperation = `Step failed: ${stepName} (${errorMsg || 'Error'})`;
     task.updatedAt = Date.now();
