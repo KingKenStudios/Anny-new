@@ -132,6 +132,7 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
               {healthLoading ? <div className="flex items-center gap-2 text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin" />Checking local Modly engine…</div>
                 : health?.available ? <div className="flex items-center gap-2 text-emerald-300"><CheckCircle2 className="h-4 w-4" />Local mesh engine reachable</div>
                 : <div className="flex items-start gap-2 text-amber-300"><AlertTriangle className="h-4 w-4 shrink-0" /><span>Local mesh engine unavailable. {health?.hint || 'Start the Modly local API.'}</span></div>}
+              {health?.available && <div className={`mt-2 text-[11px] ${health.localRasterConfigured ? 'text-amber-300' : 'text-slate-500'}`}>Local text-reference stage: {health.localRasterConfigured ? 'configured, but not live-tested' : 'not configured (image mode still works)'}</div>}
               <button onClick={() => void refreshHealth()} className="mt-2 flex items-center gap-1 text-slate-500 hover:text-white"><RefreshCw className="h-3 w-3" />Refresh status</button>
             </div>
 
