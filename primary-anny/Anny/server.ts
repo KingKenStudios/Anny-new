@@ -77,6 +77,7 @@ import {
   localSttService,
   parseBase64AudioPayload,
 } from './src/services/localSttService.ts';
+import { isValidNigerianDialectHint, type NigerianLanguageCode } from './src/services/nigerianLanguage/types.ts';
 import {
   voiceNoteService,
   isValidVoiceNoteId,
@@ -3601,9 +3602,16 @@ async function startServer() {
   });
 
   app.post("/api/sahara/tts", requireAuth(), async (req, res) => {
-    const { text, model, language } = req.body || {};
+    const { text, model, language, dialectHint } = req.body || {};
     const key = process.env.HUGGINGFACE_API_KEY;
     if (!text || typeof text !== 'string') return res.status(400).json({ error: "text is required" });
+    const supportedLanguages = new Set<NigerianLanguageCode>(['yo', 'ha', 'ig', 'pcm', 'en-ng']);
+    if (dialectHint && (!supportedLanguages.has(language) || !isValidNigerianDialectHint(language, dialectHint))) {
+      return res.status(400).json({ error: 'Dialect hint is invalid or does not match the requested language.' });
+    }
+    if (dialectHint && !process.env.WAZOBIA_TTS_URL) {
+      return res.status(503).json({ error: 'Dialect-aware synthesis requires the configured local Wazobia-compatible speech service. Remote fallback models do not honor dialect hints.' });
+    }
 
     // Preferred production path: a locally hosted WazobiaVoice-compatible HTTP
     // service. This keeps Nigerian speech on the user's infrastructure and avoids
@@ -3613,7 +3621,8 @@ async function startServer() {
         const localResponse = await axios.post(process.env.WAZOBIA_TTS_URL, {
           text,
           language,
-          voiceRole: req.body?.voiceRole || 'female'
+          voiceRole: req.body?.voiceRole === 'male' ? 'male' : 'female',
+          ...(dialectHint ? { dialectHint } : {})
         }, { responseType: 'arraybuffer', timeout: 60000 });
         const contentType = String(localResponse.headers?.['content-type'] || 'audio/wav');
         if (localResponse.data?.byteLength) {
@@ -3622,6 +3631,7 @@ async function startServer() {
         }
       } catch (localError: any) {
         console.warn('[Sahara TTS] Local Nigerian TTS adapter unavailable:', localError?.message || localError);
+        if (dialectHint) return res.status(503).json({ error: 'Local dialect-aware speech service failed; dialect fallback is disabled to avoid silently changing pronunciation.' });
       }
     }
 
