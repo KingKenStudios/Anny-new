@@ -420,6 +420,22 @@ test('7. VisionSession: permission denied, device unavailable, camera switching,
   assert.equal(session.getActiveTrackCount(), 0);
 });
 
+test('VisionSession: late camera permission resolution cannot revive a stopped session', async () => {
+  const late = createMockStream('Late Camera');
+  let resolveCapture!: (stream: MediaStream) => void;
+  const media: MediaDevicesLike = {
+    getUserMedia: () => new Promise<MediaStream>(resolve => { resolveCapture = resolve; }),
+  };
+  const session = new VisionSession({}, () => media);
+  const pendingStart = session.start({ source: 'camera' });
+  session.stop();
+  resolveCapture(late.stream);
+
+  await assert.rejects(pendingStart, (err: any) => err?.name === 'AbortError');
+  assert.equal(late.track.isStopped(), true, 'Late-arriving tracks must be stopped immediately');
+  assert.equal(session.getActiveTrackCount(), 0, 'Superseded capture must not be attached to the session');
+});
+
 test('8. LiveVisionController: offline local perception, online disconnect degradation, truthful status & robot safety', async () => {
   const store = new SceneUnderstandingStore();
   const stubOnline = new StubOnlineVisionProvider();
