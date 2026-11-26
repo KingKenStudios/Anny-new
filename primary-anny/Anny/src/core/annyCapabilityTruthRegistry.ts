@@ -84,6 +84,7 @@ export class AnnyCapabilityTruthRegistry {
       { id: 'VISION_EXECUTION', name: 'Real Vision Execution', category: 'VISION', inputs: ['image', 'prompt'], entry: 'aiProviderPlatform.chat', reqs: ['VISION_MODEL_CALL'] },
       { id: 'VOICE_INPUT', name: 'Real Voice Ingestion', category: 'VOICE', inputs: ['audio_stream'], entry: 'AnnyVoiceIntelligenceFabric', reqs: ['AUDIO_STREAM_INGEST'] },
       { id: 'VOICE_STT', name: 'Real Speech-To-Text', category: 'VOICE', inputs: ['audio'], entry: 'AnnyVoiceIntelligenceFabric.transcribe', reqs: ['WHISPER_GROQ_API_KEY_OR_LOCAL_RUNTIME'] },
+      { id: 'DIALECT_HINTED_TTS', name: 'Nigerian Dialect-Hinted Speech Synthesis', category: 'VOICE', inputs: ['text', 'language', 'dialectHint'], entry: 'speakWithNigerianTTS', reqs: ['LOCAL_TTS_PROVIDER_DIALECT_CONTROL', 'NATIVE_SPEAKER_PRONUNCIATION_REVIEW'] },
       { id: 'URL_RETRIEVAL', name: 'Real URL Retrieval', category: 'NETWORK', inputs: ['url'], entry: 'AnnyLinkUnderstandingEngine.inspectUrl', reqs: ['NETWORK_FETCH_OR_HEURISTIC'] },
       { id: 'URL_ANALYSIS', name: 'Real URL Analysis', category: 'NETWORK', inputs: ['url'], entry: 'AnnyLinkUnderstandingEngine.generateWebsiteReplicationPlan', reqs: ['CLEAN_ROOM_BLUEPRINT'] },
       { id: 'URL_TO_AIOS', name: 'Real URL to AIOS Application', category: 'NETWORK', inputs: ['url'], entry: 'AnnyLinkUnderstandingEngine.generateApplicationReplicationPlan', reqs: ['AIOS_APP_SCHEMA'] },
