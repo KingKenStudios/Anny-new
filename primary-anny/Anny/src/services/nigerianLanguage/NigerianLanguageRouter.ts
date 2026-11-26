@@ -11,8 +11,8 @@ const RULES: LanguageRule[] = [
   {
     language: 'yo',
     strong: [/ẹ|ọ|ṣ|à|á|è|é|ì|í|ò|ó|ù|ú/i],
-    phrases: [/báwo ni/i, /ẹ káàbọ̀/i, /mo dúpẹ́/i, /ó ṣeun/i, /mo fẹ́/i, /kí ni/i],
-    common: [/e se/i, /omo/i, /jọ̀ọ́/i],
+    phrases: [/báwo ni/i, /bawo ni/i, /ẹ káàbọ̀/i, /e kaaro/i, /e kaasan/i, /e ku/i, /mo dúpẹ́/i, /ó ṣeun/i, /mo fẹ́/i, /kí ni/i],
+    common: [/e se/i, /omo/i, /mo n/i, /jọ̀ọ́/i],
   },
   {
     language: 'ig',
