@@ -91,6 +91,7 @@ export class AnnyCapabilityTruthRegistry {
       { id: 'MUSIC_GENERATION', name: 'Real Music Generation', category: 'CREATIVE', inputs: ['prompt'], entry: 'aiProviderPlatform.audioGeneration', reqs: ['MUSIC_SYNTH_API'] },
       { id: 'VIDEO_PLANNING', name: 'Real Video Planning & Storyboard', category: 'CREATIVE', inputs: ['prompt'], entry: 'AnnyVideoGenerationFabric.orchestrateCinematicPipeline', reqs: ['CINEMATIC_SCRIPT_PIPELINE'] },
       { id: 'VIDEO_GENERATION', name: 'Real Video Rendering', category: 'CREATIVE', inputs: ['prompt'], entry: 'AnnyVideoGenerationFabric.orchestrateCinematicPipeline', reqs: ['GPU_VRAM_16GB_OR_REMOTE_RENDER_NODE'] },
+      { id: 'LOCAL_TEXT_TO_3D', name: 'Local Text-to-3D Reference-to-Mesh Pipeline', category: '3D_GENERATION', inputs: ['prompt'], entry: 'modlyService.generate3DModelFromTextLocal', reqs: ['LOCAL_SD_WEBUI', 'LOCAL_MODLY_IMAGE_TO_MESH', 'VALIDATED_REFERENCE_IMAGE', 'VERIFIED_MESH_ARTIFACT'] },
       { id: 'VIDEO_VERIFICATION', name: 'Real Video Artifact Verification', category: 'CREATIVE', inputs: ['artifact'], entry: 'AnnyRemoteResultVerifier.verifyArtifact', reqs: ['MEDIA_CONTAINER_VALIDATION'] },
       { id: 'REMOTE_WORKER_CONNECTION', name: 'Remote Worker Node Connection', category: 'COMPUTE', inputs: ['heartbeat'], entry: 'AnnyWorkerRegistry.listWorkers', reqs: ['TCP_WS_HEARTBEAT'] },
       { id: 'REMOTE_WORKER_AUTH', name: 'Remote Worker Authentication', category: 'COMPUTE', inputs: ['auth_token'], entry: 'AnnyWorkerRegistry.authenticate', reqs: ['CRYPTO_HANDSHAKE'] },
