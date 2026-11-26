@@ -9,6 +9,7 @@ export class AnnyVoiceService {
   private voices: SpeechSynthesisVoice[] = [];
   private activeRole: AnnyVoiceRole = DEFAULT_ANNY_VOICE_ROLE;
   private dialectHints: Partial<Record<NigerianLanguageCode, NigerianDialectHint>> = {};
+  private speechGeneration = 0;
   private readonly dialectStorageKey = 'anny_voice_dialect_hints';
 
   private constructor() {
@@ -98,9 +99,10 @@ export class AnnyVoiceService {
   }
 
   private async speakRole(text: string, role: AnnyVoiceRole, onEnd?: () => void, useNativeRouter = false): Promise<void> {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    if (typeof window === 'undefined') return;
     this.stop();
-    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('anny:speech-start', { detail: { role } }));
+    const generation = this.speechGeneration;
+    window.dispatchEvent(new CustomEvent('anny:speech-start', { detail: { role } }));
     const cleanText = this.cleanForSpeech(text);
     if (!cleanText) {
       if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('anny:speech-end'));
@@ -113,6 +115,8 @@ export class AnnyVoiceService {
       if (detected.language) {
         const dialectHint = this.dialectHints[detected.language];
         const handled = await speakWithNigerianTTS({ text: cleanText, language: detected.language, voiceRole: role, dialectHint });
+        // A newer utterance or explicit stop invalidates this async provider result.
+        if (generation !== this.speechGeneration) return;
         if (handled) {
           if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('anny:speech-end'));
           onEnd?.();
@@ -129,6 +133,13 @@ export class AnnyVoiceService {
       }
     }
 
+    if (!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') {
+      window.dispatchEvent(new CustomEvent('anny:speech-error', { detail: { reason: 'BROWSER_TTS_UNAVAILABLE' } }));
+      window.dispatchEvent(new CustomEvent('anny:speech-end'));
+      onEnd?.();
+      return;
+    }
+
     const utterance = new SpeechSynthesisUtterance(cleanText);
     const voice = this.findBrowserVoice(role);
     if (voice) utterance.voice = voice;
@@ -136,11 +147,13 @@ export class AnnyVoiceService {
     utterance.rate = role === 'female' ? 1 : 0.95;
     utterance.pitch = role === 'female' ? 1.02 : 0.92;
     utterance.onend = () => {
-      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('anny:speech-end'));
+      if (generation !== this.speechGeneration) return;
+      window.dispatchEvent(new CustomEvent('anny:speech-end'));
       onEnd?.();
     };
     utterance.onerror = () => {
-      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('anny:speech-end'));
+      if (generation !== this.speechGeneration) return;
+      window.dispatchEvent(new CustomEvent('anny:speech-end'));
       onEnd?.();
     };
     window.speechSynthesis.speak(utterance);
@@ -157,6 +170,7 @@ export class AnnyVoiceService {
   }
 
   public stop(): void {
+    this.speechGeneration += 1;
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       window.dispatchEvent(new CustomEvent('anny:speech-end'));
