@@ -86,6 +86,17 @@ export async function generate3DModelFromText(prompt: string): Promise<ModlyTask
   return response.json();
 }
 
+/** Cancel an active local Modly inference job. */
+export async function cancelLocalModlyTask(taskId: string): Promise<boolean> {
+  const response = await fetchWithAuth(`/api/modly/cancel/${encodeURIComponent(taskId)}`, { method: 'POST' });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.hint || error.error || 'Local 3D job cancellation failed.');
+  }
+  const result = await response.json();
+  return Boolean(result.cancelled);
+}
+
 export async function pollModlyTask(taskId: string, engine: 'local' | 'meshy-cloud' = 'local'): Promise<ModlyTask> {
   const response = await fetchWithAuth(`/api/modly/status/${taskId}?engine=${engine}`);
   if (!response.ok) {
