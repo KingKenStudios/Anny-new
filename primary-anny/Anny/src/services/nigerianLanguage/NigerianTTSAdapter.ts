@@ -4,8 +4,10 @@ import { fetchWithAuth } from '../../lib/apiUtils';
 
 let activeAudio: HTMLAudioElement | null = null;
 let activeObjectUrl: string | null = null;
+let playbackGeneration = 0;
 
 function disposeActiveAudio(): void {
+  playbackGeneration += 1;
   if (activeAudio) {
     activeAudio.pause();
     activeAudio.removeAttribute('src');
@@ -29,6 +31,7 @@ export async function speakWithNigerianTTS(request: NigerianSpeechRequest): Prom
   if (!language) return false;
   // Only one local dialect utterance should play at a time.
   disposeActiveAudio();
+  const generation = playbackGeneration;
   try {
     const response = await fetchWithAuth('/api/sahara/tts', {
       method: 'POST',
@@ -42,7 +45,8 @@ export async function speakWithNigerianTTS(request: NigerianSpeechRequest): Prom
     });
     if (!response.ok) return false;
     const blob = await response.blob();
-    if (!blob.size) return false;
+    if (generation !== playbackGeneration || !blob.size) return false;
+    if (generation !== playbackGeneration) return false;
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     activeObjectUrl = url;
