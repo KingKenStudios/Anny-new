@@ -19,25 +19,30 @@ View your app in AI Studio: https://ai.studio/apps/d75888bd-341e-4403-bc06-f8d51
 3. Run the app:
    `npm run dev`
 
-## 3D Model Generation (image → 3D mesh, real local AI)
+## 3D Model Generation (local image-to-mesh and text-to-3D)
 
-3D generation uses the bundled `modly-main/` engine (open-source, runs locally on your GPU) — not a cloud API. It's a separate process from the main app.
+ANNY's bundled `modly-main/` engine performs image-to-mesh generation locally on the GPU. It is separate from the main application.
 
 **One-time setup:**
 ```bash
 npm run modly:setup
 ```
-This creates a Python virtual environment in `modly-main/api/.venv` and installs the FastAPI backend's dependencies. The first actual generation run will additionally download the AI model weights from Hugging Face (several GB) — this requires a GPU and internet access, and only happens once.
+This creates the Python environment and installs the local API dependencies. Model weights are downloaded from Hugging Face when a model is first used; model installation requires internet access, but subsequent inference can run offline when the weights are present.
 
-**Start it (in a separate terminal, alongside `npm run dev`):**
+**Start the local mesh engine:**
 ```bash
 npm run modly:start
 ```
-This runs the engine at `http://127.0.0.1:8765`. The main app's server proxies `/api/modly/*` requests to it automatically. You can check `GET /api/modly/health` to see whether it's reachable.
+The API listens at `http://127.0.0.1:8765`; the main ANNY server proxies authenticated `/api/modly/*` requests.
 
-**Using it:** open the 3D Generator (Neural Lab) panel and upload a photo — it's sent to the local engine for real image-to-3D reconstruction, then rendered with animation/orbit controls once ready. Text-only prompts (no image) instead use an optional cloud fallback (Meshy) if you set `MESHY_API_KEY` in `.env.local` — there is no simulated/fake result if neither is configured; you'll get an honest error telling you what to set up.
+**Open the sidebar → 3D Generator:**
+- **Local / Offline:** for text prompts, ANNY first creates a reference raster with a locally hosted Stable Diffusion WebUI-compatible API (`SD_WEBUI_URL`, e.g. `http://127.0.0.1:7860`, launched with its API enabled), then sends that image to the local Modly mesh model. Both local models must be configured; this path does not fall back to cloud providers.
+- **Cloud:** text-to-3D uses Meshy only when `MESHY_API_KEY` or `MODLY_API_KEY` is configured on the server. Cloud generation may incur provider charges.
+- **Image-to-3D:** the existing local image-upload endpoint remains available through the Modly service.
 
-**Note:** I configured and verified the server-side wiring against the engine's real API contract (`modly-main/api/routers/generation.py`), and confirmed every endpoint fails honestly with no engine running. I was not able to run actual GPU inference in this environment — no GPU is available here and Hugging Face's model-weight host isn't reachable from this sandbox. The first real end-to-end generation should be tested on your machine.
+The generator shows job status/progress, links the reference image when the local text pipeline created one, and previews/downloads the resulting GLB when the provider returns a verified model URL. Cancel is supported for local Modly jobs.
+
+**Validation note:** CI validates source, tests, type-checks and builds. Actual GPU inference and model-quality review must still be run on a machine with the required model weights and hardware.
 
 
 ## Persistent and offline vector memory
