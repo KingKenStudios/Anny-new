@@ -335,7 +335,7 @@ class CreativeGenerationService {
       },
       {
         id: 'local-sd-webui',
-        name: 'Local Stable Diffusion / ComfyUI Worker',
+        name: 'Local Stable Diffusion WebUI Worker',
         domain: 'IMAGE',
         kind: 'local_worker',
         configured: Boolean(localSdUrl),
@@ -346,7 +346,7 @@ class CreativeGenerationService {
         status: localSdUrl ? 'DEGRADED' : 'UNCONFIGURED',
         detail: localSdUrl
           ? 'A local diffusion endpoint URL is configured, but the worker has not passed a live health and generation check.'
-          : 'Optional: set SD_WEBUI_URL for free local offline raster image generation.',
+          : 'Optional: set SD_WEBUI_URL to a local Stable Diffusion WebUI-compatible API for free offline raster image generation.',
       },
       {
         id: 'gemini-omni-video',

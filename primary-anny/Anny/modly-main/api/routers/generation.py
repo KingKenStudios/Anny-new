@@ -10,6 +10,8 @@ from services.generators.base import smooth_progress, GenerationCancelled
 
 import re as _re
 from services.generator_registry import generator_registry, WORKSPACE_DIR
+from services.generation_queue import GenerationQueue, is_cancellable_status
+from services.image_upload_policy import MAX_IMAGE_UPLOAD_BYTES, validate_uploaded_image
 from schemas.generation import JobStatus
 
 router = APIRouter(tags=["generation"])
@@ -18,6 +20,7 @@ _jobs: Dict[str, JobStatus] = {}
 _cancelled: set = set()
 _cancel_events: Dict[str, threading.Event] = {}
 _completed_at: Dict[str, float] = {}
+generation_queue = GenerationQueue()
 
 _JOB_TTL = 1800  # purge terminal jobs after 30 minutes
 
@@ -43,8 +46,15 @@ async def generate_from_image(
     texture_resolution: int = Form(1024),
     params: str = Form("{}"),
 ):
-    if not image.content_type or not image.content_type.startswith("image/"):
-        raise HTTPException(400, "File must be an image")
+    # Read at most one byte beyond the limit so a forged Content-Length or
+    # non-browser client cannot make this endpoint allocate an unbounded payload.
+    image_bytes = await image.read(MAX_IMAGE_UPLOAD_BYTES + 1)
+    if len(image_bytes) > MAX_IMAGE_UPLOAD_BYTES:
+        raise HTTPException(413, "Image must be 25 MB or smaller.")
+    try:
+        validate_uploaded_image(image.content_type, image_bytes)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
     if remesh not in ("quad", "triangle", "none"):
         raise HTTPException(400, "remesh must be 'quad', 'triangle', or 'none'")
@@ -60,7 +70,8 @@ async def generate_from_image(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    generator_registry.switch_model(model_id)
+    # Model switching is deferred until the serialized generation runner owns the lock.
+    # Switching here would race with other requests before their jobs begin.
 
     # Parse model-specific params from JSON and merge with common fields
     try:
@@ -69,7 +80,6 @@ async def generate_from_image(
         model_params = {}
 
     job_id      = str(uuid.uuid4())
-    image_bytes = await image.read()
     full_params = {
         "remesh":             remesh,
         "enable_texture":     enable_texture,
@@ -83,7 +93,7 @@ async def generate_from_image(
     _jobs[job_id] = job
     _cancel_events[job_id] = threading.Event()
 
-    background_tasks.add_task(_run_generation, job_id, image_bytes, full_params, collection)
+    background_tasks.add_task(_run_generation, job_id, image_bytes, full_params, collection, model_id)
 
     return {"job_id": job_id}
 
@@ -102,27 +112,49 @@ async def cancel_job(job_id: str):
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(404, f"Job {job_id} not found")
+    # Terminal jobs cannot be cancelled; avoid retaining stale cancellation IDs.
+    if not is_cancellable_status(job.status):
+        return {"cancelled": False, "status": job.status}
     _cancelled.add(job_id)
     if job_id in _cancel_events:
         _cancel_events[job_id].set()
-    if job.status in ("pending", "running"):
-        job.status = "cancelled"
-        _completed_at[job_id] = time.monotonic()
-    # Kill the active generator subprocess immediately so inference stops now.
-    # _run_generation will catch the resulting exception, see job_id in _cancelled,
-    # and return cleanly without setting an error status.
-    try:
-        gen = generator_registry._generators.get(generator_registry._active_id)
-        if gen is not None and hasattr(gen, "_proc") and gen._proc and gen._proc.poll() is None:
-            gen._proc.kill()
-            gen._loaded = False
-            gen._proc = None
-    except Exception:
-        pass
+    job.status = "cancelled"
+    _completed_at[job_id] = time.monotonic()
+    # Only terminate the subprocess if this job currently owns the generator.
+    # Queued cancellation must never kill another job's active inference.
+    if generation_queue.active_job_id == job_id:
+        try:
+            gen = generator_registry._generators.get(generator_registry._active_id)
+            if gen is not None and hasattr(gen, "_proc") and gen._proc and gen._proc.poll() is None:
+                gen._proc.kill()
+                gen._loaded = False
+                gen._proc = None
+        except Exception:
+            pass
     return {"cancelled": True}
 
 
-async def _run_generation(job_id: str, image_bytes: bytes, params: dict, collection: str = "Default") -> None:
+async def _run_generation(job_id: str, image_bytes: bytes, params: dict, collection: str = "Default", model_id: str | None = None) -> None:
+    # Modly's model registry and generator subprocess are shared. Serialize jobs so
+    # concurrent requests cannot race model switches, output paths, or cancellation.
+    async def execute() -> None:
+        if model_id:
+            generator_registry.switch_model(model_id)
+        await _run_generation_locked(job_id, image_bytes, params, collection)
+
+    try:
+        ran = await generation_queue.run(job_id, lambda: job_id in _cancelled, execute)
+        if not ran:
+            return
+    except Exception as exc:
+        job = _jobs.get(job_id)
+        if job and job_id not in _cancelled:
+            job.status = "error"
+            job.error = f"Generation setup failed: {exc}"
+            _completed_at[job_id] = time.monotonic()
+
+
+async def _run_generation_locked(job_id: str, image_bytes: bytes, params: dict, collection: str = "Default") -> None:
     job = _jobs[job_id]
     job.status = "running"
 

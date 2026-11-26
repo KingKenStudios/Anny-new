@@ -22,6 +22,7 @@ import {
   Network,
   Server,
   ShieldCheck,
+  Box,
 } from 'lucide-react';
 import logoImg from './assets/logo.png';
 
@@ -74,6 +75,7 @@ export const AnnySlideMenu: React.FC<AnnySlideMenuProps> = ({
     { key: 'knowledge', label: 'Knowledge', icon: BookOpen },
     { key: 'memory', label: 'Memory', icon: Brain },
     { key: 'models', label: 'Models', icon: Cpu },
+    { key: '3d-generator', label: '3D Generator', icon: Box },
     { key: 'tools', label: 'Tools', icon: Wrench },
     { key: 'engineering-safety', label: 'Engineering & Safety', icon: Calculator },
     { key: 'media-arch-studio', label: 'Architecture & Media', icon: Building2 },

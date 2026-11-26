@@ -77,6 +77,7 @@ import {
   localSttService,
   parseBase64AudioPayload,
 } from './src/services/localSttService.ts';
+import { isValidNigerianDialectHint, type NigerianLanguageCode } from './src/services/nigerianLanguage/types.ts';
 import {
   voiceNoteService,
   isValidVoiceNoteId,
@@ -228,6 +229,7 @@ async function startServer() {
     '/api/vision/analyze',
     '/api/sahara',
     '/api/modly/generate',
+    '/api/modly/generate-from-text-local',
     '/api/v1/anny/intelligence',
     '/api/anny/intelligence',
     '/api/workers'
@@ -3600,9 +3602,16 @@ async function startServer() {
   });
 
   app.post("/api/sahara/tts", requireAuth(), async (req, res) => {
-    const { text, model, language } = req.body || {};
+    const { text, model, language, dialectHint } = req.body || {};
     const key = process.env.HUGGINGFACE_API_KEY;
     if (!text || typeof text !== 'string') return res.status(400).json({ error: "text is required" });
+    const supportedLanguages = new Set<NigerianLanguageCode>(['yo', 'ha', 'ig', 'pcm', 'en-ng']);
+    if (dialectHint && (!supportedLanguages.has(language) || !isValidNigerianDialectHint(language, dialectHint))) {
+      return res.status(400).json({ error: 'Dialect hint is invalid or does not match the requested language.' });
+    }
+    if (dialectHint && !process.env.WAZOBIA_TTS_URL) {
+      return res.status(503).json({ error: 'Dialect-aware synthesis requires the configured local Wazobia-compatible speech service. Remote fallback models do not honor dialect hints.' });
+    }
 
     // Preferred production path: a locally hosted WazobiaVoice-compatible HTTP
     // service. This keeps Nigerian speech on the user's infrastructure and avoids
@@ -3612,15 +3621,18 @@ async function startServer() {
         const localResponse = await axios.post(process.env.WAZOBIA_TTS_URL, {
           text,
           language,
-          voiceRole: req.body?.voiceRole || 'female'
+          voiceRole: req.body?.voiceRole === 'male' ? 'male' : 'female',
+          ...(dialectHint ? { dialectHint } : {})
         }, { responseType: 'arraybuffer', timeout: 60000 });
         const contentType = String(localResponse.headers?.['content-type'] || 'audio/wav');
-        if (localResponse.data?.byteLength) {
+        if (localResponse.data?.byteLength && contentType.toLowerCase().startsWith('audio/')) {
           res.set('Content-Type', contentType);
           return res.send(Buffer.from(localResponse.data));
         }
+        if (dialectHint) return res.status(502).json({ error: 'Local speech service returned no valid audio for the requested dialect.' });
       } catch (localError: any) {
         console.warn('[Sahara TTS] Local Nigerian TTS adapter unavailable:', localError?.message || localError);
+        if (dialectHint) return res.status(503).json({ error: 'Local dialect-aware speech service failed; dialect fallback is disabled to avoid silently changing pronunciation.' });
       }
     }
 
@@ -4919,16 +4931,27 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
   const MODLY_LOCAL_URL = process.env.MODLY_LOCAL_URL || "http://127.0.0.1:8765";
 
   app.get("/api/modly/health", async (_req, res) => {
+    const localRaster = creativeGenerationService.getCreativeProviders()
+      .find(provider => provider.id === 'local-sd-webui');
+    const rasterConfigured = Boolean(localRaster?.configured);
     try {
       const r = await axios.get(`${MODLY_LOCAL_URL}/health`, { timeout: 2000 }).catch(() =>
         axios.get(`${MODLY_LOCAL_URL}/docs`, { timeout: 2000 })
       );
-      res.json({ available: r.status < 400, engine: "local", url: MODLY_LOCAL_URL });
+      res.json({
+        available: r.status < 400,
+        engine: "local",
+        url: MODLY_LOCAL_URL,
+        localRasterConfigured: rasterConfigured,
+        localRasterStatus: rasterConfigured ? 'CONFIGURED_UNVERIFIED' : 'UNCONFIGURED',
+      });
     } catch {
       res.json({
         available: false,
         engine: "local",
         url: MODLY_LOCAL_URL,
+        localRasterConfigured: rasterConfigured,
+        localRasterStatus: rasterConfigured ? 'CONFIGURED_UNVERIFIED' : 'UNCONFIGURED',
         hint: "Local Modly 3D engine is not running. See README.md → '3D Model Generation' to start it (requires Python + GPU).",
       });
     }
@@ -4965,9 +4988,10 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
     }
 
     // No image provided — fall back to real cloud text-to-3D only if a genuine key is configured.
-    const { prompt } = req.body || {};
+    const rawPrompt = req.body?.prompt;
+    const prompt = typeof rawPrompt === 'string' ? rawPrompt.trim() : '';
     const modlyKey = process.env.MODLY_API_KEY || process.env.MESHY_API_KEY;
-    if (!prompt) return res.status(400).json({ error: "Provide either an image file or a text prompt." });
+    if (!prompt || prompt.length > 4000) return res.status(400).json({ error: "A text prompt between 1 and 4000 characters is required." });
     if (!modlyKey) {
       return res.status(503).json({
         error: "No 3D generation engine available.",
@@ -4981,10 +5005,133 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
         { prompt, mode: "preview" },
         { headers: { Authorization: `Bearer ${modlyKey}` } }
       );
-      res.json({ ...response.data, engine: "meshy-cloud" });
+      const taskId = String(response.data?.task_id || response.data?.id || '').trim();
+      if (!taskId) {
+        return res.status(502).json({ error: 'Cloud 3D provider returned no task identifier.' });
+      }
+      return res.status(202).json({
+        id: taskId,
+        status: 'pending',
+        progress: Number(response.data?.progress) || 0,
+        engine: 'meshy-cloud',
+      });
     } catch (err: any) {
       console.error("[Modly] Cloud synthesis failed:", err.response?.data || err.message);
       res.status(502).json({ error: "Cloud 3D synthesis request failed." });
+    }
+  });
+
+  // Offline text-to-3D chain: local raster diffusion -> local image-to-mesh engine.
+  // Requires a locally hosted raster model and the local Modly API; no cloud fallback.
+  app.post("/api/modly/generate-from-text-local", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+    if (!prompt || prompt.length > 4000) {
+      return res.status(400).json({ error: 'A valid prompt (1-4000 characters) is required.' });
+    }
+
+    const localImageProvider = creativeGenerationService.getCreativeProviders()
+      .find(provider => provider.id === 'local-sd-webui');
+    const configuredSdUrl = String(process.env.SD_WEBUI_URL || '').trim();
+    let localSdEndpoint = false;
+    try {
+      const parsedSdUrl = new URL(configuredSdUrl);
+      const host = parsedSdUrl.hostname.toLowerCase();
+      const ipv4 = net.isIPv4(host) ? host.split('.').map(Number) : null;
+      const privateIpv4 = Boolean(ipv4 && (
+        ipv4[0] === 10 || ipv4[0] === 127 ||
+        (ipv4[0] === 172 && ipv4[1] >= 16 && ipv4[1] <= 31) ||
+        (ipv4[0] === 192 && ipv4[1] === 168)
+      ));
+      const privateIpv6 = net.isIPv6(host) && (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80:'));
+      localSdEndpoint = ['localhost', '::1'].includes(host) || host.endsWith('.localhost') || host.endsWith('.local') || privateIpv4 || privateIpv6;
+    } catch {
+      localSdEndpoint = false;
+    }
+    if (!localImageProvider?.configured || !localSdEndpoint) {
+      return res.status(503).json({
+        error: 'Local text-to-3D image stage is not configured.',
+        hint: 'Configure SD_WEBUI_URL to a localhost or private-network Stable Diffusion WebUI-compatible raster API (launch it with API access enabled). Public endpoints are rejected and no cloud fallback is used.',
+      });
+    }
+
+    try {
+      const referencePrompt = [
+        'Generate a clean reference image for single-object 3D reconstruction.',
+        'Show exactly one complete object, centered and fully visible, with a clear silhouette.',
+        'Use a plain neutral background, studio lighting, no text, no watermark, no extra objects.',
+        'Use a three-quarter front view and realistic materials.',
+        'Object description:',
+        prompt,
+      ].join(' ');
+
+      const imageResult = await creativeGenerationService.generateCreativeImage({
+        prompt: referencePrompt,
+        aspectRatio: '1:1',
+        count: 1,
+        highResolution: false,
+        providerPreference: 'local-sd',
+        enableVisionQa: false,
+        ownerUserId: req.authUser?.uid || req.user?.userId || req.user?.id || 'anonymous',
+        ownerOrgId: req.authUser?.companyId || 'personal',
+      });
+      if (!imageResult.success || !imageResult.primaryImageUrl) {
+        return res.status(503).json({
+          error: 'Local reference-image generation failed.',
+          detail: imageResult.error || 'The local image model did not produce a validated raster image.',
+          hint: 'Check the local SD worker and model availability, then retry. Cloud generation is intentionally disabled for this workflow.',
+        });
+      }
+
+      const imageData = imageResult.primaryImageUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,([\s\S]+)$/i);
+      if (!imageData) {
+        return res.status(502).json({ error: 'The local image provider returned an unsupported image format.' });
+      }
+
+      const imageBytes = Buffer.from(imageData[2], 'base64');
+      const imageMime = imageData[1].toLowerCase();
+      const form = new FormData();
+      form.append('image', imageBytes, {
+        filename: 'anny-local-text3d-reference.' + (imageMime === 'image/jpeg' ? 'jpg' : imageMime.split('/')[1]),
+        contentType: imageMime,
+      });
+      form.append('collection', 'ANNY_TextTo3D');
+      const localResponse = await axios.post(`${MODLY_LOCAL_URL}/generate/from-image`, form, {
+        headers: form.getHeaders(),
+        timeout: 15000,
+      });
+      return res.status(202).json({
+        id: localResponse.data.job_id,
+        status: 'pending',
+        progress: 0,
+        engine: 'local',
+        pipeline: 'local-text-image-to-3d',
+        imageProvider: imageResult.provider,
+        imageModel: imageResult.model,
+        referenceImageUrl: imageResult.images?.[0]?.downloadUrl,
+      });
+    } catch (err: any) {
+      console.error('[Modly] Local text-to-3D pipeline failed:', err.code || err.message);
+      return res.status(503).json({
+        error: 'Local text-to-3D pipeline failed to start.',
+        hint: 'Verify the local image-generation worker and Modly 3D API are running. This workflow does not use paid cloud fallbacks.',
+      });
+    }
+  });
+
+  app.post("/api/modly/cancel/:id", requireAuth(), async (req, res) => {
+    const jobId = String(req.params.id || '').trim();
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(jobId)) {
+      return res.status(400).json({ error: 'Invalid 3D job identifier.' });
+    }
+    try {
+      const current = await axios.get(`${MODLY_LOCAL_URL}/generate/status/${encodeURIComponent(jobId)}`, { timeout: 5000 });
+      if (!['pending', 'running'].includes(String(current.data?.status || ''))) {
+        return res.json({ cancelled: false, id: jobId, status: current.data?.status, engine: 'local' });
+      }
+      const response = await axios.post(`${MODLY_LOCAL_URL}/generate/cancel/${encodeURIComponent(jobId)}`, {}, { timeout: 5000 });
+      return res.json({ cancelled: Boolean(response.data?.cancelled), id: jobId, engine: 'local' });
+    } catch (err: any) {
+      return res.status(503).json({ error: 'Local Modly cancellation failed.', hint: 'Check whether the local generation job is still active.' });
     }
   });
 
@@ -4999,7 +5146,19 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
         const response = await axios.get(`https://api.meshy.ai/v1/text-to-3d/${id}`, {
           headers: { Authorization: `Bearer ${modlyKey}` },
         });
-        return res.json(response.data);
+        const providerStatus = String(response.data?.status || '').toUpperCase();
+        const status = providerStatus === 'SUCCEEDED' ? 'succeeded'
+          : providerStatus === 'FAILED' || providerStatus === 'CANCELED' ? 'failed'
+          : providerStatus === 'IN_PROGRESS' ? 'processing' : 'pending';
+        const modelUrls = response.data?.model_urls || {};
+        return res.json({
+          id,
+          status,
+          progress: Number(response.data?.progress) || 0,
+          model_url: modelUrls.glb || modelUrls.fbx || modelUrls.obj || response.data?.model_url,
+          error: response.data?.error || response.data?.message,
+          engine: 'meshy-cloud',
+        });
       } catch {
         return res.status(500).json({ error: "Modly status uplink failed." });
       }

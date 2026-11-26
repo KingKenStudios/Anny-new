@@ -58,6 +58,8 @@ interface VisionSensorProps {
   isGuidanceActive?: boolean;
   isStealth?: boolean;
   isAnalyzing?: boolean;
+  /** Opening Vision starts the authorized camera immediately; set false only for explicit non-camera embeds. */
+  autoStart?: boolean;
 }
 
 export interface VisionSensorRef {
@@ -75,7 +77,7 @@ const MODE_LABELS: Record<VisionOperatingMode, string> = {
 };
 
 const VisionSensor = forwardRef<VisionSensorRef, VisionSensorProps>(
-  ({ onCapture, onAnalyze, onClose, onLiveTranscript, isAnalyzing = false }, ref) => {
+  ({ onCapture, onAnalyze, onClose, onLiveTranscript, isAnalyzing = false, autoStart = true }, ref) => {
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -100,15 +102,20 @@ const VisionSensor = forwardRef<VisionSensorRef, VisionSensorProps>(
     perceptionRef.current = perception;
 
     const lastTranscriptIdRef = useRef<string | null>(null);
+    const onLiveTranscriptRef = useRef(onLiveTranscript);
+    onLiveTranscriptRef.current = onLiveTranscript;
+    const autoStartAttemptedRef = useRef(false);
 
+    // Keep the subscription stable: parent rerenders (including chat typing) must
+    // never tear down an active camera session just because a callback changed.
     useEffect(() => {
       const unsubscribe = liveVisionController.subscribe((nextState) => {
         setPerception(nextState);
-        if (onLiveTranscript && nextState.recentTranscripts.length > 0) {
+        if (onLiveTranscriptRef.current && nextState.recentTranscripts.length > 0) {
           const latest = nextState.recentTranscripts[nextState.recentTranscripts.length - 1];
           if (latest.final && latest.id !== lastTranscriptIdRef.current) {
             lastTranscriptIdRef.current = latest.id;
-            onLiveTranscript(latest);
+            onLiveTranscriptRef.current(latest);
           }
         }
       });
@@ -120,11 +127,43 @@ const VisionSensor = forwardRef<VisionSensorRef, VisionSensorProps>(
         unsubscribe();
         liveVisionController.stop();
       };
-    }, [onLiveTranscript]);
+    }, []);
 
     useEffect(() => {
       liveVisionController.attachVideoElement(videoRef.current);
     }, [isMinimized, isExpanded]);
+
+    // Vision activation is the user's explicit opt-in. Start camera as soon as
+    // this panel mounts, rather than requiring a second "Start" interaction.
+    useEffect(() => {
+      if (!autoStart || autoStartAttemptedRef.current) return;
+      autoStartAttemptedRef.current = true;
+      let cancelled = false;
+      const activate = async () => {
+        setIsBusy(true);
+        setLocalError(null);
+        try {
+          liveVisionController.attachVideoElement(videoRef.current);
+          const res = await liveVisionController.start({
+            source: 'camera',
+            resolution,
+            mode,
+            offline: offlineMode,
+          });
+          if (cancelled) return;
+          if (!res.ok && res.error) setLocalError(res.error);
+          else void liveVisionController.refreshDevices().then((list) => {
+            if (!cancelled) setDevices(list);
+          });
+        } catch (error) {
+          if (!cancelled) setLocalError(error instanceof Error ? error.message : 'Vision could not start.');
+        } finally {
+          if (!cancelled) setIsBusy(false);
+        }
+      };
+      void activate();
+      return () => { cancelled = true; };
+    }, [autoStart, resolution, mode, offlineMode]);
 
     // Synchronized overlay rendering loop (runs smoothly on rAF without blocking video)
     useEffect(() => {
@@ -525,20 +564,24 @@ const VisionSensor = forwardRef<VisionSensorRef, VisionSensorProps>(
             <div className="absolute inset-0 flex flex-col items-center justify-center p-5 text-center bg-gradient-to-b from-[#0b1020] to-[#06080f]">
               <ScanEye className="w-8 h-8 text-sky-400 mb-2" />
               <p className="text-xs font-semibold text-white mb-1">
-                Explicit Camera & Video Permission Required
+                {isBusy ? 'Activating Vision…' : effectiveError ? 'Vision is ready to retry' : 'Vision is starting'}
               </p>
               <p className="text-[11px] text-slate-400 max-w-xs mb-4 leading-relaxed">
-                Start continuous live vision with real-time local motion/object tracking and optional live AI streaming. Nothing is recorded or stored automatically.
+                {isBusy
+                  ? 'Camera access is being requested and the live perception session is initializing. Chat and other tasks remain available.'
+                  : 'Camera permission is requested by your browser. Live frames are processed for this session and are not recorded automatically.'}
               </p>
               <div className="flex flex-wrap items-center justify-center gap-2">
-                <button
-                  onClick={handleStartCamera}
-                  disabled={isBusy}
-                  className="px-3.5 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Camera className="w-3.5 h-3.5" />
-                  <span>{isBusy ? 'Starting...' : 'Start Camera'}</span>
-                </button>
+                {effectiveError && (
+                  <button
+                    onClick={handleStartCamera}
+                    disabled={isBusy}
+                    className="px-3 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Retry Camera</span>
+                  </button>
+                )}
                 <button
                   onClick={handleStartScreen}
                   disabled={isBusy}

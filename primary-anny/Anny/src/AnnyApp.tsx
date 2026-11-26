@@ -11,6 +11,7 @@ import { AnnyModelsView } from './views/AnnyModelsView';
 import { AnnyToolsView } from './views/AnnyToolsView';
 import { AnnyIntegrationsView } from './views/AnnyIntegrationsView';
 import { AnnySettingsView } from './views/AnnySettingsView';
+import { Anny3DGeneratorView } from './views/Anny3DGeneratorView';
 import { KingKenStudiosView } from './views/KingKenStudiosView';
 import { EngineeringSafetyView } from './views/EngineeringSafetyView';
 import { AnnyMediaArchStudioView } from './views/AnnyMediaArchStudioView';
@@ -237,6 +238,10 @@ export const AnnyApp: React.FC<AnnyAppProps> = (props) => {
       return <AnnyPromptsView onToggleMobileMenu={handleToggleMenu} onUsePrompt={handleOpenChatWithPrompt} />;
     }
 
+    if (currentTab === '3d-generator' || currentTab === '3d-studio') {
+      return <Anny3DGeneratorView onToggleMobileMenu={handleToggleMenu} />;
+    }
+
     if (currentTab === 'models' || currentTab === 'anny-models') {
       return (
         <AnnyModelsView
@@ -339,6 +344,7 @@ export const AnnyApp: React.FC<AnnyAppProps> = (props) => {
     if (currentTab === 'knowledge' || currentTab === 'knowledge-base' || currentTab === 'anny-knowledge') return 'knowledge';
     if (currentTab === 'memory' || currentTab === 'anny-memory') return 'memory';
     if (currentTab === 'prompt-library' || currentTab === 'prompts' || currentTab === 'anny-prompts') return 'prompt-library';
+    if (currentTab === '3d-generator' || currentTab === '3d-studio') return '3d-generator';
     if (currentTab === 'models' || currentTab === 'anny-models') return 'models';
     if (currentTab === 'tools' || currentTab === 'anny-tools') return 'tools';
     if (currentTab === 'engineering-safety' || currentTab === 'safety') return 'engineering-safety';

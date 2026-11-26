@@ -1,26 +1,69 @@
 import { NigerianLanguageCode, NigerianLanguageDetection } from './types';
 
-const RULES: Array<{ language: NigerianLanguageCode; terms: RegExp[] }> = [
-  { language: 'yo', terms: [/ẹ|ọ|ṣ|à|á|è|é|ì|í|ò|ó|ù|ú/i, /báwo ni/i, /ẹ káàbọ̀/i, /mo dúpẹ́/i, /ó ṣeun/i, /mo fẹ́/i, /kí ni/i] },
-  { language: 'ig', terms: [/ị|ọ|ụ|ṅ/i, /kedu/i, /daalụ/i, /biko/i, /anyị/i, /imeela/i, /nna/i] },
-  { language: 'ha', terms: [/ƙ|ɓ|ɗ/i, /sannu/i, /ina kwana/i, /yaya/i, /na gode/i, /don Allah/i, /lafiya/i] },
-  { language: 'pcm', terms: [/wetin/i, /dey/i, /abeg/i, /una/i, /na so/i, /no wahala/i, /wan/i, /chop/i, /how you dey/i] },
-  { language: 'en-ng', terms: [/abeg/i, /naija/i, /wahala/i, /una/i, /wetin/i, /dey/i]
+type LanguageRule = {
+  language: NigerianLanguageCode;
+  strong: RegExp[];
+  phrases: RegExp[];
+  common: RegExp[];
+};
+
+const RULES: LanguageRule[] = [
+  {
+    language: 'yo',
+    strong: [/ẹ|ọ|ṣ|à|á|è|é|ì|í|ò|ó|ù|ú/i],
+    phrases: [/báwo ni/i, /bawo ni/i, /ẹ káàbọ̀/i, /e kaaro/i, /e kaasan/i, /e ku/i, /mo dúpẹ́/i, /ó ṣeun/i, /mo fẹ́/i, /kí ni/i],
+    common: [/e se/i, /omo/i, /mo n/i, /jọ̀ọ́/i],
+  },
+  {
+    language: 'ig',
+    strong: [/ị|ọ|ụ|ṅ/i],
+    phrases: [/kedu/i, /daalụ/i, /biko/i, /anyị/i, /imeela/i, /nna/i],
+    common: [/ndewo/i, /maka/i],
+  },
+  {
+    language: 'ha',
+    strong: [/ƙ|ɓ|ɗ/i],
+    phrases: [/sannu/i, /ina kwana/i, /yaya/i, /na gode/i, /don Allah/i, /lafiya/i],
+    common: [/kai/i, /to/i],
+  },
+  {
+    language: 'pcm',
+    strong: [/wetin/i, /dey/i, /una/i, /na so/i, /no wahala/i, /chop/i, /how you dey/i, /wan/i, /pidgin english/i],
+    phrases: [/abeg/i, /make we/i, /e don/i, /you sabi/i],
+    common: [/na/i, /sha/i],
+  },
+  {
+    language: 'en-ng',
+    strong: [/\bnaija\b/i, /\bnigerian english\b/i, /\bpidgin english\b/i],
+    phrases: [/\b(?:in|from) lagos nigeria\b/i, /\bnigeria\b/i],
+    common: [],
   },
 ];
 
 export function detectNigerianLanguage(text: string): NigerianLanguageDetection {
   if (!text?.trim()) return { language: null, confidence: 0 };
-  const scores = new Map<NigerianLanguageCode, number>();
-  for (const rule of RULES) {
-    let score = 0;
-    for (const term of rule.terms) if (term.test(text)) score += 1;
-    if (score > 0) scores.set(rule.language, score);
-  }
-  const ranked = [...scores.entries()].sort((a, b) => b[1] - a[1]);
+
+  const ranked = RULES.map((rule) => {
+    const strongCount = rule.strong.reduce((sum, pattern) => sum + Number(pattern.test(text)), 0);
+    const phraseCount = rule.phrases.reduce((sum, pattern) => sum + Number(pattern.test(text)), 0);
+    const commonCount = rule.common.reduce((sum, pattern) => sum + Number(pattern.test(text)), 0);
+    return {
+      language: rule.language,
+      score: strongCount * 4 + phraseCount * 3 + commonCount,
+      strongCount,
+      phraseCount,
+    };
+  }).filter(candidate => candidate.score > 0)
+    .sort((a, b) => b.score - a.score || b.strongCount - a.strongCount || b.phraseCount - a.phraseCount);
+
   if (!ranked.length) return { language: null, confidence: 0 };
-  const [language, score] = ranked[0];
-  const confidence = Math.min(0.99, score / Math.max(1, RULES.find(r => r.language === language)?.terms.length || 1));
+
+  const winner = ranked[0];
+  const runnerUp = ranked[1];
+  // Ambiguous one-word overlaps (e.g. "na" or "abeg") are not confident enough
+  // to force a language-specific voice; stronger phrases/orthography take priority.
+  const margin = winner.score - (runnerUp?.score || 0);
+  const confidence = Math.min(0.99, winner.score / 8) * (runnerUp ? Math.min(1, margin / 3) : 1);
   if (confidence < 0.34) return { language: null, confidence };
-  return { language, confidence };
+  return { language: winner.language, confidence };
 }

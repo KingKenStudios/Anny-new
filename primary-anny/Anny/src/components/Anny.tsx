@@ -45,6 +45,8 @@ export interface AnnyProps {
 
 const VIEW_TO_SUBTAB_MAP: Record<string, string> = {
   settings: 'settings',
+  '3d-generator': '3d-generator',
+  '3d-studio': '3d-generator',
   agents: 'ai-agents',
   cybersecurity: 'watchdog',
   watchdog: 'watchdog',

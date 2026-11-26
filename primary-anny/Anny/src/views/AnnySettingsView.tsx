@@ -14,6 +14,7 @@ import {
   Server
 } from 'lucide-react';
 import { annyVoiceService } from '../services/annyVoiceService';
+import { NIGERIAN_DIALECT_HINTS, type NigerianDialectHint, type NigerianLanguageCode } from '../services/nigerianLanguage/types';
 import { safeFetchJson } from '../lib/apiUtils';
 import { safeStorage } from '../lib/storage';
 
@@ -27,11 +28,43 @@ const DEFAULT_SETTINGS = {
     'You are Anny, the flagship AI intelligence owned by Akinwumi Kehinde / Akinwumi Group for the AIOS ecosystem. You specialize in generating full-stack software, creative media, engineering analysis, and honest operational guidance.',
 };
 
+const DIALECT_LABELS: Record<NigerianDialectHint, string> = {
+  'yo-ekiti': 'Ekiti Yoruba',
+  'yo-ijebu': 'Ijebu Yoruba',
+  'yo-oyo': 'Oyo Yoruba',
+  'yo-ondo': 'Ondo Yoruba',
+  'yo-lagos': 'Lagos Yoruba',
+  'ha-kano': 'Kano Hausa',
+  'ha-sokoto': 'Sokoto Hausa',
+  'ha-zaria': 'Zaria Hausa',
+  'ig-anambra': 'Anambra Igbo',
+  'ig-enugu': 'Enugu Igbo',
+  'ig-imo': 'Imo Igbo',
+  'pcm-lagos': 'Lagos Pidgin',
+  'pcm-port-harcourt': 'Port Harcourt Pidgin',
+  'pcm-general': 'General Nigerian Pidgin',
+  'en-ng-lagos': 'Lagos Nigerian English',
+  'en-ng-general': 'General Nigerian English',
+};
+
+const LANGUAGE_LABELS: Record<NigerianLanguageCode, string> = {
+  yo: 'Yoruba',
+  ha: 'Hausa',
+  ig: 'Igbo',
+  pcm: 'Nigerian Pidgin',
+  'en-ng': 'Nigerian English',
+};
+
 const VoiceSettingsSection: React.FC = () => {
   const [role, setRole] = useState<'female' | 'male'>(() => annyVoiceService.getSelectedRole());
+  const [dialectHints, setDialectHints] = useState(() => annyVoiceService.getDialectHints());
   const selectRole = (next: 'female' | 'male') => {
     setRole(next);
     annyVoiceService.setSelectedRole(next);
+  };
+  const selectDialect = (language: NigerianLanguageCode, value: string) => {
+    annyVoiceService.setDialectHint(language, value ? value as NigerianDialectHint : null);
+    setDialectHints(annyVoiceService.getDialectHints());
   };
 
   return (
@@ -72,6 +105,31 @@ const VoiceSettingsSection: React.FC = () => {
             </button>
           );
         })}
+      </div>
+      <div className="border-t border-white/10 pt-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-white">Optional Nigerian language dialect hints</h3>
+          <p className="text-[11px] text-slate-500 mt-1">
+            Hints are sent only to a configured local dialect-capable speech service. Native dialect accuracy is not guaranteed; when a selected hint cannot be synthesized, ANNY will not silently switch pronunciation.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {(Object.keys(NIGERIAN_DIALECT_HINTS) as NigerianLanguageCode[]).map(language => (
+            <label key={language} className="flex flex-col gap-1.5 text-xs text-slate-300">
+              <span>{LANGUAGE_LABELS[language]}</span>
+              <select
+                value={dialectHints[language] || ''}
+                onChange={event => selectDialect(language, event.target.value)}
+                className="rounded-xl border border-white/10 bg-[#0c1026] px-3 py-2 text-white outline-none focus:border-cyan-400/50"
+              >
+                <option value="">Automatic / no dialect hint</option>
+                {NIGERIAN_DIALECT_HINTS[language].map(hint => (
+                  <option key={hint} value={hint}>{DIALECT_LABELS[hint]}</option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
       </div>
     </section>
   );

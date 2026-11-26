@@ -89,6 +89,8 @@ export class VisionSession {
   private mediaDevicesProvider: () => MediaDevicesLike | undefined;
   private visibilityListenerBound: (() => void) | null = null;
   private activeTrackCount = 0;
+  /** Invalidates pending capture requests when a newer start/stop supersedes them. */
+  private startGeneration = 0;
 
   constructor(
     callbacks: VisionSessionCallbacks = {},
@@ -134,8 +136,10 @@ export class VisionSession {
     facingMode: 'user' | 'environment';
     deviceId?: string;
   }> {
-    // Always stop previous stream first so tracks never leak
+    // Always stop previous stream first so tracks never leak. Generation fencing
+    // also prevents a late permission prompt from resurrecting a superseded stream.
     this.stop();
+    const generation = this.startGeneration;
 
     const md = this.mediaDevicesProvider();
     this.currentSource = options.source;
@@ -170,6 +174,10 @@ export class VisionSession {
         },
         audio: false,
       });
+      if (generation !== this.startGeneration) {
+        stream.getTracks().forEach(track => track.stop());
+        throw new DOMException('Screen capture request superseded.', 'AbortError');
+      }
       this.bindStream(stream);
       return {
         stream,
@@ -208,6 +216,10 @@ export class VisionSession {
       }
     }
 
+    if (generation !== this.startGeneration) {
+      stream.getTracks().forEach(track => track.stop());
+      throw new DOMException('Camera capture request superseded.', 'AbortError');
+    }
     this.bindStream(stream);
 
     const videoTrack = stream.getVideoTracks()[0];
@@ -293,6 +305,7 @@ export class VisionSession {
    * Immediately terminates all camera/screen tracks, object URLs, and listeners.
    */
   stop(): void {
+    this.startGeneration += 1;
     this.detachVisibilityListener();
     if (this.stream) {
       const tracks = this.stream.getTracks();
