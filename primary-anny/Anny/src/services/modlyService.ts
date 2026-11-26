@@ -26,6 +26,8 @@ export interface ModlyHealth {
   engine: string;
   url: string;
   hint?: string;
+  localRasterConfigured?: boolean;
+  localRasterStatus?: 'CONFIGURED_UNVERIFIED' | 'UNCONFIGURED';
 }
 
 /** Check whether the local Modly 3D-generation engine is reachable before letting the user submit a job. */
