@@ -4,6 +4,7 @@ import { detectNigerianLanguage } from './NigerianLanguageRouter';
 
 test('detects Nigerian languages from strong orthographic evidence', () => {
   assert.equal(detectNigerianLanguage('Ẹ káàbọ̀, mo dúpẹ́').language, 'yo');
+  assert.equal(detectNigerianLanguage('E kaaro, bawo ni?').language, 'yo');
   assert.equal(detectNigerianLanguage('Ị̀ dị mma, daalụ').language, 'ig');
   assert.equal(detectNigerianLanguage('ƙauna, lafiya').language, 'ha');
 });
