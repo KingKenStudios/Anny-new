@@ -2794,9 +2794,7 @@ async function startServer() {
 
     const execPolicy = providerRegistryService.getExecutionPolicy();
     const providerPreference =
-      execPolicy.mode === 'OFFLINE_ONLY'
-        ? body.providerPreference === 'local-sd' ? 'local-sd' : 'local-vector-svg'
-        : body.providerPreference || 'auto';
+      execPolicy.mode === 'OFFLINE_ONLY' ? 'local-vector-svg' : body.providerPreference || 'auto';
     const requestedCount =
       typeof body.count === 'number' && Number.isFinite(body.count)
         ? Math.min(4, Math.max(1, Math.floor(body.count)))
@@ -5001,10 +4999,26 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
 
     const localImageProvider = creativeGenerationService.getCreativeProviders()
       .find(provider => provider.id === 'local-sd-webui');
-    if (!localImageProvider?.configured) {
+    const configuredSdUrl = String(process.env.SD_WEBUI_URL || '').trim();
+    let localSdEndpoint = false;
+    try {
+      const parsedSdUrl = new URL(configuredSdUrl);
+      const host = parsedSdUrl.hostname.toLowerCase();
+      const ipv4 = net.isIPv4(host) ? host.split('.').map(Number) : null;
+      const privateIpv4 = Boolean(ipv4 && (
+        ipv4[0] === 10 || ipv4[0] === 127 ||
+        (ipv4[0] === 172 && ipv4[1] >= 16 && ipv4[1] <= 31) ||
+        (ipv4[0] === 192 && ipv4[1] === 168)
+      ));
+      const privateIpv6 = net.isIPv6(host) && (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80:'));
+      localSdEndpoint = ['localhost', '::1'].includes(host) || host.endsWith('.localhost') || host.endsWith('.local') || privateIpv4 || privateIpv6;
+    } catch {
+      localSdEndpoint = false;
+    }
+    if (!localImageProvider?.configured || !localSdEndpoint) {
       return res.status(503).json({
         error: 'Local text-to-3D image stage is not configured.',
-        hint: 'Configure SD_WEBUI_URL to a locally hosted Stable Diffusion/ComfyUI-compatible raster generator. No cloud fallback is used.',
+        hint: 'Configure SD_WEBUI_URL to a localhost or private-network Stable Diffusion/ComfyUI-compatible raster generator. Public endpoints are rejected and no cloud fallback is used.',
       });
     }
 
