@@ -5107,6 +5107,19 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
     }
   });
 
+  app.post("/api/modly/cancel/:id", requireAuth(), async (req, res) => {
+    const jobId = String(req.params.id || '').trim();
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(jobId)) {
+      return res.status(400).json({ error: 'Invalid 3D job identifier.' });
+    }
+    try {
+      const response = await axios.post(`${MODLY_LOCAL_URL}/generate/cancel/${encodeURIComponent(jobId)}`, {}, { timeout: 5000 });
+      return res.json({ cancelled: Boolean(response.data?.cancelled), id: jobId, engine: 'local' });
+    } catch (err: any) {
+      return res.status(503).json({ error: 'Local Modly cancellation failed.', hint: 'Check whether the local generation job is still active.' });
+    }
+  });
+
   app.get("/api/modly/status/:id", requireAuth(), async (req, res) => {
     const { id } = req.params;
     const engine = (req.query.engine as string) || "local";
