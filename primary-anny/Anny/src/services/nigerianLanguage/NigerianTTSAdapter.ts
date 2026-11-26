@@ -2,10 +2,33 @@ import { NigerianSpeechRequest } from './types';
 import { normalizeNigerianSpeechText } from './NigerianTextNormalizer';
 import { fetchWithAuth } from '../../lib/apiUtils';
 
+let activeAudio: HTMLAudioElement | null = null;
+let activeObjectUrl: string | null = null;
+
+function disposeActiveAudio(): void {
+  if (activeAudio) {
+    activeAudio.pause();
+    activeAudio.removeAttribute('src');
+    activeAudio.load();
+    activeAudio = null;
+  }
+  if (activeObjectUrl) {
+    URL.revokeObjectURL(activeObjectUrl);
+    activeObjectUrl = null;
+  }
+}
+
+/** Stop any dialect speech currently playing and release its blob URL. */
+export function stopNigerianTTS(): void {
+  disposeActiveAudio();
+}
+
 export async function speakWithNigerianTTS(request: NigerianSpeechRequest): Promise<boolean> {
   if (typeof window === 'undefined') return false;
   const language = request.language;
   if (!language) return false;
+  // Only one local dialect utterance should play at a time.
+  disposeActiveAudio();
   try {
     const response = await fetchWithAuth('/api/sahara/tts', {
       method: 'POST',
@@ -22,10 +45,18 @@ export async function speakWithNigerianTTS(request: NigerianSpeechRequest): Prom
     if (!blob.size) return false;
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    audio.onended = () => URL.revokeObjectURL(url);
+    activeObjectUrl = url;
+    activeAudio = audio;
+    const release = () => {
+      if (activeAudio === audio) disposeActiveAudio();
+      else URL.revokeObjectURL(url);
+    };
+    audio.onended = release;
+    audio.onerror = release;
     await audio.play();
     return true;
   } catch {
+    disposeActiveAudio();
     return false;
   }
 }
