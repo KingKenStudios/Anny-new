@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Cpu, Cloud, Loader2, RefreshCw, AlertTriangle, CheckCircle2, Download, ExternalLink, Menu, StopCircle } from 'lucide-react';
-import { checkModlyHealth, cancelLocalModlyTask, generate3DModelFromText, generate3DModelFromTextLocal, pollModlyTask, type ModlyHealth, type ModlyTask } from '../services/modlyService';
+import { checkModlyHealth, cancelLocalModlyTask, generate3DModelFromImage, generate3DModelFromText, generate3DModelFromTextLocal, pollModlyTask, type ModlyHealth, type ModlyTask } from '../services/modlyService';
 import Neural3DPreview from '../components/Neural3DPreview';
 
 type GenerationMode = 'local' | 'cloud';
@@ -9,6 +9,9 @@ const isTerminal = (status: ModlyTask['status'] | string) => ['succeeded', 'fail
 
 export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> = ({ onToggleMobileMenu }) => {
   const [prompt, setPrompt] = useState('');
+  const [sourceMode, setSourceMode] = useState<'text' | 'image'>('text');
+  const [uploadedImage, setUploadedImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [mode, setMode] = useState<GenerationMode>('local');
   const [health, setHealth] = useState<ModlyHealth | null>(null);
   const [healthLoading, setHealthLoading] = useState(true);
@@ -29,6 +32,13 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
   };
 
   useEffect(() => { void refreshHealth(); }, []);
+
+  useEffect(() => {
+    if (!uploadedImage) { setImagePreview(null); return; }
+    const url = URL.createObjectURL(uploadedImage);
+    setImagePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [uploadedImage]);
 
   useEffect(() => {
     if (!task?.id || isTerminal(task.status)) return;
@@ -57,14 +67,16 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
 
   const submit = async () => {
     const clean = prompt.trim();
-    if (!clean || isSubmitting) return;
+    if ((sourceMode === 'text' && !clean) || (sourceMode === 'image' && !uploadedImage) || isSubmitting) return;
     setIsSubmitting(true);
     setError(null);
     setTask(null);
     try {
-      const result = mode === 'local'
-        ? await generate3DModelFromTextLocal(clean)
-        : await generate3DModelFromText(clean);
+      const result = sourceMode === 'image'
+        ? await generate3DModelFromImage(uploadedImage!)
+        : mode === 'local'
+          ? await generate3DModelFromTextLocal(clean)
+          : await generate3DModelFromText(clean);
       setTask(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : '3D generation could not start.');
@@ -108,8 +120,12 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
         <section className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-5">
           <div className="rounded-2xl border border-white/10 bg-[#080b22] p-5 space-y-4">
             <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => setMode('local')} className={`rounded-xl border p-3 text-left ${mode === 'local' ? 'border-cyan-400/50 bg-cyan-400/10' : 'border-white/10 bg-white/[0.02]'}`}><Cpu className="h-4 w-4 text-cyan-300" /><span className="block mt-2 text-sm font-semibold">Local / Offline</span><span className="block mt-1 text-[10px] text-slate-500">No cloud fallback</span></button>
-              <button onClick={() => setMode('cloud')} className={`rounded-xl border p-3 text-left ${mode === 'cloud' ? 'border-violet-400/50 bg-violet-400/10' : 'border-white/10 bg-white/[0.02]'}`}><Cloud className="h-4 w-4 text-violet-300" /><span className="block mt-2 text-sm font-semibold">Cloud</span><span className="block mt-1 text-[10px] text-slate-500">Meshy provider</span></button>
+              <button onClick={() => setSourceMode('text')} className={`rounded-xl border p-3 text-left ${sourceMode === 'text' ? 'border-cyan-400/50 bg-cyan-400/10' : 'border-white/10 bg-white/[0.02]'}`}><span className="block text-sm font-semibold">Text prompt</span><span className="block mt-1 text-[10px] text-slate-500">Create a reference first</span></button>
+              <button onClick={() => setSourceMode('image')} className={`rounded-xl border p-3 text-left ${sourceMode === 'image' ? 'border-cyan-400/50 bg-cyan-400/10' : 'border-white/10 bg-white/[0.02]'}`}><span className="block text-sm font-semibold">Image upload</span><span className="block mt-1 text-[10px] text-slate-500">Reconstruct from a photo</span></button>
+            </div>
+            <div className={`grid grid-cols-2 gap-2 ${sourceMode === 'image' ? 'opacity-50' : ''}">
+              <button disabled={sourceMode === 'image'} onClick={() => setMode('local')} className={`rounded-xl border p-3 text-left ${mode === 'local' ? 'border-cyan-400/50 bg-cyan-400/10' : 'border-white/10 bg-white/[0.02]'}`}><Cpu className="h-4 w-4 text-cyan-300" /><span className="block mt-2 text-sm font-semibold">Local / Offline</span><span className="block mt-1 text-[10px] text-slate-500">No cloud fallback</span></button>
+              <button disabled={sourceMode === 'image'} onClick={() => setMode('cloud')} className={`rounded-xl border p-3 text-left ${mode === 'cloud' ? 'border-violet-400/50 bg-violet-400/10' : 'border-white/10 bg-white/[0.02]'}`}><Cloud className="h-4 w-4 text-violet-300" /><span className="block mt-2 text-sm font-semibold">Cloud</span><span className="block mt-1 text-[10px] text-slate-500">Meshy provider</span></button>
             </div>
 
             <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs">
@@ -119,14 +135,21 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
               <button onClick={() => void refreshHealth()} className="mt-2 flex items-center gap-1 text-slate-500 hover:text-white"><RefreshCw className="h-3 w-3" />Refresh status</button>
             </div>
 
-            <label className="block text-sm font-medium text-slate-300">Describe the object</label>
-            <textarea value={prompt} onChange={e => setPrompt(e.target.value)} maxLength={4000} rows={7} placeholder="A compact industrial gearbox with a steel housing, visible shafts and mounting brackets…" className="w-full resize-y rounded-xl border border-white/10 bg-[#050817] p-3 text-sm text-white outline-none focus:border-cyan-400/50" />
-            <div className="flex justify-between text-[10px] text-slate-500"><span>Be specific about form, materials and parts.</span><span>{prompt.length}/4000</span></div>
-            <button disabled={!prompt.trim() || isSubmitting || active} onClick={() => void submit()} className="w-full flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-40 hover:bg-cyan-500">
+            {sourceMode === 'text' ? <>
+              <label className="block text-sm font-medium text-slate-300">Describe the object</label>
+              <textarea value={prompt} onChange={e => setPrompt(e.target.value)} maxLength={4000} rows={7} placeholder="A compact industrial gearbox with a steel housing, visible shafts and mounting brackets…" className="w-full resize-y rounded-xl border border-white/10 bg-[#050817] p-3 text-sm text-white outline-none focus:border-cyan-400/50" />
+              <div className="flex justify-between text-[10px] text-slate-500"><span>Be specific about form, materials and parts.</span><span>{prompt.length}/4000</span></div>
+            </> : <>
+              <label className="block text-sm font-medium text-slate-300">Reference image (PNG, JPEG or WebP)</label>
+              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => setUploadedImage(e.target.files?.[0] || null)} className="w-full rounded-xl border border-white/10 bg-[#050817] p-3 text-xs text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-cyan-500/20 file:px-3 file:py-2 file:text-cyan-200" />
+              {imagePreview && <img src={imagePreview} alt="Selected 3D reconstruction reference" className="max-h-48 w-full rounded-xl border border-white/10 object-contain bg-black/20" />}
+              {uploadedImage && <p className="text-[10px] text-slate-500">{uploadedImage.name} · {(uploadedImage.size / 1024 / 1024).toFixed(2)} MB</p>}
+            </>}
+            <button disabled={(sourceMode === 'text' ? !prompt.trim() : !uploadedImage) || isSubmitting || active} onClick={() => void submit()} className="w-full flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-40 hover:bg-cyan-500">
               {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Box className="h-4 w-4" />}
-              {isSubmitting ? 'Starting generation…' : mode === 'local' ? 'Generate locally' : 'Generate with cloud'}
+              {isSubmitting ? 'Starting generation…' : sourceMode === 'image' ? 'Reconstruct from image' : mode === 'local' ? 'Generate locally' : 'Generate with cloud'}
             </button>
-            {mode === 'local' && <p className="text-[11px] text-slate-500">Requires a local Stable Diffusion WebUI-compatible raster API (with API access enabled) and local Modly mesh models. Public endpoints are rejected; no paid fallback.</p>}
+            {sourceMode === 'image' ? <p className="text-[11px] text-slate-500">Image reconstruction runs through the local Modly model. No cloud image generation is used.</p> : mode === 'local' && <p className="text-[11px] text-slate-500">Requires a local Stable Diffusion WebUI-compatible raster API (with API access enabled) and local Modly mesh models. Public endpoints are rejected; no paid fallback.</p>}
             {mode === 'cloud' && <p className="text-[11px] text-slate-500">Requires a server-configured Meshy API key. Cloud provider usage may incur charges.</p>}
             {error && <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-200">{error}</div>}
           </div>
