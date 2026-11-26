@@ -9,6 +9,10 @@ export interface ModlyTask {
   model_url?: string;
   error?: string;
   engine?: 'local' | 'meshy-cloud';
+  pipeline?: 'local-text-image-to-3d';
+  imageProvider?: string;
+  imageModel?: string;
+  referenceImageUrl?: string;
 }
 
 export interface ModlyHealth {
@@ -42,6 +46,24 @@ export async function generate3DModelFromImage(
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.hint || error.error || 'Modly 3D generation failed to start');
+  }
+  return response.json();
+}
+
+/** Generate a mesh from text using only locally hosted image and 3D models. */
+export async function generate3DModelFromTextLocal(prompt: string): Promise<ModlyTask> {
+  const cleanPrompt = String(prompt || '').trim();
+  if (!cleanPrompt || cleanPrompt.length > 4000) {
+    throw new Error('Enter a text-to-3D prompt between 1 and 4000 characters.');
+  }
+  const response = await fetchWithAuth('/api/modly/generate-from-text-local', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: cleanPrompt }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.hint || error.detail || error.error || 'Local text-to-3D pipeline failed to start.');
   }
   return response.json();
 }
