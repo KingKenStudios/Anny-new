@@ -10,6 +10,7 @@ from services.generators.base import smooth_progress, GenerationCancelled
 
 import re as _re
 from services.generator_registry import generator_registry, WORKSPACE_DIR
+from services.generation_queue import GenerationQueue
 from schemas.generation import JobStatus
 
 router = APIRouter(tags=["generation"])
@@ -18,8 +19,7 @@ _jobs: Dict[str, JobStatus] = {}
 _cancelled: set = set()
 _cancel_events: Dict[str, threading.Event] = {}
 _completed_at: Dict[str, float] = {}
-_generation_lock = asyncio.Lock()
-_active_job_id: str | None = None
+generation_queue = GenerationQueue()
 
 _JOB_TTL = 1800  # purge terminal jobs after 30 minutes
 
@@ -113,7 +113,7 @@ async def cancel_job(job_id: str):
         _completed_at[job_id] = time.monotonic()
     # Only terminate the subprocess if this job currently owns the generator.
     # Queued cancellation must never kill another job's active inference.
-    if _active_job_id == job_id:
+    if generation_queue.active_job_id == job_id:
         try:
             gen = generator_registry._generators.get(generator_registry._active_id)
             if gen is not None and hasattr(gen, "_proc") and gen._proc and gen._proc.poll() is None:
@@ -126,26 +126,23 @@ async def cancel_job(job_id: str):
 
 
 async def _run_generation(job_id: str, image_bytes: bytes, params: dict, collection: str = "Default", model_id: str | None = None) -> None:
-    global _active_job_id
     # Modly's model registry and generator subprocess are shared. Serialize jobs so
     # concurrent requests cannot race model switches, output paths, or cancellation.
-    async with _generation_lock:
-        if job_id in _cancelled:
+    async def execute() -> None:
+        if model_id:
+            generator_registry.switch_model(model_id)
+        await _run_generation_locked(job_id, image_bytes, params, collection)
+
+    try:
+        ran = await generation_queue.run(job_id, lambda: job_id in _cancelled, execute)
+        if not ran:
             return
-        _active_job_id = job_id
-        try:
-            if model_id:
-                generator_registry.switch_model(model_id)
-            await _run_generation_locked(job_id, image_bytes, params, collection)
-        except Exception as exc:
-            job = _jobs.get(job_id)
-            if job and job_id not in _cancelled:
-                job.status = "error"
-                job.error = f"Generation setup failed: {exc}"
-                _completed_at[job_id] = time.monotonic()
-        finally:
-            if _active_job_id == job_id:
-                _active_job_id = None
+    except Exception as exc:
+        job = _jobs.get(job_id)
+        if job and job_id not in _cancelled:
+            job.status = "error"
+            job.error = f"Generation setup failed: {exc}"
+            _completed_at[job_id] = time.monotonic()
 
 
 async def _run_generation_locked(job_id: str, image_bytes: bytes, params: dict, collection: str = "Default") -> None:
