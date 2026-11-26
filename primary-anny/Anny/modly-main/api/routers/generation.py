@@ -10,7 +10,7 @@ from services.generators.base import smooth_progress, GenerationCancelled
 
 import re as _re
 from services.generator_registry import generator_registry, WORKSPACE_DIR
-from services.generation_queue import GenerationQueue
+from services.generation_queue import GenerationQueue, is_cancellable_status
 from schemas.generation import JobStatus
 
 router = APIRouter(tags=["generation"])
@@ -22,10 +22,6 @@ _completed_at: Dict[str, float] = {}
 generation_queue = GenerationQueue()
 
 _JOB_TTL = 1800  # purge terminal jobs after 30 minutes
-
-
-def _is_cancellable_status(status: str) -> bool:
-    return status in ("pending", "running")
 
 
 def _purge_old_jobs() -> None:
@@ -110,7 +106,7 @@ async def cancel_job(job_id: str):
     if not job:
         raise HTTPException(404, f"Job {job_id} not found")
     # Terminal jobs cannot be cancelled; avoid retaining stale cancellation IDs.
-    if not _is_cancellable_status(job.status):
+    if not is_cancellable_status(job.status):
         return {"cancelled": False, "status": job.status}
     _cancelled.add(job_id)
     if job_id in _cancel_events:
