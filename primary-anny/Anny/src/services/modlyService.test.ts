@@ -12,7 +12,7 @@ test('local text-to-3D client rejects empty and oversized prompts before network
 test('image-to-3D client rejects invalid MIME and oversized files before network calls', async () => {
   const invalid = new File(['not an image'], 'invalid.txt', { type: 'text/plain' });
   const oversized = new File([new Uint8Array(25 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' });
-  await assert.rejects(() => generate3DModelFromImage(invalid), /valid image file/);
+  await assert.rejects(() => generate3DModelFromImage(invalid), /PNG, JPEG, or WebP image/);
   await assert.rejects(() => generate3DModelFromImage(oversized), /25 MB or smaller/);
 });
 
