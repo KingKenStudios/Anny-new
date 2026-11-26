@@ -127,7 +127,7 @@ export class IntegrationRegistry {
       health: 'degraded',
       status: 'standby',
       dependencies: [],
-      capabilities: ['Heuristic prompt-pattern checks', 'Basic credential redaction', 'Not a complete prompt-injection defense, sandbox, or biometric verification system'],
+      capabilities: ['Heuristic prompt-pattern checks', 'Basic credential redaction', 'Prompt-pattern heuristics only; no complete prompt-injection defense or sandbox'],
       emittedEvents: ['SecurityAlert'],
       lastRegistered: now
     });
