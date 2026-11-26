@@ -18,6 +18,8 @@ _jobs: Dict[str, JobStatus] = {}
 _cancelled: set = set()
 _cancel_events: Dict[str, threading.Event] = {}
 _completed_at: Dict[str, float] = {}
+_generation_lock = asyncio.Lock()
+_active_job_id: str | None = None
 
 _JOB_TTL = 1800  # purge terminal jobs after 30 minutes
 
@@ -108,21 +110,36 @@ async def cancel_job(job_id: str):
     if job.status in ("pending", "running"):
         job.status = "cancelled"
         _completed_at[job_id] = time.monotonic()
-    # Kill the active generator subprocess immediately so inference stops now.
-    # _run_generation will catch the resulting exception, see job_id in _cancelled,
-    # and return cleanly without setting an error status.
-    try:
-        gen = generator_registry._generators.get(generator_registry._active_id)
-        if gen is not None and hasattr(gen, "_proc") and gen._proc and gen._proc.poll() is None:
-            gen._proc.kill()
-            gen._loaded = False
-            gen._proc = None
-    except Exception:
-        pass
+    # Only terminate the subprocess if this job currently owns the generator.
+    # Queued cancellation must never kill another job's active inference.
+    if _active_job_id == job_id:
+        try:
+            gen = generator_registry._generators.get(generator_registry._active_id)
+            if gen is not None and hasattr(gen, "_proc") and gen._proc and gen._proc.poll() is None:
+                gen._proc.kill()
+                gen._loaded = False
+                gen._proc = None
+        except Exception:
+            pass
     return {"cancelled": True}
 
 
 async def _run_generation(job_id: str, image_bytes: bytes, params: dict, collection: str = "Default") -> None:
+    global _active_job_id
+    # Modly's model registry and generator subprocess are shared. Serialize jobs so
+    # concurrent requests cannot race model switches, output paths, or cancellation.
+    async with _generation_lock:
+        if job_id in _cancelled:
+            return
+        _active_job_id = job_id
+        try:
+            await _run_generation_locked(job_id, image_bytes, params, collection)
+        finally:
+            if _active_job_id == job_id:
+                _active_job_id = None
+
+
+async def _run_generation_locked(job_id: str, image_bytes: bytes, params: dict, collection: str = "Default") -> None:
     job = _jobs[job_id]
     job.status = "running"
 
