@@ -4982,7 +4982,16 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
         { prompt, mode: "preview" },
         { headers: { Authorization: `Bearer ${modlyKey}` } }
       );
-      res.json({ ...response.data, engine: "meshy-cloud" });
+      const taskId = String(response.data?.task_id || response.data?.id || '').trim();
+      if (!taskId) {
+        return res.status(502).json({ error: 'Cloud 3D provider returned no task identifier.' });
+      }
+      return res.status(202).json({
+        id: taskId,
+        status: 'pending',
+        progress: Number(response.data?.progress) || 0,
+        engine: 'meshy-cloud',
+      });
     } catch (err: any) {
       console.error("[Modly] Cloud synthesis failed:", err.response?.data || err.message);
       res.status(502).json({ error: "Cloud 3D synthesis request failed." });
@@ -5097,7 +5106,19 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
         const response = await axios.get(`https://api.meshy.ai/v1/text-to-3d/${id}`, {
           headers: { Authorization: `Bearer ${modlyKey}` },
         });
-        return res.json(response.data);
+        const providerStatus = String(response.data?.status || '').toUpperCase();
+        const status = providerStatus === 'SUCCEEDED' ? 'succeeded'
+          : providerStatus === 'FAILED' || providerStatus === 'CANCELED' ? 'failed'
+          : providerStatus === 'IN_PROGRESS' ? 'processing' : 'pending';
+        const modelUrls = response.data?.model_urls || {};
+        return res.json({
+          id,
+          status,
+          progress: Number(response.data?.progress) || 0,
+          model_url: modelUrls.glb || modelUrls.fbx || modelUrls.obj || response.data?.model_url,
+          error: response.data?.error || response.data?.message,
+          engine: 'meshy-cloud',
+        });
       } catch {
         return res.status(500).json({ error: "Modly status uplink failed." });
       }
