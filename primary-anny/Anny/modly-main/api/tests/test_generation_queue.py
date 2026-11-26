@@ -2,12 +2,12 @@ import asyncio
 import unittest
 
 from services.generation_queue import GenerationQueue
-from routers.generation import _is_cancellable_status
+from services.generation_queue import is_cancellable_status
 
 
 class GenerationQueueTests(unittest.IsolatedAsyncioTestCase):
     def test_only_pending_and_running_jobs_are_cancellable(self):
-        self.assertTrue(_is_cancellable_status("pending"))
+        self.assertTrue(is_cancellable_status("pending"))
         self.assertTrue(_is_cancellable_status("running"))
         for terminal in ("done", "error", "cancelled"):
             self.assertFalse(_is_cancellable_status(terminal))
