@@ -4977,9 +4977,10 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
     }
 
     // No image provided — fall back to real cloud text-to-3D only if a genuine key is configured.
-    const { prompt } = req.body || {};
+    const rawPrompt = req.body?.prompt;
+    const prompt = typeof rawPrompt === 'string' ? rawPrompt.trim() : '';
     const modlyKey = process.env.MODLY_API_KEY || process.env.MESHY_API_KEY;
-    if (!prompt) return res.status(400).json({ error: "Provide either an image file or a text prompt." });
+    if (!prompt || prompt.length > 4000) return res.status(400).json({ error: "A text prompt between 1 and 4000 characters is required." });
     if (!modlyKey) {
       return res.status(503).json({
         error: "No 3D generation engine available.",
