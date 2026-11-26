@@ -28,7 +28,7 @@ const RULES: LanguageRule[] = [
   },
   {
     language: 'pcm',
-    strong: [/wetin/i, /dey/i, /una/i, /na so/i, /no wahala/i, /chop/i, /how you dey/i, /wan/i],
+    strong: [/wetin/i, /dey/i, /una/i, /na so/i, /no wahala/i, /chop/i, /how you dey/i, /wan/i, /pidgin english/i],
     phrases: [/abeg/i, /make we/i, /e don/i, /you sabi/i],
     common: [/na/i, /sha/i],
   },
