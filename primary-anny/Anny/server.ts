@@ -228,6 +228,7 @@ async function startServer() {
     '/api/vision/analyze',
     '/api/sahara',
     '/api/modly/generate',
+    '/api/modly/generate-from-text-local',
     '/api/v1/anny/intelligence',
     '/api/anny/intelligence',
     '/api/workers'
@@ -2793,7 +2794,9 @@ async function startServer() {
 
     const execPolicy = providerRegistryService.getExecutionPolicy();
     const providerPreference =
-      execPolicy.mode === 'OFFLINE_ONLY' ? 'local-vector-svg' : body.providerPreference || 'auto';
+      execPolicy.mode === 'OFFLINE_ONLY'
+        ? body.providerPreference === 'local-sd' ? 'local-sd' : 'local-vector-svg'
+        : body.providerPreference || 'auto';
     const requestedCount =
       typeof body.count === 'number' && Number.isFinite(body.count)
         ? Math.min(4, Math.max(1, Math.floor(body.count)))
@@ -4985,6 +4988,87 @@ NIGERIAN NATIVE LANGUAGE PROTOCOL (SAHARA V2):
     } catch (err: any) {
       console.error("[Modly] Cloud synthesis failed:", err.response?.data || err.message);
       res.status(502).json({ error: "Cloud 3D synthesis request failed." });
+    }
+  });
+
+  // Offline text-to-3D chain: local raster diffusion -> local image-to-mesh engine.
+  // Requires a locally hosted raster model and the local Modly API; no cloud fallback.
+  app.post("/api/modly/generate-from-text-local", requireAuth(), async (req: AuthenticatedRequest, res) => {
+    const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+    if (!prompt || prompt.length > 4000) {
+      return res.status(400).json({ error: 'A valid prompt (1-4000 characters) is required.' });
+    }
+
+    const localImageProvider = creativeGenerationService.getCreativeProviders()
+      .find(provider => provider.id === 'local-sd-webui');
+    if (!localImageProvider?.configured) {
+      return res.status(503).json({
+        error: 'Local text-to-3D image stage is not configured.',
+        hint: 'Configure SD_WEBUI_URL to a locally hosted Stable Diffusion/ComfyUI-compatible raster generator. No cloud fallback is used.',
+      });
+    }
+
+    try {
+      const referencePrompt = [
+        'Generate a clean reference image for single-object 3D reconstruction.',
+        'Show exactly one complete object, centered and fully visible, with a clear silhouette.',
+        'Use a plain neutral background, studio lighting, no text, no watermark, no extra objects.',
+        'Use a three-quarter front view and realistic materials.',
+        'Object description:',
+        prompt,
+      ].join(' ');
+
+      const imageResult = await creativeGenerationService.generateCreativeImage({
+        prompt: referencePrompt,
+        aspectRatio: '1:1',
+        count: 1,
+        highResolution: false,
+        providerPreference: 'local-sd',
+        enableVisionQa: false,
+        ownerUserId: req.authUser?.uid || req.user?.userId || req.user?.id || 'anonymous',
+        ownerOrgId: req.authUser?.companyId || 'personal',
+      });
+      if (!imageResult.success || !imageResult.primaryImageUrl) {
+        return res.status(503).json({
+          error: 'Local reference-image generation failed.',
+          detail: imageResult.error || 'The local image model did not produce a validated raster image.',
+          hint: 'Check the local SD worker and model availability, then retry. Cloud generation is intentionally disabled for this workflow.',
+        });
+      }
+
+      const imageData = imageResult.primaryImageUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,([\s\S]+)$/i);
+      if (!imageData) {
+        return res.status(502).json({ error: 'The local image provider returned an unsupported image format.' });
+      }
+
+      const imageBytes = Buffer.from(imageData[2], 'base64');
+      const imageMime = imageData[1].toLowerCase();
+      const form = new FormData();
+      form.append('image', imageBytes, {
+        filename: 'anny-local-text3d-reference.' + (imageMime === 'image/jpeg' ? 'jpg' : imageMime.split('/')[1]),
+        contentType: imageMime,
+      });
+      form.append('collection', 'ANNY_TextTo3D');
+      const localResponse = await axios.post(`${MODLY_LOCAL_URL}/generate/from-image`, form, {
+        headers: form.getHeaders(),
+        timeout: 15000,
+      });
+      return res.status(202).json({
+        id: localResponse.data.job_id,
+        status: 'pending',
+        progress: 0,
+        engine: 'local',
+        pipeline: 'local-text-image-to-3d',
+        imageProvider: imageResult.provider,
+        imageModel: imageResult.model,
+        referenceImageUrl: imageResult.images?.[0]?.downloadUrl,
+      });
+    } catch (err: any) {
+      console.error('[Modly] Local text-to-3D pipeline failed:', err.code || err.message);
+      return res.status(503).json({
+        error: 'Local text-to-3D pipeline failed to start.',
+        hint: 'Verify the local image-generation worker and Modly 3D API are running. This workflow does not use paid cloud fallbacks.',
+      });
     }
   });
 
