@@ -15,6 +15,12 @@ export interface ModlyTask {
   referenceImageUrl?: string;
 }
 
+export function normalizeLocalModlyJobResponse(data: any): ModlyTask {
+  const id = String(data?.job_id || data?.id || '').trim();
+  if (!id) throw new Error('Local Modly returned no job identifier.');
+  return { id, status: 'pending', progress: 0, engine: 'local' };
+}
+
 export interface ModlyHealth {
   available: boolean;
   engine: string;
@@ -50,9 +56,7 @@ export async function generate3DModelFromImage(
     throw new Error(error.hint || error.error || 'Modly 3D generation failed to start');
   }
   const data = await response.json();
-  const id = String(data?.job_id || data?.id || '').trim();
-  if (!id) throw new Error('Local Modly returned no job identifier.');
-  return { id, status: 'pending', progress: 0, engine: 'local' };
+  return normalizeLocalModlyJobResponse(data);
 }
 
 /** Generate a mesh from text using only locally hosted image and 3D models. */
