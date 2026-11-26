@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - "primary-anny/**"
+      - "reference-anny/app/applet/src/**"
       - ".github/workflows/codeql.yml"
   pull_request:
     branches: [main]
     paths:
       - "primary-anny/**"
+      - "reference-anny/app/applet/src/**"
       - ".github/workflows/codeql.yml"
   schedule:
     - cron: "17 2 * * 1"
