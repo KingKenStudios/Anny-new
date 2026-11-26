@@ -70,6 +70,12 @@ export interface VideoGenerationPipelineResult {
 
 export type VideoGenerationResult = VideoGenerationPipelineResult;
 
+export function normalizeRequestedVideoResolution(value: unknown): '720p' | '1080p' | '4k' {
+  if (value === '4k') return '4k';
+  if (value === '1080p') return '1080p';
+  return '720p';
+}
+
 class AnnyVideoGenerationFabric {
   private static instance: AnnyVideoGenerationFabric;
   private recentJobs: Map<string, VideoJobRecord> = new Map();
@@ -88,7 +94,7 @@ class AnnyVideoGenerationFabric {
     const durationSeconds = request.durationSeconds || request.targetDurationSeconds || 8;
     // Preserve the requested quality tier. The server/provider must report unsupported
     // resolutions explicitly; silently downgrading 4K to 1080p is misleading.
-    const resolution: '720p' | '1080p' | '4k' = request.resolution === '4k' ? '4k' : request.resolution === '1080p' ? '1080p' : '720p';
+    const resolution = normalizeRequestedVideoResolution(request.resolution);
 
     const response = await fetchWithAuth('/api/creative/video/jobs', {
       method: 'POST',
