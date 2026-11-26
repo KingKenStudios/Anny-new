@@ -11,6 +11,7 @@ from services.generators.base import smooth_progress, GenerationCancelled
 import re as _re
 from services.generator_registry import generator_registry, WORKSPACE_DIR
 from services.generation_queue import GenerationQueue, is_cancellable_status
+from services.image_upload_policy import MAX_IMAGE_UPLOAD_BYTES, validate_uploaded_image
 from schemas.generation import JobStatus
 
 router = APIRouter(tags=["generation"])
@@ -45,8 +46,15 @@ async def generate_from_image(
     texture_resolution: int = Form(1024),
     params: str = Form("{}"),
 ):
-    if not image.content_type or not image.content_type.startswith("image/"):
-        raise HTTPException(400, "File must be an image")
+    # Read at most one byte beyond the limit so a forged Content-Length or
+    # non-browser client cannot make this endpoint allocate an unbounded payload.
+    image_bytes = await image.read(MAX_IMAGE_UPLOAD_BYTES + 1)
+    if len(image_bytes) > MAX_IMAGE_UPLOAD_BYTES:
+        raise HTTPException(413, "Image must be 25 MB or smaller.")
+    try:
+        validate_uploaded_image(image.content_type, image_bytes)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
     if remesh not in ("quad", "triangle", "none"):
         raise HTTPException(400, "remesh must be 'quad', 'triangle', or 'none'")
@@ -72,7 +80,6 @@ async def generate_from_image(
         model_params = {}
 
     job_id      = str(uuid.uuid4())
-    image_bytes = await image.read()
     full_params = {
         "remesh":             remesh,
         "enable_texture":     enable_texture,
