@@ -768,6 +768,15 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     const handleSpeechEnd = () => {
       isSpeechOutputRef.current = false;
     };
+    const handleSpeechError = (event: Event) => {
+      const detail = (event as CustomEvent<{ reason?: string; language?: string; dialectHint?: string }>).detail;
+      if (detail?.reason === 'DIALECT_TTS_UNAVAILABLE') {
+        showNotice(
+          `The selected ${detail.dialectHint || 'dialect'} voice is not available from the local speech provider. ANNY kept the requested pronunciation rather than switching voices.`,
+          'warning'
+        );
+      }
+    };
     const handleLiveVoiceClaim = () => {
       // Release SpeechRecognition and MediaRecorder so Live Vision Voice owns the mic cleanly
       stopSpeechRecognition();
@@ -776,10 +785,12 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
     };
     window.addEventListener('anny:speech-start', handleSpeechStart as EventListener);
     window.addEventListener('anny:speech-end', handleSpeechEnd as EventListener);
+    window.addEventListener('anny:speech-error', handleSpeechError as EventListener);
     window.addEventListener('anny:live-voice-claim', handleLiveVoiceClaim as EventListener);
     return () => {
       window.removeEventListener('anny:speech-start', handleSpeechStart as EventListener);
       window.removeEventListener('anny:speech-end', handleSpeechEnd as EventListener);
+      window.removeEventListener('anny:speech-error', handleSpeechError as EventListener);
       window.removeEventListener('anny:live-voice-claim', handleLiveVoiceClaim as EventListener);
       if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
       clearVoiceSilenceTimer();
@@ -787,7 +798,7 @@ export const AnnyWorkspace: React.FC<AnnyWorkspaceProps> = ({
       stopMediaRecording(true);
       stopVoiceNoteRecording(true);
     };
-  }, []);
+  }, [showNotice]);
 
   const cleanupVoiceNoteResources = () => {
     if (voiceNoteTimerRef.current) {
