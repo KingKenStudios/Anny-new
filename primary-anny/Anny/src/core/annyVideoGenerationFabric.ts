@@ -86,7 +86,9 @@ class AnnyVideoGenerationFabric {
   public async startVideoPipeline(request: CinematicPipelineRequest): Promise<VideoGenerationPipelineResult> {
     const prompt = (request.prompt || request.conceptPrompt || '').trim();
     const durationSeconds = request.durationSeconds || request.targetDurationSeconds || 8;
-    const resolution: '720p' | '1080p' = request.resolution === '1080p' || request.resolution === '4k' ? '1080p' : '720p';
+    // Preserve the requested quality tier. The server/provider must report unsupported
+    // resolutions explicitly; silently downgrading 4K to 1080p is misleading.
+    const resolution: '720p' | '1080p' | '4k' = request.resolution === '4k' ? '4k' : request.resolution === '1080p' ? '1080p' : '720p';
 
     const response = await fetchWithAuth('/api/creative/video/jobs', {
       method: 'POST',
