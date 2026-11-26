@@ -163,7 +163,7 @@ const VisionSensor = forwardRef<VisionSensorRef, VisionSensorProps>(
       };
       void activate();
       return () => { cancelled = true; };
-    }, [autoStart]);
+    }, [autoStart, resolution, mode, offlineMode]);
 
     // Synchronized overlay rendering loop (runs smoothly on rAF without blocking video)
     useEffect(() => {
