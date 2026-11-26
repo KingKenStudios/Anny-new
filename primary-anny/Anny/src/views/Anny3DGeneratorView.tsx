@@ -126,7 +126,7 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
               {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Box className="h-4 w-4" />}
               {isSubmitting ? 'Starting generation…' : mode === 'local' ? 'Generate locally' : 'Generate with cloud'}
             </button>
-            {mode === 'local' && <p className="text-[11px] text-slate-500">Requires local SD/ComfyUI-compatible raster generation and local Modly mesh models. The route rejects public image endpoints and never uses paid fallback.</p>}
+            {mode === 'local' && <p className="text-[11px] text-slate-500">Requires a local Stable Diffusion WebUI-compatible raster API (with API access enabled) and local Modly mesh models. Public endpoints are rejected; no paid fallback.</p>}
             {mode === 'cloud' && <p className="text-[11px] text-slate-500">Requires a server-configured Meshy API key. Cloud provider usage may incur charges.</p>}
             {error && <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-200">{error}</div>}
           </div>
