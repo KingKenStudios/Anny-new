@@ -123,7 +123,7 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
               <button onClick={() => setSourceMode('text')} className={`rounded-xl border p-3 text-left ${sourceMode === 'text' ? 'border-cyan-400/50 bg-cyan-400/10' : 'border-white/10 bg-white/[0.02]'}`}><span className="block text-sm font-semibold">Text prompt</span><span className="block mt-1 text-[10px] text-slate-500">Create a reference first</span></button>
               <button onClick={() => setSourceMode('image')} className={`rounded-xl border p-3 text-left ${sourceMode === 'image' ? 'border-cyan-400/50 bg-cyan-400/10' : 'border-white/10 bg-white/[0.02]'}`}><span className="block text-sm font-semibold">Image upload</span><span className="block mt-1 text-[10px] text-slate-500">Reconstruct from a photo</span></button>
             </div>
-            <div className={`grid grid-cols-2 gap-2 ${sourceMode === 'image' ? 'opacity-50' : ''}">
+            <div className={`grid grid-cols-2 gap-2 ${sourceMode === 'image' ? 'opacity-50' : ''}`}>
               <button disabled={sourceMode === 'image'} onClick={() => setMode('local')} className={`rounded-xl border p-3 text-left ${mode === 'local' ? 'border-cyan-400/50 bg-cyan-400/10' : 'border-white/10 bg-white/[0.02]'}`}><Cpu className="h-4 w-4 text-cyan-300" /><span className="block mt-2 text-sm font-semibold">Local / Offline</span><span className="block mt-1 text-[10px] text-slate-500">No cloud fallback</span></button>
               <button disabled={sourceMode === 'image'} onClick={() => setMode('cloud')} className={`rounded-xl border p-3 text-left ${mode === 'cloud' ? 'border-violet-400/50 bg-violet-400/10' : 'border-white/10 bg-white/[0.02]'}`}><Cloud className="h-4 w-4 text-violet-300" /><span className="block mt-2 text-sm font-semibold">Cloud</span><span className="block mt-1 text-[10px] text-slate-500">Meshy provider</span></button>
             </div>
@@ -150,7 +150,7 @@ export const Anny3DGeneratorView: React.FC<{ onToggleMobileMenu?: () => void }> 
               {isSubmitting ? 'Starting generation…' : sourceMode === 'image' ? 'Reconstruct from image' : mode === 'local' ? 'Generate locally' : 'Generate with cloud'}
             </button>
             {sourceMode === 'image' ? <p className="text-[11px] text-slate-500">Image reconstruction runs through the local Modly model. No cloud image generation is used.</p> : mode === 'local' && <p className="text-[11px] text-slate-500">Requires a local Stable Diffusion WebUI-compatible raster API (with API access enabled) and local Modly mesh models. Public endpoints are rejected; no paid fallback.</p>}
-            {mode === 'cloud' && <p className="text-[11px] text-slate-500">Requires a server-configured Meshy API key. Cloud provider usage may incur charges.</p>}
+            {sourceMode === 'text' && mode === 'cloud' && <p className="text-[11px] text-slate-500">Requires a server-configured Meshy API key. Cloud provider usage may incur charges.</p>}
             {error && <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-200">{error}</div>}
           </div>
 
